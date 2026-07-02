@@ -8,7 +8,9 @@ aggregator:
   contact_email: ops@bluedots.local
 
   network:
-    source: https://raw.githubusercontent.com/Blue-Dots-Economy/Signals-DPG/refs/heads/develop/examples/schemas/blue_dot/network.json
+    # Pinned to the signals-dpg `feature` branch for the latest schema changes
+    # (not yet on `develop`). Flip to `refs/heads/develop` once they merge.
+    source: https://raw.githubusercontent.com/Blue-Dots-Economy/Signals-DPG/refs/heads/feature/examples/schemas/blue_dot/network.json
     csv_array_delimiter: '|'
     field_overrides:
       seeker:

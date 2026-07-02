@@ -9,8 +9,10 @@ aggregator:
   contact_email: ops@purpledots.local
 
   network:
-    # Pin to a tag in production; develop is fine for local iteration.
-    source: https://raw.githubusercontent.com/Blue-Dots-Economy/Signals-DPG/refs/heads/develop/examples/schemas/purple_dot/network.json
+    # Pin to a tag in production. Pinned to the signals-dpg `feature` branch for
+    # the latest schema changes (not yet on `develop`); flip to
+    # `refs/heads/develop` once they merge.
+    source: https://raw.githubusercontent.com/Blue-Dots-Economy/Signals-DPG/refs/heads/feature/examples/schemas/purple_dot/network.json
     # Purple_dot schemas have array-typed fields (disability_type,
     # looking_for, documents_available) — bulk CSV cells use `|` as the
     # delimiter.

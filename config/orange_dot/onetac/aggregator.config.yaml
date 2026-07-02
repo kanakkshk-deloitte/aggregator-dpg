@@ -9,8 +9,10 @@ aggregator:
   contact_email: ops@onetac.local
 
   network:
-    # Pin to a tag in production; develop is fine for local iteration.
-    source: https://raw.githubusercontent.com/Blue-Dots-Economy/Signals-DPG/refs/heads/develop/examples/schemas/orange_dot/network.json
+    # Pin to a tag in production. Pinned to the signals-dpg `feature` branch for
+    # the latest schema changes (not yet on `develop`); flip to
+    # `refs/heads/develop` once they merge.
+    source: https://raw.githubusercontent.com/Blue-Dots-Economy/Signals-DPG/refs/heads/feature/examples/schemas/orange_dot/network.json
     # Mirror the purple_dot bulk-CSV array-delimiter for now — adjust
     # if orange_dot's schemas use a different separator.
     csv_array_delimiter: '|'

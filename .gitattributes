@@ -1,0 +1,5 @@
+# Shell scripts run INSIDE Linux containers (keycloak entrypoint + init,
+# postgres-init, etc.). They MUST stay LF on every OS — a Windows checkout
+# with core.autocrlf=true rewrites them to CRLF, which breaks the `#!/bin/sh`
+# shebang and `set -eu` and fails the keycloak-init / postgres-init containers.
+*.sh text eol=lf

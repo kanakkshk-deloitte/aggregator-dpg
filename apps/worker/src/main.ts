@@ -7,6 +7,10 @@
  * alongside.
  */
 
+// Load apps/worker/.env into process.env before config.js parses it (dev only;
+// no-op when the file is absent, e.g. Docker/prod inject env directly).
+import './env.js';
+
 import { Queue, Worker } from 'bullmq';
 import {
   QueueName,

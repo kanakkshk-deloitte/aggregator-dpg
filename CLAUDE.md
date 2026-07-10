@@ -87,6 +87,7 @@ Per-instance feature flag (default **off**), read once at startup by **both** th
 
 - **Hybrid (dev)** — `docker compose up -d` for backing services + `pnpm --filter ... dev` for api/web/worker outside the container. Uses `apps/<app>/.env` (copy from `.env.example`).
 - **Docker-only (VM / prod-like)** — `make setup && make up`. All env values live in a **single root `.env`** sectioned per service (`infra/env.template` is the canonical layout). `NEXT_PUBLIC_API_URL` is baked at compile time, so VM redeploys must use `docker compose up -d --build`.
+- **Unified full-ecosystem stack (`local-setup/`)** — brings up **both** aggregator-dpg *and* the upstream signals-dpg (+ shared Postgres/Redis/Keycloak/MinIO/Mailpit) in one `docker compose up -d`, wired for localhost. It builds both repos, so it expects `aggregator-dpg` and `signals-dpg` checked out as **siblings** and is run from `local-setup/`. See `local-setup/LOCAL_SETUP.md` for the full walkthrough (Track A = all-in-Docker, Track B = hybrid). The compose here (repo root `docker-compose.yml`) remains the VM/prod nginx+certbot ingress variant.
 
 When deploying to a VM, replace `localhost` and `keycloak` everywhere in `.env` with the VM hostname/IP, and update the `aggregator-portal` client's **Valid Redirect URIs** + **Web Origins** in the Keycloak admin console.
 

@@ -337,6 +337,9 @@ importers:
       bullmq:
         specifier: ^5.76.6
         version: 5.76.6
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
       drizzle-orm:
         specifier: ^0.36.4
         version: 0.36.4(@types/pg@8.20.0)(@types/react@18.3.28)(pg@8.20.0)(react@18.3.1)

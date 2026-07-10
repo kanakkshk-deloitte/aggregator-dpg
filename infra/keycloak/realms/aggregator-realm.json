@@ -205,7 +205,7 @@
     {
       "clientId": "aggregator-api",
       "name": "Aggregator API (service account)",
-      "description": "Confidential client used by apps/api for Keycloak admin operations (create user on registration approval, org group create + org_owner role assign, etc.). Service account holds realm-management: manage-users (user CRUD + role mapping) and manage-realm (group create/manage for the org hierarchy).",
+      "description": "Confidential client for apps/api Keycloak admin ops (create users on approval, org groups + org_owner role). Service account holds realm-management roles manage-users and manage-realm.",
       "enabled": true,
       "publicClient": false,
       "secret": "aggregator-api-dev-secret-change-me",

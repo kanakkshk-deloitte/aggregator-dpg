@@ -10,20 +10,32 @@ aggregator:
 
   network:
     # Pin to a tag in production; develop is fine for local iteration.
-    source: https://raw.githubusercontent.com/Blue-Dots-Economy/Signals-DPG/refs/heads/develop/examples/schemas/purple_dot/network.json
+    source: https://raw.githubusercontent.com/kanakkshk-deloitte/uploadable-files/refs/heads/main/network.json
     # Purple_dot schemas have array-typed fields (disability_type,
     # looking_for, documents_available) — bulk CSV cells use `|` as the
     # delimiter.
     csv_array_delimiter: '|'
     field_overrides:
-      seeker:
-        name: beneficiary_name
+      person_with_disability:
+        name: person_name
         phone: mobile_number
         email: email
-      provider:
+      service_provider:
         name: contact_name
         phone: contact_phone
         email: contact_email
+      employer:
+        name: contact_name
+        phone: contact_phone
+        email: contact_email
+      ngo:
+        name: contact_name
+        phone: contact_phone
+        email: contact_email
+      government:
+        name: nodal_officer_name
+        phone: nodal_officer_phone
+        email: nodal_officer_email
 
   brand:
     short_name: Purple Dots
@@ -36,14 +48,26 @@ aggregator:
     accent_color: '#a176e4'
 
   domain_labels:
-    seeker:
-      singular: Seeker
-      plural: Seekers
-      tab_label: Seekers
-    provider:
+    person_with_disability:
+      singular: Person with Disability
+      plural: Persons with Disabilities
+      tab_label: Persons with Disabilities
+    service_provider:
       singular: Service Provider
       plural: Service Providers
       tab_label: Providers
+    employer:
+      singular: Employer
+      plural: Employers
+      tab_label: Employers
+    ngo:
+      singular: NGO
+      plural: NGOs
+      tab_label: NGOs
+    government:
+      singular: Government
+      plural: Government Profiles
+      tab_label: Government
 
   onboarding:
     presume_consent: true

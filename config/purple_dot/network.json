@@ -1,0 +1,1325 @@
+{
+  "display_name": "Purple Dot",
+  "description": "Discovery and services network for People with Disabilities.",
+  "schema_standard": "https://json-schema.org/draft/2020-12/schema",
+  "domains": [
+    {
+      "description": "Persons with disabilities seeking jobs, training, healthcare, government schemes, and community support.",
+      "minimum_cache_ttl_seconds": 300,
+      "status_rules": [
+        {
+          "status": "new",
+          "label": "New",
+          "description": "Joined within the last 7 days",
+          "when": {
+            "item_age_days": {
+              "lte": 7
+            }
+          }
+        },
+        {
+          "status": "active",
+          "label": "Active",
+          "description": "Connected with a service provider in the last 30 days",
+          "when": {
+            "days_since_last": {
+              "buckets": ["create", "accept"],
+              "lte": 30
+            }
+          }
+        },
+        {
+          "status": "at_risk",
+          "label": "At Risk",
+          "description": "No activity for 30–90 days",
+          "when": {
+            "days_since_last": {
+              "buckets": ["create", "accept", "reject"],
+              "between": [31, 90]
+            }
+          }
+        },
+        {
+          "status": "inactive",
+          "label": "Inactive",
+          "description": "No activity 90+ days",
+          "when": "default"
+        }
+      ],
+      "item_schemas": {
+        "profile_1.0": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "Person with Disability Profile 1.0",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "person_name",
+            "mobile_number",
+            "age",
+            "gender",
+            "disability_type",
+            "disability_percentage",
+            "support_needed",
+            "support_details",
+            "documents_available",
+            "primary_address"
+          ],
+          "properties": {
+            "person_name": {
+              "type": "string",
+              "title": "Name",
+              "minLength": 1,
+              "private": true
+            },
+            "mobile_number": {
+              "type": "string",
+              "title": "Mobile",
+              "pattern": "^(?:\\+91[-\\s]?)?[0-9]{10}$",
+              "private": true
+            },
+            "email": {
+              "type": "string",
+              "title": "Email",
+              "format": "email",
+              "private": true
+            },
+            "age": {
+              "type": "integer",
+              "title": "Age",
+              "minimum": 0,
+              "maximum": 120
+            },
+            "gender": {
+              "type": "string",
+              "title": "Gender",
+              "enum": ["Male", "Female", "Other", "Prefer not to say"]
+            },
+            "disability_type": {
+              "vectorize": true,
+              "vector_weight": 2,
+              "type": "array",
+              "title": "Disability",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Acid Attack Victim",
+                  "Autism Spectrum Disorder",
+                  "Blindness",
+                  "Cerebral Palsy",
+                  "Dwarfism",
+                  "Hearing Impairment",
+                  "Hemophilia",
+                  "Intellectual Disability",
+                  "Leprosy Cured",
+                  "Locomotor Disability",
+                  "Low Vision",
+                  "Mental Illness",
+                  "Multiple Sclerosis",
+                  "Muscular Dystrophy",
+                  "Parkinson's Disease",
+                  "Sickle Cell Anaemia",
+                  "Specific Learning Disabilities",
+                  "Speech and Language Disability",
+                  "Thalassemia",
+                  "Chronic Neurological Conditions",
+                  "Multiple Disabilities including deaf-blindness"
+                ]
+              }
+            },
+            "disability_percentage": {
+              "type": "integer",
+              "title": "Disability %",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "support_needed": {
+              "type": "array",
+              "title": "Support Needed",
+              "description": "What are you looking for?",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Jobs",
+                  "Assistive Devices",
+                  "Health & Rehabilitation",
+                  "Training & Skill Building",
+                  "Scheme Application Support",
+                  "Counselling & Mentorship",
+                  "Accessibility Support",
+                  "Employment Opportunities",
+                  "Scholarships",
+                  "Financial Products (Loans/Insurance)",
+                  "Education",
+                  "Screening",
+                  "Pension",
+                  "Documentation Support",
+                  "Community Support",
+                  "Other"
+                ]
+              },
+              "vectorize": true
+            },
+            "support_details": {
+              "type": "string",
+              "title": "Details",
+              "description": "Explain your choice in more detail",
+              "minLength": 1,
+              "vectorize": true,
+              "vector_weight": 2
+            },
+            "primary_address": {
+              "type": "string",
+              "title": "Address",
+              "description": "Full address — house/flat, street, area, city, state, and pincode",
+              "minLength": 1,
+              "private": true,
+              "location": "primary"
+            },
+            "documents_available": {
+              "type": "array",
+              "title": "Documents",
+              "description": "Which documents do you have?",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Aadhaar",
+                  "Income Certificate",
+                  "Disability Certificate",
+                  "School ID",
+                  "Bank Account",
+                  "Other"
+                ]
+              }
+            },
+            "highest_qualification": {
+              "vectorize": true,
+              "type": "string",
+              "title": "Qualification",
+              "description": "Highest qualification",
+              "enum": [
+                "10th Pass",
+                "12th Pass",
+                "Diploma Pass",
+                "ITI Graduate",
+                "College Graduate",
+                "Post Graduate",
+                "None of the above"
+              ]
+            }
+          }
+        }
+      },
+      "id": "person_with_disability",
+      "card": {
+        "title_field": "person_name",
+        "avatar_from": "person_name",
+        "default_fields": ["disability_type", "support_needed", "highest_qualification"]
+      },
+      "dashboard_tiles": {
+        "profile": [
+          {
+            "field": "total_items",
+            "label": "Profiles Registered"
+          },
+          {
+            "field": "complete_profiles",
+            "label": "Profiles Complete"
+          },
+          {
+            "field": "has_applications",
+            "label": "Made Connections"
+          }
+        ],
+        "user": [
+          {
+            "field": "total_users",
+            "label": "Total Persons with Disabilities"
+          },
+          {
+            "field": "avg_items_per_user",
+            "label": "Avg Profiles per User"
+          },
+          {
+            "field": "avg_actions_per_user",
+            "label": "Avg Actions per User"
+          }
+        ]
+      }
+    },
+    {
+      "description": "Organisations and individuals providing services, devices, training, or other support for persons with disabilities.",
+      "minimum_cache_ttl_seconds": 300,
+      "status_rules": [
+        {
+          "status": "new",
+          "label": "New",
+          "description": "Service posted within the last 7 days",
+          "when": {
+            "item_age_days": {
+              "lte": 7
+            }
+          }
+        },
+        {
+          "status": "active",
+          "label": "Active",
+          "description": "Accepted or rejected a request in the last 30 days",
+          "when": {
+            "all": [
+              {
+                "count": {
+                  "buckets": ["create"],
+                  "gt": 0
+                }
+              },
+              {
+                "days_since_last": {
+                  "buckets": ["accept", "reject"],
+                  "lte": 30
+                }
+              }
+            ]
+          }
+        },
+        {
+          "status": "at_risk",
+          "label": "At Risk",
+          "description": "No responses for 30–90 days",
+          "when": {
+            "all": [
+              {
+                "count": {
+                  "buckets": ["create"],
+                  "gt": 0
+                }
+              },
+              {
+                "days_since_last": {
+                  "buckets": ["accept", "reject"],
+                  "between": [31, 90]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "status": "inactive",
+          "label": "Inactive",
+          "description": "No activity for 90+ days",
+          "when": "default"
+        }
+      ],
+      "item_schemas": {
+        "profile_1.0": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "Service Provider Profile 1.0",
+          "display_name_field": "service_provider_name",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "contact_name",
+            "contact_phone",
+            "provider_category",
+            "service_provider_name",
+            "disabilities_served",
+            "support_services",
+            "operating_cities",
+            "office_address",
+            "offering_details"
+          ],
+          "properties": {
+            "contact_name": {
+              "type": "string",
+              "title": "Contact Name",
+              "minLength": 1,
+              "private": true
+            },
+            "contact_phone": {
+              "type": "string",
+              "title": "Phone",
+              "pattern": "^(?:\\+91[-\\s]?)?[0-9]{10}$",
+              "private": true
+            },
+            "contact_email": {
+              "type": "string",
+              "title": "Email",
+              "format": "email",
+              "private": true
+            },
+            "provider_category": {
+              "vectorize": true,
+              "type": "string",
+              "title": "Category",
+              "description": "Select the category that applies to you",
+              "enum": [
+                "NGO / Trust",
+                "Government Body",
+                "Private Company",
+                "Community Group",
+                "Private Individual Practice",
+                "Hospital / Clinic",
+                "Educational Institution",
+                "Professional Network",
+                "Digital Platform"
+              ]
+            },
+            "service_provider_name": {
+              "type": "string",
+              "title": "Service Provider Name",
+              "description": "Name of your organisation (or your name if individual)",
+              "minLength": 1,
+              "vectorize": true
+            },
+            "disabilities_served": {
+              "vectorize": true,
+              "vector_weight": 2,
+              "type": "array",
+              "title": "Disabilities Served",
+              "description": "What type of seekers are you looking for?",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Acid Attack Victim",
+                  "Autism Spectrum Disorder",
+                  "Blindness",
+                  "Cerebral Palsy",
+                  "Dwarfism",
+                  "Hearing Impairment",
+                  "Hemophilia",
+                  "Intellectual Disability",
+                  "Leprosy Cured",
+                  "Locomotor Disability",
+                  "Low Vision",
+                  "Mental Illness",
+                  "Multiple Sclerosis",
+                  "Muscular Dystrophy",
+                  "Parkinson's Disease",
+                  "Sickle Cell Anaemia",
+                  "Specific Learning Disabilities",
+                  "Speech and Language Disability",
+                  "Thalassemia",
+                  "Chronic Neurological Conditions",
+                  "Multiple Disabilities including deaf-blindness"
+                ]
+              }
+            },
+            "support_services": {
+              "type": "array",
+              "title": "Services Offered",
+              "description": "What services or support do you provide?",
+              "vectorize": true,
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Assistive Devices",
+                  "Health & Rehabilitation",
+                  "Training & Skill Building",
+                  "Scheme Application Support",
+                  "Counselling & Mentorship",
+                  "Accessibility Support",
+                  "Employment Opportunities",
+                  "Scholarships",
+                  "Financial Products (Loans/Insurance)",
+                  "Education",
+                  "Screening",
+                  "Pension",
+                  "Documentation Support",
+                  "Community Support",
+                  "Other"
+                ]
+              }
+            },
+            "operating_cities": {
+              "type": "array",
+              "title": "Operating Cities",
+              "description": "Cities where seekers can access your services",
+              "location": "primary",
+              "minItems": 1,
+              "maxItems": 5,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "office_address": {
+              "type": "string",
+              "title": "Organisation Address",
+              "description": "Your organisation's office or headquarters address",
+              "minLength": 1,
+              "location": "secondary"
+            },
+            "offering_details": {
+              "type": "string",
+              "title": "Service Details",
+              "description": "Share more about the service, opportunity, or support provided",
+              "vectorize": true,
+              "vector_weight": 2,
+              "minLength": 1
+            },
+            "catalog_url": {
+              "type": "string",
+              "title": "Catalog URL",
+              "description": "URL to a catalog or service list you provide",
+              "format": "uri"
+            }
+          }
+        }
+      },
+      "id": "service_provider",
+      "card": {
+        "title_field": "service_provider_name",
+        "avatar_from": "service_provider_name",
+        "default_fields": [
+          "provider_category",
+          "support_services",
+          "operating_cities",
+          "disabilities_served"
+        ]
+      },
+      "dashboard_tiles": {
+        "profile": [
+          {
+            "field": "total_items",
+            "label": "Profiles Registered"
+          },
+          {
+            "field": "complete_profiles",
+            "label": "Profiles Complete"
+          },
+          {
+            "field": "has_applications",
+            "label": "Received Connections"
+          }
+        ],
+        "user": [
+          {
+            "field": "total_users",
+            "label": "Total Service Providers"
+          },
+          {
+            "field": "avg_items_per_user",
+            "label": "Avg Profiles per User"
+          },
+          {
+            "field": "avg_actions_per_user",
+            "label": "Avg Actions per User"
+          }
+        ]
+      }
+    },
+    {
+      "description": "Employers posting roles, discovering nearby talent, and tracking hiring outcomes.",
+      "minimum_cache_ttl_seconds": 300,
+      "status_rules": [
+        {
+          "status": "new",
+          "label": "New",
+          "description": "Joined within the last 7 days",
+          "when": {
+            "item_age_days": {
+              "lte": 7
+            }
+          }
+        },
+        {
+          "status": "active",
+          "label": "Active",
+          "description": "Shared role updates in the last 30 days",
+          "when": {
+            "days_since_last": {
+              "buckets": ["create", "accept", "reject"],
+              "lte": 30
+            }
+          }
+        },
+        {
+          "status": "at_risk",
+          "label": "At Risk",
+          "description": "No activity for 30-90 days",
+          "when": {
+            "days_since_last": {
+              "buckets": ["create", "accept", "reject"],
+              "between": [31, 90]
+            }
+          }
+        },
+        {
+          "status": "inactive",
+          "label": "Inactive",
+          "description": "No activity 90+ days",
+          "when": "default"
+        }
+      ],
+      "item_schemas": {
+        "profile_1.0": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "Employer Profile 1.0",
+          "display_name_field": "employer_name",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "employer_name",
+            "contact_name",
+            "contact_phone",
+            "industry",
+            "hiring_roles",
+            "hiring_cities",
+            "role_details"
+          ],
+          "properties": {
+            "employer_name": {
+              "type": "string",
+              "title": "Employer Name",
+              "minLength": 1,
+              "vectorize": true
+            },
+            "contact_name": {
+              "type": "string",
+              "title": "Contact Name",
+              "minLength": 1,
+              "private": true
+            },
+            "contact_phone": {
+              "type": "string",
+              "title": "Phone",
+              "pattern": "^(?:\\+91[-\\s]?)?[0-9]{10}$",
+              "private": true
+            },
+            "contact_email": {
+              "type": "string",
+              "title": "Email",
+              "format": "email",
+              "private": true
+            },
+            "industry": {
+              "type": "string",
+              "title": "Industry",
+              "enum": [
+                "Manufacturing",
+                "Retail",
+                "Healthcare",
+                "Education",
+                "Technology",
+                "Hospitality",
+                "Logistics",
+                "Other"
+              ],
+              "vectorize": true
+            },
+            "hiring_roles": {
+              "type": "array",
+              "title": "Hiring Roles",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "vectorize": true,
+              "vector_weight": 2
+            },
+            "hiring_cities": {
+              "type": "array",
+              "title": "Hiring Cities",
+              "location": "primary",
+              "minItems": 1,
+              "maxItems": 5,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "role_details": {
+              "type": "string",
+              "title": "Role Details",
+              "minLength": 1,
+              "vectorize": true,
+              "vector_weight": 2
+            },
+            "work_mode": {
+              "type": "string",
+              "title": "Work Mode",
+              "enum": ["Onsite", "Hybrid", "Remote", "Flexible"],
+              "vectorize": true
+            }
+          }
+        }
+      },
+      "id": "employer",
+      "card": {
+        "title_field": "employer_name",
+        "avatar_from": "employer_name",
+        "default_fields": ["industry", "hiring_roles", "hiring_cities"]
+      },
+      "dashboard_tiles": {
+        "profile": [
+          {
+            "field": "total_items",
+            "label": "Profiles Registered"
+          },
+          {
+            "field": "complete_profiles",
+            "label": "Profiles Complete"
+          },
+          {
+            "field": "has_applications",
+            "label": "Made Connections"
+          }
+        ],
+        "user": [
+          {
+            "field": "total_users",
+            "label": "Total Employers"
+          },
+          {
+            "field": "avg_items_per_user",
+            "label": "Avg Profiles per User"
+          },
+          {
+            "field": "avg_actions_per_user",
+            "label": "Avg Actions per User"
+          }
+        ]
+      }
+    },
+    {
+      "description": "NGOs identifying support needs, scheduling camps, and enabling meaningful local connections.",
+      "minimum_cache_ttl_seconds": 300,
+      "status_rules": [
+        {
+          "status": "new",
+          "label": "New",
+          "description": "Joined within the last 7 days",
+          "when": {
+            "item_age_days": {
+              "lte": 7
+            }
+          }
+        },
+        {
+          "status": "active",
+          "label": "Active",
+          "description": "Responded to requests in the last 30 days",
+          "when": {
+            "days_since_last": {
+              "buckets": ["accept", "reject"],
+              "lte": 30
+            }
+          }
+        },
+        {
+          "status": "at_risk",
+          "label": "At Risk",
+          "description": "No responses for 30-90 days",
+          "when": {
+            "days_since_last": {
+              "buckets": ["accept", "reject"],
+              "between": [31, 90]
+            }
+          }
+        },
+        {
+          "status": "inactive",
+          "label": "Inactive",
+          "description": "No activity 90+ days",
+          "when": "default"
+        }
+      ],
+      "item_schemas": {
+        "profile_1.0": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "NGO Profile 1.0",
+          "display_name_field": "ngo_name",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ngo_name",
+            "contact_name",
+            "contact_phone",
+            "focus_areas",
+            "support_programs",
+            "operating_cities"
+          ],
+          "properties": {
+            "ngo_name": {
+              "type": "string",
+              "title": "NGO Name",
+              "minLength": 1,
+              "vectorize": true
+            },
+            "contact_name": {
+              "type": "string",
+              "title": "Contact Name",
+              "minLength": 1,
+              "private": true
+            },
+            "contact_phone": {
+              "type": "string",
+              "title": "Phone",
+              "pattern": "^(?:\\+91[-\\s]?)?[0-9]{10}$",
+              "private": true
+            },
+            "contact_email": {
+              "type": "string",
+              "title": "Email",
+              "format": "email",
+              "private": true
+            },
+            "focus_areas": {
+              "type": "array",
+              "title": "Focus Areas",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Disability Inclusion",
+                  "Healthcare",
+                  "Rehabilitation",
+                  "Education",
+                  "Livelihood",
+                  "Documentation Support",
+                  "Community Mobilization",
+                  "Other"
+                ]
+              },
+              "vectorize": true,
+              "vector_weight": 2
+            },
+            "support_programs": {
+              "type": "array",
+              "title": "Support Programs",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "vectorize": true
+            },
+            "operating_cities": {
+              "type": "array",
+              "title": "Operating Cities",
+              "location": "primary",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "camp_frequency": {
+              "type": "string",
+              "title": "Camp Frequency",
+              "enum": ["Weekly", "Bi-weekly", "Monthly", "Quarterly", "As Needed"],
+              "vectorize": true
+            },
+            "ngo_address": {
+              "type": "string",
+              "title": "Address",
+              "minLength": 1,
+              "location": "secondary"
+            }
+          }
+        }
+      },
+      "id": "ngo",
+      "card": {
+        "title_field": "ngo_name",
+        "avatar_from": "ngo_name",
+        "default_fields": ["focus_areas", "support_programs", "operating_cities"]
+      },
+      "dashboard_tiles": {
+        "profile": [
+          {
+            "field": "total_items",
+            "label": "Profiles Registered"
+          },
+          {
+            "field": "complete_profiles",
+            "label": "Profiles Complete"
+          },
+          {
+            "field": "has_applications",
+            "label": "Received Connections"
+          }
+        ],
+        "user": [
+          {
+            "field": "total_users",
+            "label": "Total NGOs"
+          },
+          {
+            "field": "avg_items_per_user",
+            "label": "Avg Profiles per User"
+          },
+          {
+            "field": "avg_actions_per_user",
+            "label": "Avg Actions per User"
+          }
+        ]
+      }
+    },
+    {
+      "description": "Government entities tracking coverage, connections, employment, and scheme utilization.",
+      "minimum_cache_ttl_seconds": 300,
+      "status_rules": [
+        {
+          "status": "new",
+          "label": "New",
+          "description": "Joined within the last 7 days",
+          "when": {
+            "item_age_days": {
+              "lte": 7
+            }
+          }
+        },
+        {
+          "status": "active",
+          "label": "Active",
+          "description": "Published or updated schemes in the last 30 days",
+          "when": {
+            "days_since_last": {
+              "buckets": ["create", "accept"],
+              "lte": 30
+            }
+          }
+        },
+        {
+          "status": "at_risk",
+          "label": "At Risk",
+          "description": "No updates for 30-90 days",
+          "when": {
+            "days_since_last": {
+              "buckets": ["create", "accept", "reject"],
+              "between": [31, 90]
+            }
+          }
+        },
+        {
+          "status": "inactive",
+          "label": "Inactive",
+          "description": "No activity 90+ days",
+          "when": "default"
+        }
+      ],
+      "item_schemas": {
+        "profile_1.0": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "Government Profile 1.0",
+          "display_name_field": "department_name",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "department_name",
+            "nodal_officer_name",
+            "nodal_officer_phone",
+            "scheme_categories",
+            "coverage_area",
+            "support_channels"
+          ],
+          "properties": {
+            "department_name": {
+              "type": "string",
+              "title": "Department Name",
+              "minLength": 1,
+              "vectorize": true
+            },
+            "nodal_officer_name": {
+              "type": "string",
+              "title": "Nodal Officer",
+              "minLength": 1,
+              "private": true
+            },
+            "nodal_officer_phone": {
+              "type": "string",
+              "title": "Nodal Officer Phone",
+              "pattern": "^(?:\\+91[-\\s]?)?[0-9]{10}$",
+              "private": true
+            },
+            "nodal_officer_email": {
+              "type": "string",
+              "title": "Nodal Officer Email",
+              "format": "email",
+              "private": true
+            },
+            "scheme_categories": {
+              "type": "array",
+              "title": "Scheme Categories",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Healthcare",
+                  "Education",
+                  "Assistive Devices",
+                  "Livelihood",
+                  "Social Security",
+                  "Housing",
+                  "Other"
+                ]
+              },
+              "vectorize": true,
+              "vector_weight": 2
+            },
+            "coverage_area": {
+              "type": "string",
+              "title": "Coverage Area",
+              "description": "District, state, or national coverage",
+              "minLength": 1,
+              "location": "primary"
+            },
+            "support_channels": {
+              "type": "array",
+              "title": "Support Channels",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": ["Helpline", "Office Visit", "Online Portal", "Camp", "Community Worker"]
+              },
+              "vectorize": true
+            },
+            "scheme_details": {
+              "type": "string",
+              "title": "Scheme Details",
+              "minLength": 1,
+              "vectorize": true
+            }
+          }
+        }
+      },
+      "id": "government",
+      "card": {
+        "title_field": "department_name",
+        "avatar_from": "department_name",
+        "default_fields": ["scheme_categories", "coverage_area", "support_channels"]
+      },
+      "dashboard_tiles": {
+        "profile": [
+          {
+            "field": "total_items",
+            "label": "Profiles Registered"
+          },
+          {
+            "field": "complete_profiles",
+            "label": "Profiles Complete"
+          },
+          {
+            "field": "has_applications",
+            "label": "Received Connections"
+          }
+        ],
+        "user": [
+          {
+            "field": "total_users",
+            "label": "Total Government Profiles"
+          },
+          {
+            "field": "avg_items_per_user",
+            "label": "Avg Profiles per User"
+          },
+          {
+            "field": "avg_actions_per_user",
+            "label": "Avg Actions per User"
+          }
+        ]
+      }
+    }
+  ],
+  "instances": [
+    {
+      "instance_name": "Purple Dot Person with Disability Local",
+      "instance_url": "http://13.127.112.140/purple-dot-api",
+      "custom_item_schema_urls": {},
+      "domain_id": "person_with_disability"
+    },
+    {
+      "instance_name": "Purple Dot Service Provider Local",
+      "instance_url": "http://13.127.112.140/purple-dot-api",
+      "custom_item_schema_urls": {},
+      "domain_id": "service_provider"
+    },
+    {
+      "instance_name": "Purple Dot Employer Local",
+      "instance_url": "http://13.127.112.140/purple-dot-api",
+      "custom_item_schema_urls": {},
+      "domain_id": "employer"
+    },
+    {
+      "instance_name": "Purple Dot NGO Local",
+      "instance_url": "http://13.127.112.140/purple-dot-api",
+      "custom_item_schema_urls": {},
+      "domain_id": "ngo"
+    },
+    {
+      "instance_name": "Purple Dot Government Local",
+      "instance_url": "http://13.127.112.140/purple-dot-api",
+      "custom_item_schema_urls": {},
+      "domain_id": "government"
+    }
+  ],
+  "actions": {
+    "connect": {
+      "description": "Lets a person with disability and a service provider request a connection with each other. Either party can initiate; the receiver can accept, reject, or the initiator can cancel before the receiver responds.",
+      "interactions": [
+        {
+          "from_network": "purple_dot",
+          "from_domain": "person_with_disability",
+          "to_network": "purple_dot",
+          "to_domain": "service_provider",
+          "requirement_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "event_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Person with Disability To Service Provider Connect Event",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "remark"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["created", "accepted", "rejected", "cancelled"]
+              },
+              "remark": {
+                "type": "string"
+              }
+            }
+          },
+          "metric_categories": {
+            "create": ["created"],
+            "accept": ["accepted"],
+            "reject": ["rejected"],
+            "cancel": ["cancelled"]
+          },
+          "reveals_pii_on_status": ["accepted"]
+        },
+        {
+          "from_network": "purple_dot",
+          "from_domain": "person_with_disability",
+          "to_network": "purple_dot",
+          "to_domain": "employer",
+          "requirement_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "event_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Person with Disability To Employer Connect Event",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "remark"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["created", "accepted", "rejected", "cancelled"]
+              },
+              "remark": {
+                "type": "string"
+              }
+            }
+          },
+          "metric_categories": {
+            "create": ["created"],
+            "accept": ["accepted"],
+            "reject": ["rejected"],
+            "cancel": ["cancelled"]
+          },
+          "reveals_pii_on_status": ["accepted"]
+        },
+        {
+          "from_network": "purple_dot",
+          "from_domain": "person_with_disability",
+          "to_network": "purple_dot",
+          "to_domain": "ngo",
+          "requirement_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "event_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Person with Disability To NGO Connect Event",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "remark"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["created", "accepted", "rejected", "cancelled"]
+              },
+              "remark": {
+                "type": "string"
+              }
+            }
+          },
+          "metric_categories": null,
+          "reveals_pii_on_status": ["accepted"]
+        },
+        {
+          "from_network": "purple_dot",
+          "from_domain": "person_with_disability",
+          "to_network": "purple_dot",
+          "to_domain": "government",
+          "requirement_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "event_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Person with Disability To Government Connect Event",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "remark"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["created", "accepted", "rejected", "cancelled"]
+              },
+              "remark": {
+                "type": "string"
+              }
+            }
+          },
+          "metric_categories": null,
+          "reveals_pii_on_status": ["accepted"]
+        },
+        {
+          "from_network": "purple_dot",
+          "from_domain": "service_provider",
+          "to_network": "purple_dot",
+          "to_domain": "person_with_disability",
+          "requirement_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "event_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Service Provider To Person with Disability Connect Event",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "remark"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["created", "accepted", "rejected", "cancelled"]
+              },
+              "remark": {
+                "type": "string"
+              }
+            }
+          },
+          "metric_categories": null,
+          "reveals_pii_on_status": ["accepted"]
+        },
+        {
+          "from_network": "purple_dot",
+          "from_domain": "employer",
+          "to_network": "purple_dot",
+          "to_domain": "person_with_disability",
+          "requirement_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "event_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Employer To Person with Disability Connect Event",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "remark"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["created", "accepted", "rejected", "cancelled"]
+              },
+              "remark": {
+                "type": "string"
+              }
+            }
+          },
+          "metric_categories": null,
+          "reveals_pii_on_status": ["accepted"]
+        },
+        {
+          "from_network": "purple_dot",
+          "from_domain": "ngo",
+          "to_network": "purple_dot",
+          "to_domain": "person_with_disability",
+          "requirement_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "event_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "NGO To Person with Disability Connect Event",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "remark"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["created", "accepted", "rejected", "cancelled"]
+              },
+              "remark": {
+                "type": "string"
+              }
+            }
+          },
+          "metric_categories": null,
+          "reveals_pii_on_status": ["accepted"]
+        },
+        {
+          "from_network": "purple_dot",
+          "from_domain": "government",
+          "to_network": "purple_dot",
+          "to_domain": "person_with_disability",
+          "requirement_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "event_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Government To Person with Disability Connect Event",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "remark"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["created", "accepted", "rejected", "cancelled"]
+              },
+              "remark": {
+                "type": "string"
+              }
+            }
+          },
+          "metric_categories": null,
+          "reveals_pii_on_status": ["accepted"]
+        }
+      ]
+    }
+  },
+  "id": "purple_dot",
+  "dashboard_buckets": {
+    "by_status": {
+      "new": "New",
+      "active": "Active",
+      "at_risk": "At Risk",
+      "inactive": "Inactive"
+    },
+    "by_initiated_action_status": {
+      "create": "Requested",
+      "accept": "Accepted",
+      "reject": "Declined",
+      "cancel": "Cancelled"
+    },
+    "by_received_action_status": {
+      "create": "Requests",
+      "accept": "Connected",
+      "reject": "Declined",
+      "cancel": "Cancelled"
+    }
+  }
+}

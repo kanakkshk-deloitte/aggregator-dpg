@@ -40,12 +40,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: ${POSTGRES_DB:-aggregator}
     ports:
-      - "5433:5432"   # host 5433 → container 5432 (avoids clashes with a system Postgres on 5432)
+      - "5433:5432" # host 5433 → container 5432 (avoids clashes with a system Postgres on 5432)
     volumes:
       - aggregator-postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aggregator} -d ${POSTGRES_DB:-aggregator}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aggregator} -d ${POSTGRES_DB:-aggregator}" ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -54,13 +54,13 @@ services:
     image: redis:7-alpine
     container_name: aggregator-redis
     restart: unless-stopped
-    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    command: [ "redis-server", "--save", "60", "1", "--loglevel", "warning" ]
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -79,7 +79,7 @@ services:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: aggregator-minio
     restart: unless-stopped
-    command: ["server", "/data", "--console-address", ":9001"]
+    command: [ "server", "/data", "--console-address", ":9001" ]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -92,7 +92,7 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1"]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1" ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -129,8 +129,8 @@ services:
     # start-dev --import-realm. The keycloak-init sidecar then re-applies SMTP +
     # unmanagedAttributePolicy via REST so they take effect even when the realm
     # already existed in postgres from a previous boot.
-    entrypoint: ["/opt/keycloak/render-realm.sh"]
-    command: ["start-dev", "--import-realm"]
+    entrypoint: [ "/opt/keycloak/render-realm.sh" ]
+    command: [ "start-dev", "--import-realm" ]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?KC_BOOTSTRAP_ADMIN_PASSWORD must be set in .env}
@@ -204,7 +204,7 @@ services:
     healthcheck:
       # KC_HTTP_RELATIVE_PATH=/auth applies to the management interface too,
       # so the readiness endpoint moved from /health/ready → /auth/health/ready.
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /auth/health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q '200'"]
+      test: [ "CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /auth/health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q '200'" ]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -235,6 +235,7 @@ services:
       SMTP_SECURE: ${SMTP_SECURE:-false}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      PUBLIC_BASE_URL: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}"
       # Drives client reconciliation in step 3 of apply-user-profile.sh:
       # flips aggregator-portal to confidential and syncs the secret so it
       # matches whatever the BFF (web service) is configured with.
@@ -245,7 +246,7 @@ services:
       API_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-aggregator-api}
     volumes:
       - ./infra/keycloak/init:/init:ro
-    entrypoint: ["sh", "-c", "apk add --no-cache curl jq > /dev/null && sh /init/apply-user-profile.sh"]
+    entrypoint: [ "sh", "-c", "apk add --no-cache curl jq > /dev/null && sh /init/apply-user-profile.sh" ]
     restart: "no"
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -427,7 +428,7 @@ services:
       # Active paths are picked by AGGREGATOR_NETWORK/AGGREGATOR_BRAND env.
       - ./config:/app/config:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health/ready || exit 1"]
+      test: [ "CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health/ready || exit 1" ]
       interval: 10s
       timeout: 3s
       retries: 10
@@ -550,8 +551,8 @@ services:
 volumes:
   aggregator-postgres-data:
   redis-data:
-  minio-data:
-  # Persists Let's Encrypt account keys + issued certs across container
+  minio-data: # Persists Let's Encrypt account keys + issued certs across container
+
   # restarts. Wiping this volume forces a fresh ACME registration — be
   # mindful of LE rate limits (5 duplicate certs per week per domain).
   nginx-letsencrypt:

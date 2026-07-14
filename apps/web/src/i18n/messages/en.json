@@ -238,7 +238,8 @@
     "overview": "Overview",
     "portal_label": "Aggregator Portal",
     "sign_out": "Sign Out",
-    "aggregator_sublabel": "Aggregator · Karnataka"
+    "aggregator_sublabel": "Aggregator · Karnataka",
+    "contact_support": "Contact support"
   },
   "onboarding": {
     "title": "Onboarding",
@@ -286,6 +287,7 @@
       "hint": ".csv only · UTF-8 encoded · uploaded as {type}s",
       "upload_button": "Upload",
       "uploading": "Uploading…",
+      "success_note": "Accounts will be live once the user logs in on the platform or via the call.",
       "security_note": "All uploads are scanned and validated before import.",
       "remove_file": "Remove file",
       "recent": {
@@ -380,6 +382,20 @@
     "view": {
       "topbar_title": "Aggregator Profile",
       "topbar_subtitle": "Manage your aggregator identity and settings.",
+      "loading": "Loading profile…",
+      "readonly_note": "This is the information captured at registration. It cannot be edited here.",
+      "btn_request_update": "Request an update",
+      "update_request_heading": "Request a profile update",
+      "update_request_desc": "Describe the change you need. Your request will be sent to the admin who approves your aggregator.",
+      "update_request_placeholder": "e.g. Please update our registered address to …",
+      "btn_submit_request": "Submit request",
+      "btn_cancel": "Cancel",
+      "update_request_pending": "Update requests aren't connected yet — the admin approval email flow is coming soon.",
+      "update_request_empty": "No fields are available to update right now.",
+      "col_field": "Field",
+      "col_current": "Current",
+      "col_requested": "New",
+      "new_value_placeholder": "Enter the new value",
       "toast_saved": "Profile saved",
       "error_load_title": "Could not load profile",
       "error_load_detail": "We hit an error fetching the aggregator profile. Please try again shortly.",
@@ -527,5 +543,20 @@
       "exchange_token_verify_failed": "security check failed (token verification)",
       "unknown": "unexpected sign-in error"
     }
+  },
+  "support": {
+    "title": "Contact support",
+    "description": "Tell us what's going on and we'll get back to you.",
+    "label_subject": "Subject (optional)",
+    "placeholder_subject": "Brief summary",
+    "label_message": "Message",
+    "placeholder_message": "Describe your issue or request",
+    "submit": "Send",
+    "cancel": "Cancel",
+    "sending": "Sending…",
+    "validation_message_required": "Please enter a message",
+    "success": "Message sent. Our team will get back to you.",
+    "unavailable": "Support isn't available right now. Please try again later.",
+    "error": "Couldn't send your message. Please try again in a moment."
   }
 }

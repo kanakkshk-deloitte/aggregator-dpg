@@ -12,7 +12,7 @@ Track B = hybrid hot-reload).
 
 ## Required layout
 
-The compose builds *both* repos, so it expects them checked out as **siblings**
+The compose builds _both_ repos, so it expects them checked out as **siblings**
 and is always run **from this directory**:
 
 ```
@@ -37,14 +37,14 @@ Mailpit → http://localhost:8025 · Keycloak → http://localhost:8080/admin
 
 ## Contents
 
-| File | Purpose |
-|---|---|
-| `docker-compose.yml` | the unified stack (both DPGs + shared infra) |
-| `.env.example` | single root env with working dev defaults — copy to `.env` |
-| `LOCAL_SETUP.md` | from-scratch setup guide, both run modes, troubleshooting |
-| `infra/postgres.Dockerfile` | Postgres 17 + PostGIS + pgvector image |
-| `infra/postgres-init/` | creates the `signals` + `keycloak` DBs on first boot |
-| `infra/signals-bootstrap.Dockerfile` | one-shot signals migrate + seed tools image |
+| File                                 | Purpose                                                    |
+| ------------------------------------ | ---------------------------------------------------------- |
+| `docker-compose.yml`                 | the unified stack (both DPGs + shared infra)               |
+| `.env.example`                       | single root env with working dev defaults — copy to `.env` |
+| `LOCAL_SETUP.md`                     | from-scratch setup guide, both run modes, troubleshooting  |
+| `infra/postgres.Dockerfile`          | Postgres 17 + PostGIS + pgvector image                     |
+| `infra/postgres-init/`               | creates the `signals` + `keycloak` DBs on first boot       |
+| `infra/signals-bootstrap.Dockerfile` | one-shot signals migrate + seed tools image                |
 
 > This is **local dev only**. The repo-root `../docker-compose.yml` is the
 > separate VM/prod nginx+certbot ingress variant for aggregator-dpg alone.

@@ -24,6 +24,20 @@ import { deepMerge } from '../merge.js';
 const CONSENT_SUFFIX = join('schemas', 'aggregator', 'consent.json');
 
 /**
+ * Placeholder canonical consent files ship in place of the literal
+ * support/grievance email, so the address is configurable without editing
+ * consent content. Rendered to `CONSENT_SUPPORT_EMAIL` (default below) at load;
+ * deployed instances additionally have it substituted upstream at ConfigMap
+ * render, so this keeps local/direct reads showing a real address.
+ */
+const SUPPORT_EMAIL_PLACEHOLDER = '__SUPPORT_EMAIL__';
+const DEFAULT_SUPPORT_EMAIL = 'hello@bluedotseconomy.org';
+
+function resolveSupportEmail(): string {
+  return process.env.CONSENT_SUPPORT_EMAIL || DEFAULT_SUPPORT_EMAIL;
+}
+
+/**
  * Returns true if the file at `filePath` exists and is readable.
  *
  * @param filePath - Absolute path to test.
@@ -47,7 +61,10 @@ async function fileExists(filePath: string): Promise<boolean> {
 async function readJson(filePath: string): Promise<unknown> {
   try {
     const text = await readFile(filePath, 'utf8');
-    return JSON.parse(text) as unknown;
+    // Render the support-email placeholder before parsing so every content
+    // field that references it picks up the configured address.
+    const rendered = text.split(SUPPORT_EMAIL_PLACEHOLDER).join(resolveSupportEmail());
+    return JSON.parse(rendered) as unknown;
   } catch (err) {
     throw new ConfigError(`Failed to read or parse consent config at ${filePath}`, {
       code: 'CONSENT_CONFIG_READ_ERROR',

@@ -54,7 +54,7 @@ The platform is provided on an "as is" and "as available" basis, without warrant
 
 ### 5. Governing law
 
-These terms are governed by the laws of India. Questions or grievances: **support@onest.network**.
+These terms are governed by the laws of India. Questions or grievances: **hello@bluedotseconomy.org**.
 ```
 
 **Privacy Policy (org):**
@@ -79,11 +79,11 @@ We do not sell your data. Organisation details are shared only as needed to oper
 
 ### Your control & retention
 
-To update or remove your organisation's information, contact **support@onest.network**. We keep it for as long as the organisation participates, except where limited records must be retained to meet legal obligations.
+To update or remove your organisation's information, contact **hello@bluedotseconomy.org**. We keep it for as long as the organisation participates, except where limited records must be retained to meet legal obligations.
 
 ### Grievances
 
-For any privacy question or request, contact **support@onest.network**.
+For any privacy question or request, contact **hello@bluedotseconomy.org**.
 ```
 
 ### `aggregator` (coordinator) audience
@@ -115,7 +115,7 @@ The platform is provided on an "as is" and "as available" basis, without warrant
 
 ### 5. Governing law
 
-These terms are governed by the laws of India. Questions or grievances: **support@onest.network**.
+These terms are governed by the laws of India. Questions or grievances: **hello@bluedotseconomy.org**.
 ```
 
 **Privacy Policy (aggregator):**
@@ -140,11 +140,11 @@ We do not sell your data. Your details are shared only as needed to operate the 
 
 ### Your control & retention
 
-To update or remove your information, contact **support@onest.network**. We keep it while you participate as an aggregator, except where limited records must be retained to meet legal obligations.
+To update or remove your information, contact **hello@bluedotseconomy.org**. We keep it while you participate as an aggregator, except where limited records must be retained to meet legal obligations.
 
 ### Grievances
 
-For any privacy question or request, contact **support@onest.network**.
+For any privacy question or request, contact **hello@bluedotseconomy.org**.
 ```
 
 ---

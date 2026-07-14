@@ -156,6 +156,22 @@ export const ERR = {
     hint: 'signalstack-writer.probeUser returned a non-2xx (transport, timeout, or upstream error). Distinct from SIGNALSTACK_PUSH_FAILED, which is the write-mode error.',
   },
 
+  // ── Support / contact form ──────────────────────────────────────────────────
+  SUPPORT_NOT_CONFIGURED: {
+    code: 'SUPPORT_NOT_CONFIGURED',
+    status: 503,
+    title: 'Support unavailable',
+    detail: 'Support is not configured on this instance.',
+    hint: 'Set SUPPORT_EMAIL to enable the contact-support form.',
+  },
+  SUPPORT_SEND_FAILED: {
+    code: 'SUPPORT_SEND_FAILED',
+    status: 502,
+    title: 'Could not send support message',
+    detail: 'Failed to send your message. Please try again later.',
+    hint: 'The mail transport rejected or failed the send.',
+  },
+
   // ── Persistence ─────────────────────────────────────────────────────────
   DB_UNAVAILABLE: {
     code: 'DB_UNAVAILABLE',

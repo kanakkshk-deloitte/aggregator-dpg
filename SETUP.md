@@ -167,6 +167,8 @@ APPROVAL_TOKEN_SECRET=<openssl rand -hex 32>
 # ADMIN_EMAILS=admin@yourorg.in
 ```
 
+- `SUPPORT_EMAIL` — recipient for the portal "Contact support" form (Sidebar). Unset ⇒ the button is hidden and the endpoint returns 503. Uses the same mailer as registration emails; Reply-To is the submitting coordinator. Locally, mail lands in Mailpit (`:8025`).
+
 The Keycloak admin client secret in the example file matches the value the realm import sets locally. If you change it later, sync `KEYCLOAK_ADMIN_CLIENT_SECRET` here and `BFF_SERVICE_CLIENT_SECRET` in `apps/web/.env`.
 
 ### apps/web/.env — required edits

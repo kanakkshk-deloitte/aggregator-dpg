@@ -16,9 +16,31 @@ import {
 import type { BulkUploadStatus } from '../../../../services/onboarding.service';
 import { onboardingService } from '../../../../services/onboarding.service';
 
+// Module-level so its identity is stable across CSVUpload re-renders. Defining
+// it inline re-created the component every render, remounting the toast and
+// restarting its timer — which read as the message flickering/switching fast.
+function UploadToast({ message, onDone }: { message: string; onDone: () => void }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    const timer = setTimeout(onDone, 6000);
+    return () => clearTimeout(timer);
+  }, [onDone]);
+  if (!mounted) return null;
+  return createPortal(
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed top-4 right-4 z-[100] max-w-sm rounded-[10px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-700 shadow-lg inline-flex items-start gap-2"
+    >
+      <I.check size={14} className="mt-0.5 shrink-0" /> <span>{message}</span>
+    </div>,
+    document.body,
+  );
+}
+
 export function CSVUpload() {
   const t = useTranslations('onboarding');
-  const router = useRouter();
   const rawProfile = useProfileRaw();
   const { data: cfg = DEFAULT_AGGREGATOR_CONFIG } = useAggregatorConfig();
   // Aggregator registered participant focus, mirrored from the
@@ -40,6 +62,7 @@ export function CSVUpload() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const upload = useBulkUpload();
   const recent = useRecentBulkUploads(10);
+  const router = useRouter();
 
   const acceptFile = (f: File) => {
     if (!/\.csv$/i.test(f.name)) {
@@ -76,36 +99,19 @@ export function CSVUpload() {
         recent.refetch();
         return;
       }
-      setToast('File uploaded');
+      // Stay on the page so the success note is readable and the just-uploaded
+      // run appears in the recent-uploads list below. Processing continues in
+      // the worker. (Previously navigated to /onboarding immediately, which
+      // unmounted the toast before it could be read.)
+      setToast(t('csv.success_note'));
       recent.refetch();
-      // Mirror the link-creation flow: hand the user back to the
-      // onboarding home so they can pick the next action. Processing
-      // continues in the worker — the recent uploads section on
-      // /onboarding/bulk-uploads will reflect status when revisited.
-      router.push('/onboarding');
+      // Let the success toast be read, then return to the onboarding overview.
+      // A short delay (not an immediate push) avoids unmounting the toast the
+      // instant it appears — the bug the previous "navigate immediately" had.
+      setTimeout(() => router.push('/onboarding'), 2500);
     } catch (err) {
       setUploadError((err as Error).message);
     }
-  };
-
-  const UploadToast = ({ message, onDone }: { message: string; onDone: () => void }) => {
-    const [mounted, setMounted] = useState(false);
-    useEffect(() => setMounted(true), []);
-    useEffect(() => {
-      const t = setTimeout(onDone, 2400);
-      return () => clearTimeout(t);
-    }, [onDone]);
-    if (!mounted) return null;
-    return createPortal(
-      <div
-        role="status"
-        aria-live="polite"
-        className="fixed top-4 right-4 z-[100] rounded-[10px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-700 shadow-lg inline-flex items-center gap-2"
-      >
-        <I.check size={14} /> {message}
-      </div>,
-      document.body,
-    );
   };
 
   const downloadTemplate = () => {

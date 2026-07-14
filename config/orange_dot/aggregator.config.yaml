@@ -12,7 +12,7 @@ aggregator:
     # Pin to a tag in production; develop is fine for local iteration.
     # Sourced from the signals-dpg `feature` branch until orange_dot/network.json
     # lands on `develop`. Update to `refs/heads/develop` once merged.
-    source: https://raw.githubusercontent.com/Blue-Dots-Economy/Signals-DPG/refs/heads/feature/examples/schemas/orange_dot/network.json
+    source: https://raw.githubusercontent.com/Blue-Dots-Economy/Signals-DPG/refs/heads/develop/examples/schemas/orange_dot/network.json
     # Mirror the purple_dot bulk-CSV array-delimiter for now — adjust
     # if orange_dot's schemas use a different separator.
     csv_array_delimiter: '|'
@@ -21,8 +21,9 @@ aggregator:
         name: name
         phone: phone_number
       practitioner:
-        name: name
+        name: product_name
         phone: contact_phone
+        email: email
 
   brand:
     short_name: Orange Dots

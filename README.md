@@ -3,7 +3,7 @@
 **Status:** Draft v0.1 (product spec) — implementation has moved ahead of parts of this document; see **Implementation status** below.
 **Source PRD:** `docs/Aggregator Product Note.pdf` (Draft 2)
 **Scope:** MVP (V1 beta)
-**Last updated:** 2026-07-03
+**Last updated:** 2026-07-09
 
 > **Setting up locally?** See [`SETUP.md`](SETUP.md) for the end-to-end quickstart (prereqs → docker compose → KC mappers → run apps → smoke test).
 >
@@ -13,13 +13,16 @@
 
 ## Implementation status
 
-This document was written before build and remains the product-intent spec. Where the code now differs, the code (and `CLAUDE.md` / `SETUP.md`) is authoritative. Key deltas as of 2026-07-03:
+This document was written before build and remains the product-intent spec. Where the code now differs, the code (and `CLAUDE.md` / `SETUP.md`) is authoritative. Key deltas as of 2026-07-09:
 
 - **Stack** — the API/BFF is **Fastify** (not "Express or Fastify"); the portal is **Next.js 15 (App Router)**; a **BullMQ worker** runs bulk-upload processing; storage is **Postgres + Drizzle** + S3 + Redis. It is a **pnpm + Turbo** monorepo (`apps/api`, `apps/web`, `apps/worker`, `packages/*`).
 - **Identity & auth** — authentication is **Keycloak** (realm `aggregator`, OIDC Authorization-Code + PKCE) with a custom **email/phone OTP** authenticator SPI, not a bespoke local JWT service. Portal sessions are Redis-backed signed cookies. `aggregator_id` is still asserted server-side on every request and never trusted from the client.
 - **Registration & approval** — approval is an **in-app, token-based email flow** (signed approval-token link → approver page → atomic compare-and-set on the row → Keycloak user enable + role assignment), with expired-link regeneration, resubmit-reclaim of a pending/rejected registration, and a service-auth endpoint that prunes stale pending registrations. It is no longer a purely manual/external process (§4.1 / §6.1).
 - **Org → coordinator hierarchy** — an optional parent-organisation → coordinator hierarchy sits behind the per-instance **`ORG_HIERARCHY_ENABLED`** flag (default off = the flat flow described here). When on, a parent org registers/approves separately (system-of-record `aggregator_orgs` table + mirrored Keycloak group + `org_owner` realm role), and each coordinator is bound to an active org (`aggregators.parent_org_id`).
 - **Consent** — registration now **captures consent** (§7.3): a required consent checkbox + read-only Terms/Privacy popup on both registration forms, with document text managed as versioned config-as-code (`config/**/consent.json`, per `org` / `aggregator` audience) and every acceptance written to an append-only `aggregator_consent_record` ledger (fail-closed — no subject is provisioned without a consent row).
+- **Profile is a read-only registration form** — the `/profile` page renders the **same** `registration.v1` schema as the public registration page (single source via `apps/web/src/lib/aggregator-schema.server.ts`), populated and fully disabled — not the edit-in-place form described in §4.2. Changes are raised through a **"Request an update"** panel that lists the schema-flagged (`x-updatable`) fields; the admin-approval flow behind the submit is a stub (backend tracked separately), so it only acknowledges "coming soon" today.
+- **Contact support** — an authenticated coordinator can send a support message from the portal (Sidebar → "Contact support"). The BFF forwards to the API's `POST /v1/support`, which emails the submission via the aggregator's own mailer (`getMailer()`) with **Reply-To set to the submitting coordinator**. The feature is gated by the per-instance **`SUPPORT_EMAIL`** env: when unset, `GET /v1/support/config` reports `enabled: false`, the Sidebar entry is hidden, and `POST /v1/support` returns `503 SUPPORT_NOT_CONFIGURED` (a failed send is `502 SUPPORT_SEND_FAILED`).
+- **Consent-gated bulk onboarding** — bulk-uploaded accounts are not discoverable until the participant consents at first contact; the upload success message reflects this: _"Accounts will be live once the user logs in on the platform or via the call."_
 - **Not yet built** — the standalone **Signal Processing Service** (§2.3, §5.2) is not implemented; derived/dashboard metrics are served by the API reading upstream. Treat §5.2 and the two-service diagram as target architecture, not current state.
 
 ---
@@ -157,13 +160,14 @@ Four areas, matching PRD § 4:
 
 ### 4.2 Profile
 
-- Dynamic form rendered from the Aggregator profile schema. Edit-in-place; save writes to the Aggregator DB. A "Verified" badge is shown when the upstream org carries the verified flag.
+- **As built (supersedes the edit-in-place intent below):** the page renders the shared `registration.v1` schema **read-only** (same form as `/register`, every field disabled). Edits are not made in place — they are raised through a "Request an update" panel over the `x-updatable` fields; the approval flow behind the submit is a stub today. See **Implementation status**.
+- _Original intent:_ dynamic form rendered from the Aggregator profile schema, edit-in-place, save writes to the Aggregator DB. A "Verified" badge is shown when the upstream org carries the verified flag.
 - **MVP constraint:** updates to org contact details (email/phone) do _not_ write back to the Signals Stack org entry. This is deferred to Future Scope item 2.
 
 ### 4.3 Onboard
 
 - **Overall health** card — total registered / verified / discoverable (from Signal Processing Service).
-- **Bulk upload** — upload CSV against a seeker or provider template; Aggregator API validates rows, calls Signals Stack bulk-create endpoints, records a `bulk_upload_batch` row, shows per-row success/flag status.
+- **Bulk upload** — upload CSV against a seeker or provider template; Aggregator API validates rows, calls Signals Stack bulk-create endpoints, records a `bulk_upload_batch` row, shows per-row success/flag status. Bulk-created accounts are consent-gated: the success message tells the coordinator that "Accounts will be live once the user logs in on the platform or via the call" (discoverability is unlocked only after the participant consents at first contact).
 - **Link & QR generation** — Aggregator fills required fields (role, campaign label), system generates a signed link and QR image. Link carries `aggregator_id` and `mode` as query params; target registration page records the source mode. Join count per link is pulled from Signal Processing Service (mode-wise counts filtered by `link_id`, assuming the Signals Stack supports `link_id` attribution; see open item in § 8.1).
 - **Flagged profiles** — list of profiles with `profile_completion_pct < threshold` or format errors from the most recent bulk upload. Action = trigger a follow-up (logged as intent in MVP; actual outreach is out of scope).
 

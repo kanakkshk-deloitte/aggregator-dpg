@@ -164,6 +164,43 @@ describe('loadConsentConfig', () => {
     expect(config.audiences.aggregator.documents.privacy.current_version).toBe(1);
   });
 
+  it('renders the __SUPPORT_EMAIL__ placeholder to CONSENT_SUPPORT_EMAIL', async () => {
+    const withPlaceholder = makeValidConfig();
+    withPlaceholder.audiences.org.documents.terms.versions[0].content =
+      'Grievances: __SUPPORT_EMAIL__';
+    writeConsentFileContent(tmpDir, withPlaceholder, 'blue_dot');
+
+    const prev = process.env.CONSENT_SUPPORT_EMAIL;
+    process.env.CONSENT_SUPPORT_EMAIL = 'ops@example.test';
+    try {
+      const config = await loadConsentConfig('blue_dot', undefined, tmpDir);
+      const content = config.audiences.org.documents.terms.versions[0].content;
+      expect(content).toContain('ops@example.test');
+      expect(content).not.toContain('__SUPPORT_EMAIL__');
+    } finally {
+      if (prev === undefined) delete process.env.CONSENT_SUPPORT_EMAIL;
+      else process.env.CONSENT_SUPPORT_EMAIL = prev;
+    }
+  });
+
+  it('defaults the support email to hello@bluedotseconomy.org when unset', async () => {
+    const withPlaceholder = makeValidConfig();
+    withPlaceholder.audiences.org.documents.terms.versions[0].content =
+      'Grievances: __SUPPORT_EMAIL__';
+    writeConsentFileContent(tmpDir, withPlaceholder, 'blue_dot');
+
+    const prev = process.env.CONSENT_SUPPORT_EMAIL;
+    delete process.env.CONSENT_SUPPORT_EMAIL;
+    try {
+      const config = await loadConsentConfig('blue_dot', undefined, tmpDir);
+      expect(config.audiences.org.documents.terms.versions[0].content).toContain(
+        'hello@bluedotseconomy.org',
+      );
+    } finally {
+      if (prev !== undefined) process.env.CONSENT_SUPPORT_EMAIL = prev;
+    }
+  });
+
   it('falls back to the default consent file when network file is absent', async () => {
     // No network-specific file written; only default exists from beforeEach
     const config = await loadConsentConfig('nonexistent_network', undefined, tmpDir);

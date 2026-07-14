@@ -65,6 +65,8 @@ const ConfigSchema = z.object({
   PUBLIC_PORTAL_URL: z.string().default('http://localhost:3000'),
   /** Comma-separated list of admin recipient email addresses. */
   ADMIN_EMAILS: z.string().default(''),
+  /** Recipient for contact-support submissions (#120-equivalent). Feature-gated: unset ⇒ endpoint 503, web button hidden. */
+  SUPPORT_EMAIL: z.string().optional(),
 
   // ─── Object storage (bulk uploads + errors.csv) ──────────────────────────
   /**
@@ -201,6 +203,26 @@ export const corsOrigins: string[] = config.CORS_ORIGINS.split(',')
  */
 export function orgHierarchyEnabled(): boolean {
   return process.env.ORG_HIERARCHY_ENABLED === 'true';
+}
+
+/**
+ * Recipient address for contact-support submissions.
+ *
+ * Read from the live environment at **call time** rather than from the
+ * frozen `config` snapshot — mirrors {@link orgHierarchyEnabled}. Unlike
+ * that flag, this one is consumed on every request (`GET /v1/support/config`
+ * and `POST /v1/support` both need the current value, not just a
+ * startup-time snapshot), and it must be independently toggleable across
+ * test cases (configured vs unset) within the same Vitest worker, where the
+ * frozen `config.SUPPORT_EMAIL` reflects whatever env was present the first
+ * time `config.ts` was imported and cannot be changed afterwards.
+ *
+ * @returns The configured support recipient, or `undefined` when
+ *   `SUPPORT_EMAIL` is unset/empty (⇒ the support form reports disabled and
+ *   `POST /v1/support` returns 503 `SUPPORT_NOT_CONFIGURED`).
+ */
+export function supportEmail(): string | undefined {
+  return process.env.SUPPORT_EMAIL || undefined;
 }
 
 /**

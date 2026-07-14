@@ -24,12 +24,14 @@
       "title": "Website",
       "format": "uri",
       "maxLength": 2048,
-      "examples": ["https://skillbridge.in"]
+      "examples": ["https://skillbridge.in"],
+      "x-updatable": true
     },
     "locations": {
       "type": "array",
       "title": "Location",
       "maxItems": 1,
+      "x-updatable": true,
       "items": {
         "type": "object",
         "additionalProperties": false,

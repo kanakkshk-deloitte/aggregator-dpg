@@ -8,7 +8,8 @@
  *
  * Hydrates the client `AuthProvider` with the session snapshot so child
  * client components (Sidebar, etc.) can read user info without an extra
- * fetch.
+ * fetch. Also fetches `supportEnabled` server-side so the Sidebar's
+ * "Contact support" row can be gated without a client round-trip.
  */
 
 import { redirect } from 'next/navigation';
@@ -18,7 +19,28 @@ import { Sidebar } from '../../components/shell/Sidebar';
 import { AuthProvider } from '../../lib/auth-context';
 import { getSession } from '../../lib/server-session';
 import { tokenAggregatorId } from '../../lib/jwt';
+import { callApi } from '../../lib/upstream-client';
 import type { User } from '../../types';
+
+/**
+ * Fetches whether contact-support is enabled (`SUPPORT_EMAIL` configured
+ * upstream) via the aggregator API's `GET /v1/support/config`, reusing the
+ * session's access token through `callApi`. Fails safe to `false` on any
+ * upstream error, timeout, or unexpected response shape so a support outage
+ * only hides the entry point rather than breaking the protected shell.
+ *
+ * @returns `true` if contact-support should be shown; `false` otherwise.
+ */
+async function fetchSupportEnabled(): Promise<boolean> {
+  try {
+    const res = await callApi('/v1/support/config', { method: 'GET' });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { enabled?: unknown };
+    return Boolean(data.enabled);
+  } catch {
+    return false;
+  }
+}
 
 export default async function ProtectedLayout({ children }: { children: ReactNode }) {
   const session = await getSession();
@@ -50,9 +72,10 @@ export default async function ProtectedLayout({ children }: { children: ReactNod
     name: session.name ?? session.email ?? session.phone ?? session.sub,
     org: session.email ?? '',
   };
+  const supportEnabled = await fetchSupportEnabled();
 
   return (
-    <AuthProvider initialUser={user}>
+    <AuthProvider initialUser={user} supportEnabled={supportEnabled}>
       <div className="flex min-h-screen">
         <Sidebar />
         <main className="flex-1 min-w-0 overflow-x-hidden">

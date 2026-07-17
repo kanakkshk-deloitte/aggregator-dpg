@@ -17,6 +17,8 @@ export interface SendInput {
   from?: string;
   /** Reply-To header. Optional. */
   replyTo?: string;
+  /** CC recipients. Optional. */
+  cc?: string | string[];
 }
 
 export interface SendOk {

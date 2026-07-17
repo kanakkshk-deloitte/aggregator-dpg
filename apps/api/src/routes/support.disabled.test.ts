@@ -39,7 +39,13 @@ describe('support routes (SUPPORT_EMAIL unset)', () => {
       method: 'POST',
       url: '/v1/support',
       headers: { authorization: 'Bearer good-token' },
-      payload: { message: 'hi' },
+      payload: {
+        name: 'Asha K',
+        email: 'asha@example.com',
+        type: 'complaint',
+        details: 'hi',
+        consent: true,
+      },
     });
     expect(res.statusCode).toBe(503);
     const body = res.json() as { error: { code: string } };

@@ -9,6 +9,20 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { MailerAdapter, type MailerResult, type SendInput, type SendOk } from './interface.js';
 
+/**
+ * Normalises a recipient value to a list of individual addresses. Accepts an
+ * array, a single address, or a comma-separated string (each entry trimmed,
+ * blanks dropped) — SES requires individual addresses, unlike SMTP.
+ *
+ * @param value - One address, a comma-separated string, or an array.
+ * @returns The individual, trimmed, non-empty addresses.
+ */
+function toAddressList(value: string | string[]): string[] {
+  return (Array.isArray(value) ? value : value.split(','))
+    .map((address) => address.trim())
+    .filter(Boolean);
+}
+
 export interface SesMailerOptions {
   region: string;
   from: string;
@@ -31,10 +45,17 @@ export class SesMailer extends MailerAdapter {
   }
 
   async send(input: SendInput): Promise<MailerResult<SendOk>> {
-    const recipients = Array.isArray(input.to) ? input.to : [input.to];
+    // SES expects an array of individual addresses; a comma-joined string
+    // (how the support config surfaces multiple recipients) would otherwise
+    // be treated as one invalid RFC-5321 address and rejected. Normalise
+    // string | string[] to a trimmed list here so multi-recipient TO/CC work.
+    const ccAddresses = input.cc ? toAddressList(input.cc) : [];
     const command = new SendEmailCommand({
       FromEmailAddress: input.from ?? this.from,
-      Destination: { ToAddresses: recipients },
+      Destination: {
+        ToAddresses: toAddressList(input.to),
+        ...(ccAddresses.length ? { CcAddresses: ccAddresses } : {}),
+      },
       ...(input.replyTo ? { ReplyToAddresses: [input.replyTo] } : {}),
       ...(this.configurationSetName ? { ConfigurationSetName: this.configurationSetName } : {}),
       Content: {

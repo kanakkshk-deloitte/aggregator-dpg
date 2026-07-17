@@ -3,10 +3,10 @@
  *
  *   POST /api/support
  *
- * Forwards the authenticated user's `{ subject?, message }` body verbatim
- * to the aggregator API's `POST /v1/support`, which emails it to the
- * configured support address. Session cookie → access token swap is
- * handled by `callApi`.
+ * Forwards the authenticated user's `{ name, email?, phone?, type, details,
+ * consent }` body verbatim to the aggregator API's `POST /v1/support`, which
+ * emails it to the configured support address. Session cookie → access token
+ * swap is handled by `callApi`.
  */
 
 import { type NextRequest, NextResponse } from 'next/server';

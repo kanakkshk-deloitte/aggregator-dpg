@@ -71,6 +71,8 @@ export default async function ProtectedLayout({ children }: { children: ReactNod
     id: session.sub,
     name: session.name ?? session.email ?? session.phone ?? session.sub,
     org: session.email ?? '',
+    ...(session.email ? { email: session.email } : {}),
+    ...(session.phone ? { phone: session.phone } : {}),
   };
   const supportEnabled = await fetchSupportEnabled();
 

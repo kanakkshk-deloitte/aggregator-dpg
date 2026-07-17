@@ -1,3 +1,12 @@
+---
+paths:
+  - 'packages/*/src/interface.ts'
+  - 'packages/*/src/*.ts'
+  - 'apps/api/src/services/**'
+  - 'apps/web/src/lib/oidc/**'
+  - 'apps/web/src/lib/session/**'
+---
+
 # Interface Authoring Conventions
 
 Reference for every service package in aggregator-dpg. Read this before opening a PR that adds or modifies a `src/interface.ts` file.

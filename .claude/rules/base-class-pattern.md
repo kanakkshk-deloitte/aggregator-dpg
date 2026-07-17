@@ -1,3 +1,12 @@
+---
+paths:
+  - 'packages/*/src/interface.ts'
+  - 'packages/*/src/*.ts'
+  - 'apps/api/src/services/**'
+  - 'apps/web/src/lib/oidc/**'
+  - 'apps/web/src/lib/session/**'
+---
+
 # Rule: Base Class Pattern
 
 Every core component must define an abstract class **before** any concrete implementation.
@@ -25,13 +34,13 @@ If a method is not applicable in a stub, return the correct empty/default value 
 
 Every function must explicitly handle edge conditions. Do not assume inputs are well-formed.
 
-| Condition | Expected behaviour |
-|---|---|
-| Empty string input | Return a structured empty result, not an error |
-| `undefined` / `null` for a required parameter | Throw a descriptive `TypeError` or `ValueError` immediately |
-| Missing key in an object | Use optional chaining (`?.`) or nullish coalescing (`??`) with a safe default |
-| Empty array or zero results | Return an empty result with a clear status field |
-| Unexpected type from upstream | Log the type mismatch and return a structured error response |
+| Condition                                     | Expected behaviour                                                            |
+| --------------------------------------------- | ----------------------------------------------------------------------------- |
+| Empty string input                            | Return a structured empty result, not an error                                |
+| `undefined` / `null` for a required parameter | Throw a descriptive `TypeError` or `ValueError` immediately                   |
+| Missing key in an object                      | Use optional chaining (`?.`) or nullish coalescing (`??`) with a safe default |
+| Empty array or zero results                   | Return an empty result with a clear status field                              |
+| Unexpected type from upstream                 | Log the type mismatch and return a structured error response                  |
 
 Functions must fail safely — never crash the caller with an unhandled exception.
 

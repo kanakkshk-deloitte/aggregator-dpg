@@ -2,12 +2,16 @@
 /**
  * Contact-support modal.
  *
- * Optional subject + required message; POSTs to the BFF `POST /api/support`
- * (which forwards to the aggregator API's `POST /v1/support` and emails the
- * configured support address). Shows an inline success / unavailable
- * (SUPPORT_EMAIL not configured, 503) / error status rather than a toast —
- * matches the rest of the portal's inline-notice pattern (see
- * `ConsentModal`). Dismissible via the close button, overlay, or ESC.
+ * Collects a complaint / support request: Name, Email, Phone (all prefilled
+ * from the session where available and editable), a Type selector, a Details
+ * textarea, and a required consent checkbox. Submit is blocked until Details
+ * is non-empty, at least one contact channel is filled, and consent is
+ * checked. POSTs to the BFF `POST /api/support` (which forwards to the
+ * aggregator API's `POST /v1/support` and emails the configured support
+ * address). Shows an inline success / unavailable (SUPPORT_EMAIL not
+ * configured, 503) / error status rather than a toast — matches the rest of
+ * the portal's inline-notice pattern (see `ConsentModal`). Dismissible via
+ * the close button, overlay, or ESC.
  *
  * @module apps/web/src/components/support/SupportDialog
  */
@@ -16,6 +20,7 @@ import { createPortal } from 'react-dom';
 import { useTranslations } from 'next-intl';
 import { I } from '../../icons';
 import { Button } from '../ui/Button';
+import { useAuth } from '../../lib/auth-context';
 
 /** Props for {@link SupportDialog}. */
 export interface SupportDialogProps {
@@ -26,6 +31,7 @@ export interface SupportDialogProps {
 }
 
 type Status = 'idle' | 'sending' | 'success' | 'unavailable' | 'error' | 'invalid';
+type SupportType = 'complaint' | 'support_request';
 
 /**
  * Displays a modal contact-support form and relays submissions to the BFF.
@@ -38,22 +44,32 @@ type Status = 'idle' | 'sending' | 'success' | 'unavailable' | 'error' | 'invali
  */
 export function SupportDialog({ open, onOpenChange }: SupportDialogProps): JSX.Element | null {
   const t = useTranslations('support');
-  const [subject, setSubject] = useState('');
-  const [message, setMessage] = useState('');
+  const { user } = useAuth();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [type, setType] = useState<SupportType>('complaint');
+  const [details, setDetails] = useState('');
+  const [consent, setConsent] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   // Portal target only exists on the client; gate render until mounted so
   // the server pass (and first client paint) doesn't touch `document`.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // Reset form state each time the dialog closes so re-opening starts fresh.
+  // Reset form state each time the dialog opens so re-opening starts fresh,
+  // reseeding the prefill fields from the current session user.
   useEffect(() => {
-    if (!open) {
-      setSubject('');
-      setMessage('');
+    if (open) {
+      setName(user?.name ?? '');
+      setEmail(user?.email ?? '');
+      setPhone(user?.phone ?? '');
+      setType('complaint');
+      setDetails('');
+      setConsent(false);
       setStatus('idle');
     }
-  }, [open]);
+  }, [open, user]);
 
   // Dismiss on ESC, mirroring ConsentModal.
   useEffect(() => {
@@ -67,9 +83,12 @@ export function SupportDialog({ open, onOpenChange }: SupportDialogProps): JSX.E
 
   if (!open || !mounted) return null;
 
+  const hasContact = email.trim() !== '' || phone.trim() !== '';
+  const canSubmit = details.trim() !== '' && hasContact && consent;
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!message.trim()) {
+    if (!canSubmit) {
       setStatus('invalid');
       return;
     }
@@ -79,8 +98,12 @@ export function SupportDialog({ open, onOpenChange }: SupportDialogProps): JSX.E
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          ...(subject.trim() ? { subject: subject.trim() } : {}),
-          message: message.trim(),
+          name: name.trim(),
+          ...(email.trim() ? { email: email.trim() } : {}),
+          ...(phone.trim() ? { phone: phone.trim() } : {}),
+          type,
+          details: details.trim(),
+          consent: true,
         }),
       });
       if (res.status === 201) {
@@ -94,6 +117,9 @@ export function SupportDialog({ open, onOpenChange }: SupportDialogProps): JSX.E
       setStatus('error');
     }
   };
+
+  const inputClass =
+    'w-full rounded-[10px] border border-[var(--bd-border)] px-3 py-2 text-[14px] bg-transparent';
 
   return createPortal(
     <div
@@ -110,7 +136,7 @@ export function SupportDialog({ open, onOpenChange }: SupportDialogProps): JSX.E
         onClick={() => onOpenChange(false)}
         tabIndex={-1}
       />
-      <div className="relative z-10 w-full max-w-md rounded-[14px] bg-[var(--bd-card)] border border-[var(--bd-border)] p-5">
+      <div className="relative z-10 w-full max-w-md rounded-[14px] bg-[var(--bd-card)] border border-[var(--bd-border)] p-5 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-[17px] font-semibold text-[var(--bd-fg)]">{t('title')}</h2>
           <button
@@ -129,35 +155,87 @@ export function SupportDialog({ open, onOpenChange }: SupportDialogProps): JSX.E
         ) : (
           <form onSubmit={submit} className="space-y-3">
             <div>
-              <label htmlFor="support-subject" className="block text-[13px] font-medium mb-1">
-                {t('label_subject')}
+              <label htmlFor="support-name" className="block text-[13px] font-medium mb-1">
+                {t('label_name')}
               </label>
               <input
-                id="support-subject"
-                value={subject}
+                id="support-name"
+                value={name}
                 maxLength={200}
-                onChange={(e) => setSubject(e.target.value)}
-                placeholder={t('placeholder_subject')}
-                className="w-full rounded-[10px] border border-[var(--bd-border)] px-3 py-2 text-[14px] bg-transparent"
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t('placeholder_name')}
+                className={inputClass}
               />
             </div>
             <div>
-              <label htmlFor="support-message" className="block text-[13px] font-medium mb-1">
-                {t('label_message')}
+              <label htmlFor="support-email" className="block text-[13px] font-medium mb-1">
+                {t('label_email')}
+              </label>
+              <input
+                id="support-email"
+                type="email"
+                value={email}
+                maxLength={320}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder={t('placeholder_email')}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label htmlFor="support-phone" className="block text-[13px] font-medium mb-1">
+                {t('label_phone')}
+              </label>
+              <input
+                id="support-phone"
+                type="tel"
+                value={phone}
+                maxLength={20}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder={t('placeholder_phone')}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label htmlFor="support-type" className="block text-[13px] font-medium mb-1">
+                {t('label_type')}
+              </label>
+              <select
+                id="support-type"
+                value={type}
+                onChange={(e) => setType(e.target.value as SupportType)}
+                className={inputClass}
+              >
+                <option value="complaint">{t('type_complaint')}</option>
+                <option value="support_request">{t('type_support_request')}</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="support-details" className="block text-[13px] font-medium mb-1">
+                {t('label_details')}
               </label>
               <textarea
-                id="support-message"
-                value={message}
+                id="support-details"
+                value={details}
                 required
                 maxLength={5000}
                 rows={5}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder={t('placeholder_message')}
-                className="w-full rounded-[10px] border border-[var(--bd-border)] px-3 py-2 text-[14px] bg-transparent"
+                onChange={(e) => setDetails(e.target.value)}
+                placeholder={t('placeholder_details')}
+                className={inputClass}
               />
             </div>
+            <label className="flex items-start gap-2 text-[13px] text-[var(--bd-fg)]">
+              <input
+                type="checkbox"
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+                className="mt-0.5"
+                aria-label={t('consent_label')}
+              />
+              <span>{t('consent_label')}</span>
+            </label>
             {status === 'invalid' && (
-              <p className="text-[13px] text-rose-600">{t('validation_message_required')}</p>
+              <p className="text-[13px] text-rose-600">{t('validation_incomplete')}</p>
             )}
             {status === 'unavailable' && (
               <p className="text-[13px] text-amber-600">{t('unavailable')}</p>
@@ -166,7 +244,7 @@ export function SupportDialog({ open, onOpenChange }: SupportDialogProps): JSX.E
             <Button
               kind="primary"
               type="submit"
-              disabled={status === 'sending'}
+              disabled={status === 'sending' || !canSubmit}
               className="w-full justify-center py-2.5 text-[14px] font-semibold"
             >
               {status === 'sending' ? t('sending') : t('submit')}

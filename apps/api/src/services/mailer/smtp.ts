@@ -53,6 +53,7 @@ export class SmtpMailer extends MailerAdapter {
       html: input.html,
       text: input.text,
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+      ...(input.cc ? { cc: input.cc } : {}),
     };
     try {
       const info = await this.transporter.sendMail(message);

@@ -91,17 +91,18 @@ Per-instance feature flag (default **off**), read once at startup by **both** th
 
 When deploying to a VM, replace `localhost` and `keycloak` everywhere in `.env` with the VM hostname/IP, and update the `aggregator-portal` client's **Valid Redirect URIs** + **Web Origins** in the Keycloak admin console.
 
-## Project rules (in `.claude/rules/`) — always loaded into context
+## Nested docs
 
-These override default behaviour and are non-negotiable for any code change:
+Auto-loaded when working inside their subtree — read the relevant one before making changes there: `apps/api/CLAUDE.md` (per-file auth-wrapper pattern, registration status state machine, consent-ledger rollback contract, the Keycloak retry gap, org-hierarchy flag mechanics, bulk-upload API/worker boundary), `apps/web/CLAUDE.md` (anonymous-vs-authenticated helper invariant, session/auth-context, the dual-mode registration/profile schema rendering, consent content flow), `apps/worker/CLAUDE.md` (the `WORKER_ROLES` per-process-only coverage check, the `link-metrics-rollup.ts` double-count risk), `packages/queue/README.md` (the atomic Lua row-commit script).
 
-- **`base-class-pattern.md`** — every cross-package contract is an `abstract class` (NOT a TS `interface` — interfaces are erased at runtime and can't be used as DI tokens or `instanceof` targets). Subclasses preserve exact signatures.
-- **`interfaces.md`** — schema/DTO naming (`<Entity>Schema`, `<Entity>Filter`, `Create<Entity>Input`, etc.); only `shared-primitives`, `zod`, `node:*` may be imported in `src/interface.ts` (enforced by dep-cruiser `no-heavy-deps-in-interface`). Service methods return `Result<T, BaseError>` — never throw across a service boundary.
-- **`error-handling.md`** — every external call has an explicit timeout, at least one retry with exponential backoff, and a typed error. No empty `catch` blocks.
-- **`logging-observability.md`** — use the `logger` from `@aggregator-dpg/observability` (pino-backed). Every entry carries `operation`, `status` (`success`/`failure`/`skipped`), `latency_ms` for external calls, and `error`/`error_type` on failure. No bare `console.log` in module code. Log level from `LOG_LEVEL` env.
-- **`testing.md`** + **`testing-requirements.md`** — Vitest only. Cross-package tests import the **fake from `./testing`**, never `vi.mock()` the interface and never `InMemoryService` directly. Every fake extends the in-memory impl (not the abstract base directly) and provides `seed()` + `build<Entity>()` helpers. Tests live in `src/__tests__/`. No real network or DB in unit tests — integration tests get `.integration.test.ts` and are excluded from `pnpm -w test`. Target ≥ 70% line coverage.
-- **`configuration-discipline.md`** — no domain/env-specific value is hardcoded. Read once at startup from `@aggregator-dpg/config-loader` or env. Per-env overrides in `config/env/{dev,staging,prod}.yaml`.
-- **`code-documentation.md`** — TSDoc on every public class/method/function. First line is a single-sentence summary; document `@param`, `@returns`, `@throws`. Describe _what_ and _why_, not _how_.
+## Project rules (`.claude/rules/`)
+
+Non-negotiable for any code change. Some load always; some are path-scoped and only enter context when you touch a matching file (frontmatter `paths:` — see each file):
+
+- **`error-handling.md`**, **`logging-observability.md`**, **`configuration-discipline.md`**, **`code-documentation.md`** — **always loaded**, genuinely repo-wide (external-call timeouts/retry/typed errors; structured pino logging; no hardcoded domain/env values; TSDoc on every public API).
+- **`base-class-pattern.md`** + **`interfaces.md`** — **path-scoped** to `packages/*/src/**`, `apps/api/src/services/**`, `apps/web/src/lib/{oidc,session}/**` (the only places this repo authors an `interface.ts`-style abstract-class contract — `apps/worker` never does). Every cross-package contract is an `abstract class` (NOT a TS `interface`), schema/DTO naming (`<Entity>Schema`, `Create<Entity>Input`, etc.), `Result<T, BaseError>` returns, never throw across a service boundary.
+- **`testing.md`** — **path-scoped** to `packages/*/src/testing.ts`, `packages/*/src/testing/**`, `apps/api/src/services/**` (wherever the `./testing` fake-subpath convention actually lives). Fakes over `vi.mock()`, extend the in-memory impl, `seed()` + `build<Entity>()` helpers.
+- **`testing-requirements.md`** — **path-scoped** to any test file (`**/*.test.ts(x)`, `**/*.integration.test.ts`, `**/__tests__/**`) — applies repo-wide including `apps/web`/`apps/worker` tests that don't use the fake-subpath convention. Vitest only, ≥70% line coverage, `.integration.test.ts` excluded from `pnpm -w test`.
 
 The dep-cruiser config (`.dependency-cruiser.cjs`) enforces these at CI time:
 

@@ -1,11 +1,19 @@
+---
+paths:
+  - '**/*.test.ts'
+  - '**/*.test.tsx'
+  - '**/*.integration.test.ts'
+  - '**/__tests__/**'
+---
+
 # Rule: Testing Requirements
 
 Every module must cover three test categories:
 
-| Category | What to test |
-|---|---|
-| Normal execution | Correct output for valid, well-formed inputs |
-| Edge cases | Empty inputs, boundary values, missing optional fields |
+| Category          | What to test                                            |
+| ----------------- | ------------------------------------------------------- |
+| Normal execution  | Correct output for valid, well-formed inputs            |
+| Edge cases        | Empty inputs, boundary values, missing optional fields  |
 | Failure scenarios | External call failure, invalid config, upstream timeout |
 
 - Tests live in `src/__tests__/` inside the package directory.
@@ -33,6 +41,7 @@ it('fetches members', async () => {
 ```
 
 Run tests:
+
 ```bash
 pnpm --filter <package> test          # single package
 pnpm -w test                          # all packages

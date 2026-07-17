@@ -29,6 +29,17 @@ describe('FakeMailer', () => {
     expect(b.ok).toBe(true);
   });
 
+  it('captures the cc recipients on the outbox message', async () => {
+    await mailer.send({
+      to: 'a@b.in',
+      cc: ['ops@b.in', 'lead@b.in'],
+      subject: 'hi',
+      html: '<p>hi</p>',
+      text: 'hi',
+    });
+    expect(mailer.last()?.cc).toEqual(['ops@b.in', 'lead@b.in']);
+  });
+
   it('reset clears outbox', async () => {
     await mailer.send({ to: 'a@b.in', subject: 's', html: '', text: '' });
     mailer.reset();

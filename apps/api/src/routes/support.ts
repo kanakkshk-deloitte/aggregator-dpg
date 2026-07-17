@@ -13,17 +13,32 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { authenticate, type AuthContext } from '../services/auth/access-token.js';
 import { getMailer } from '../services/mailer/index.js';
-import { renderSupportRequest } from '../services/email-templates/index.js';
+import {
+  renderSupportRequest,
+  generateSupportReference,
+  getEmailBrand,
+} from '../services/email-templates/index.js';
 import { httpError } from '../errors/http-error.js';
 import { errorResponses } from '../errors/openapi.js';
-import { supportEmail } from '../config.js';
+import { supportEmail, supportCc, supportPortalLink } from '../config.js';
 
 const SupportRequestSchema = z
   .object({
-    subject: z.string().max(200).optional(),
-    message: z.string().min(1).max(5000),
+    name: z.string().trim().min(1).max(200),
+    email: z.string().email().max(320).optional(),
+    phone: z.string().min(3).max(20).optional(),
+    type: z.enum(['complaint', 'support_request']),
+    details: z.string().trim().min(1).max(5000),
+    consent: z.literal(true),
   })
-  .strict();
+  .strict()
+  // At least one contact channel is required so support can reply. A failed
+  // refine surfaces as a 400 SCHEMA_VALIDATION envelope via the global error
+  // handler (see app.ts), consistent with every other zod body rejection.
+  .refine((body) => Boolean(body.email) || Boolean(body.phone), {
+    message: 'Provide at least one of email or phone so support can reach you.',
+    path: ['email'],
+  });
 
 /**
  * Registers the contact-support routes on the given Fastify instance.
@@ -56,10 +71,13 @@ export async function registerSupportRoutes(app: FastifyInstance): Promise<void>
         tags: ['support'],
         summary: 'Send a contact-support message',
         description:
-          'Emails the submitted subject/message to SUPPORT_EMAIL, with Reply-To set to the submitter so support can reply directly.',
+          'Emails the submitted complaint/support request to SUPPORT_EMAIL (and SUPPORT_CC_EMAIL when set), with Reply-To set to the submitter email so support can reply directly. Each submission carries a SUP-YYYYMMDD-XXXXXX reference.',
         security: [{ bearerAuth: [] }],
         body: SupportRequestSchema,
-        response: { 201: z.object({ ok: z.boolean() }), ...errorResponses(400, 401, 502, 503) },
+        response: {
+          201: z.object({ ok: z.boolean(), reference: z.string() }),
+          ...errorResponses(400, 401, 502, 503),
+        },
       },
     },
     async (req, reply) => {
@@ -72,25 +90,35 @@ export async function registerSupportRoutes(app: FastifyInstance): Promise<void>
         throw httpError('SUPPORT_NOT_CONFIGURED');
       }
 
-      // Validated by the route's `body` zod schema.
-      const { subject, message } = req.body as z.infer<typeof SupportRequestSchema>;
-      const email = renderSupportRequest({
-        ...(subject !== undefined ? { subject } : {}),
-        message,
-        name: auth.preferredUsername ?? auth.email ?? auth.userId,
-        email: auth.email ?? null,
-        phone: auth.phoneNumber ?? null,
-        userId: auth.userId,
-        aggregatorId: auth.aggregatorId,
+      // Validated by the route's `body` zod schema. Use the SUBMITTED
+      // name/email/phone — the web form prefills them from the session but
+      // lets the coordinator correct them before sending.
+      const { name, email, phone, type, details } = req.body as z.infer<
+        typeof SupportRequestSchema
+      >;
+      const reference = generateSupportReference();
+      const rendered = renderSupportRequest({
+        type,
+        name,
+        email: email ?? null,
+        phone: phone ?? null,
+        details,
+        reference,
+        link: supportPortalLink(),
+        // Brand short-name seeded from config-loader at server boot
+        // (setEmailBrand); falls back to the generic default under test.
+        teamName: getEmailBrand().short_name,
         submittedAt: new Date(),
       });
 
+      const cc = supportCc();
       const sent = await getMailer().send({
         to: recipient,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-        ...(auth.email ? { replyTo: auth.email } : {}),
+        ...(cc ? { cc } : {}),
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+        ...(email ? { replyTo: email } : {}),
       });
 
       if (!sent.ok) {
@@ -99,6 +127,7 @@ export async function registerSupportRoutes(app: FastifyInstance): Promise<void>
           latency_ms: Date.now() - start,
           error: sent.error.message,
           error_type: sent.error.code,
+          reference,
         });
         throw httpError('SUPPORT_SEND_FAILED', { cause: new Error(sent.error.message) });
       }
@@ -107,8 +136,9 @@ export async function registerSupportRoutes(app: FastifyInstance): Promise<void>
         status: 'success',
         latency_ms: Date.now() - start,
         aggregator_id: auth.aggregatorId,
+        reference,
       });
-      return reply.code(201).send({ ok: true });
+      return reply.code(201).send({ ok: true, reference });
     },
   );
 }

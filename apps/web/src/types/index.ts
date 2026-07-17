@@ -83,6 +83,10 @@ export interface User {
   id: string;
   name: string;
   org: string;
+  /** Coordinator email from the session, when present. Prefills the support form. */
+  email?: string;
+  /** Coordinator phone from the session, when present. Prefills the support form. */
+  phone?: string;
 }
 
 export interface RegistrationLink {

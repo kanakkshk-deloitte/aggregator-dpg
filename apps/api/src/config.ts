@@ -65,8 +65,17 @@ const ConfigSchema = z.object({
   PUBLIC_PORTAL_URL: z.string().default('http://localhost:3000'),
   /** Comma-separated list of admin recipient email addresses. */
   ADMIN_EMAILS: z.string().default(''),
-  /** Recipient for contact-support submissions (#120-equivalent). Feature-gated: unset ⇒ endpoint 503, web button hidden. */
+  /**
+   * Recipient(s) for contact-support submissions (#120-equivalent).
+   * Feature-gated: unset ⇒ endpoint 503, web button hidden. Accepts multiple
+   * comma-separated addresses (all receive the TO copy).
+   */
   SUPPORT_EMAIL: z.string().optional(),
+  /**
+   * Optional CC recipient(s) for contact-support submissions. Accepts
+   * multiple comma-separated addresses. Unset ⇒ no CC header is added.
+   */
+  SUPPORT_CC_EMAIL: z.string().optional(),
 
   // ─── Object storage (bulk uploads + errors.csv) ──────────────────────────
   /**
@@ -217,12 +226,58 @@ export function orgHierarchyEnabled(): boolean {
  * frozen `config.SUPPORT_EMAIL` reflects whatever env was present the first
  * time `config.ts` was imported and cannot be changed afterwards.
  *
- * @returns The configured support recipient, or `undefined` when
- *   `SUPPORT_EMAIL` is unset/empty (⇒ the support form reports disabled and
- *   `POST /v1/support` returns 503 `SUPPORT_NOT_CONFIGURED`).
+ * @returns The configured support recipient(s) as a clean comma-joined list,
+ *   or `undefined` when `SUPPORT_EMAIL` is unset/empty (⇒ the support form
+ *   reports disabled and `POST /v1/support` returns 503
+ *   `SUPPORT_NOT_CONFIGURED`). Multiple comma-separated addresses are
+ *   trimmed, de-blanked, and rejoined with `, `.
  */
 export function supportEmail(): string | undefined {
-  return process.env.SUPPORT_EMAIL || undefined;
+  return normaliseEmailList(process.env.SUPPORT_EMAIL);
+}
+
+/**
+ * CC recipient(s) for contact-support submissions.
+ *
+ * Read from the live environment at **call time** — mirrors
+ * {@link supportEmail}'s rationale: consumed on every `POST /v1/support`
+ * request (not a startup-only snapshot) and must be independently toggleable
+ * across test cases within the same Vitest worker, where the frozen `config`
+ * snapshot cannot be changed after first import.
+ *
+ * @returns The configured CC list as a clean comma-joined string, or
+ *   `undefined` when `SUPPORT_CC_EMAIL` is unset/empty. Multiple
+ *   comma-separated addresses are trimmed, de-blanked, and rejoined with `, `.
+ */
+export function supportCc(): string | undefined {
+  return normaliseEmailList(process.env.SUPPORT_CC_EMAIL);
+}
+
+/**
+ * Public portal origin surfaced in the support email as the "raised from"
+ * link, so support staff can tell which instance a submission came from.
+ * Sourced from the deploy-time {@link config.PUBLIC_PORTAL_URL}.
+ *
+ * @returns The configured portal URL.
+ */
+export function supportPortalLink(): string {
+  return config.PUBLIC_PORTAL_URL;
+}
+
+/**
+ * Normalises a comma-separated email env value into a clean, comma-joined
+ * list: splits on commas, trims each entry, drops empties, rejoins with `, `.
+ *
+ * @param raw - The raw env value (or `undefined`).
+ * @returns The joined list, or `undefined` when nothing usable remains — so
+ *   "unset" and "blank/whitespace-only" are treated identically.
+ */
+function normaliseEmailList(raw: string | undefined): string | undefined {
+  const list = (raw ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return list.length > 0 ? list.join(', ') : undefined;
 }
 
 /**

@@ -1,3 +1,12 @@
+---
+paths:
+  - 'packages/*/src/testing.ts'
+  - 'packages/*/src/testing/**'
+  - 'apps/api/src/services/**'
+  - 'apps/web/src/lib/oidc/**'
+  - 'apps/web/src/lib/session/**'
+---
+
 # Testing-Subpath Conventions
 
 Reference for every service package in aggregator-dpg. Read this before opening a PR that adds or modifies `src/testing/`.

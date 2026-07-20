@@ -114,3 +114,7 @@ Run `pnpm dep-check` locally before pushing; it's a required CI step.
 ## CI
 
 GitHub Actions `CI` job runs on every PR to `main` / `v0.*`: `pnpm -w lint`, `typecheck`, `test`, `build`, then `pnpm dep-check`. A separate `docker / {api,web,worker}` matrix builds and (on non-PR pushes) publishes to GHCR. Branch protection requires the `CI` check (see `docs/ci-required-checks.md`). Tags `web-v*`, `api-v*`, `worker-v*` cut release images per app.
+
+## Authoring pull requests
+
+When you open a PR, include an **In Plain Terms** section in the description: a short, jargon-free explanation a non-expert teammate can follow — what the problem was and what the change does, in everyday language — alongside the usual Summary / Release Notes. Skip it only for a pure chore with no behavioural effect. This lives here as a Claude authoring rule rather than in the GitHub PR template on purpose, so PRs opened from other tools/flows aren't forced through it.

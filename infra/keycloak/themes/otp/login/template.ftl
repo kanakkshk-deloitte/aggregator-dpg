@@ -51,7 +51,7 @@
             <div class="bd-hero-copy">
                 <div class="bd-hero-brand">
                     <span class="bd-hero-wordmark">${properties.brandShortName!'Aggregator'}</span>
-                    <span class="bd-hero-strapline">Seeded by EkStep Foundation</span>
+                    <span class="bd-hero-strapline"></span>
                 </div>
             </div>
         </aside>

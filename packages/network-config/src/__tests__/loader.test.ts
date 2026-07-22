@@ -153,7 +153,7 @@ describe('FileNetworkConfigLoader', () => {
 
   it('merges a sibling brand.json into the resolved brand block', async () => {
     const brandJson = {
-      brand: { strapline: 'Seeded by EkStep Foundation' },
+      brand: { strapline: '' },
       logo: { default: '/brand/blue-dot/logo.png' },
       colours: {
         primary: [{ name: 'Blue 500', hex: '#0074ff' }],
@@ -170,7 +170,7 @@ describe('FileNetworkConfigLoader', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     const brand = result.value.aggregator.brand;
-    expect(brand.strapline).toBe('Seeded by EkStep Foundation');
+    expect(brand.strapline).toBe('');
     expect(brand.logo?.default).toBe('/brand/blue-dot/logo.png');
     expect(brand.palette?.primary?.[0]?.hex).toBe('#0074ff');
     expect(brand.palette?.gradients?.[0]?.from).toBe('#0074ff');

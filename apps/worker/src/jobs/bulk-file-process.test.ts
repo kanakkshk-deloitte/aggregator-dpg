@@ -23,6 +23,7 @@ const hset = vi.fn(async (key: string, ...args: unknown[]) => {
   if (key.endsWith(':lines')) calls.push('lines');
   return 1;
 });
+const expire = vi.fn(async (_key: string, _ttl: number) => 1);
 const enqueueRowProcessBulk = vi.fn(async () => {
   calls.push('enqueue');
 });
@@ -49,7 +50,7 @@ vi.mock('../db.js', () => ({
   getDb: () => makeDb(),
   schema: { bulkUploads: { id: 'id' } },
 }));
-vi.mock('../services/redis.js', () => ({ getRedis: () => ({ hset }) }));
+vi.mock('../services/redis.js', () => ({ getRedis: () => ({ hset, expire }) }));
 vi.mock('../services/bulk-queue.js', () => ({ enqueueRowProcessBulk }));
 vi.mock('../object-storage.js', () => ({
   getCsvStream: vi.fn(async () =>
@@ -69,6 +70,7 @@ vi.mock('../config.js', () => ({
   config: {
     BULK_MAX_ROWS: 10000,
     BULK_MAX_ROW_BYTES: 64 * 1024,
+    BULK_UPLOAD_REDIS_TTL_SECONDS: 86_400,
     LOG_LEVEL: 'silent',
     NODE_ENV: 'test',
   },
@@ -110,6 +112,13 @@ describe('processBulkFile — success path', () => {
   it('transitions the upload to row_processing', async () => {
     await processBulkFile(JOB);
     expect(updates.some((u) => u['status'] === 'row_processing')).toBe(true);
+  });
+
+  it('sets the configured TTL on the PII-bearing :lines and :meta keys', async () => {
+    await processBulkFile(JOB);
+    const expired = expire.mock.calls.map(([key, ttl]) => `${key}=${ttl}`);
+    expect(expired).toContain('bu:up-1:lines=86400');
+    expect(expired).toContain('bu:up-1:meta=86400');
   });
 });
 

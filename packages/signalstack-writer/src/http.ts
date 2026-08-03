@@ -8,10 +8,12 @@
  * Every request goes through {@link HttpSignalStackWriter.requestWithRetry},
  * which applies the configured per-attempt timeout and retries transient
  * failures (transport errors, request timeouts, `429`, and `5xx`) with
- * exponential backoff — per the repo `error-handling.md` rule. All signals
- * write paths consumed here are idempotent (onboard/probe dedupe on identity;
- * aggregator upsert dedupes on `external_id`; dashboard/get are reads), so a
- * retry can never double-create.
+ * exponential backoff — per the repo `error-handling.md` rule. probe/aggregator
+ * upsert/dashboard/get are idempotent (probe/upsert dedupe on identity/
+ * `external_id`; dashboard/get are reads). NOTE: `onboard` is NOT idempotent
+ * since signals #349 — a create always inserts a new profile, so a retry after
+ * a request that actually succeeded can create a duplicate (bounded by the
+ * per-user cap). A future idempotency key would restore retry-safety.
  */
 
 import {
@@ -175,14 +177,17 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
     const submitMode: 'with_item' | 'account_only' = input.submit_mode ?? 'with_item';
     const body: Record<string, unknown> = {
       name: input.name,
-      terms_accepted: input.terms_accepted,
-      privacy_accepted: input.privacy_accepted,
       channel: input.channel,
       source_id: input.source_id,
       network: input.network,
       domain: input.domain,
       item_type: input.item_type,
     };
+    // Consent is recorded via the `compliance` array (the live mechanism);
+    // the deprecated `terms_accepted`/`privacy_accepted` flags are never sent.
+    // `age` accompanies compliance on guardian-gated domains.
+    if (input.compliance && input.compliance.length > 0) body.compliance = input.compliance;
+    if (typeof input.age === 'number') body.age = input.age;
     // Signalstack Plan-C renamed the body field from `profile` to
     // `item_state` — the value is unchanged. When the caller opts out of
     // item creation (`submit_mode === 'account_only'`), omit `item_state`
@@ -203,6 +208,7 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
     const headers = {
       ...this.headers,
       'x-acting-org-id': input.actingOrgId,
+      ...(input.requestId ? { 'x-request-id': input.requestId } : {}),
     };
 
     try {
@@ -215,6 +221,7 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
       if (!res.ok) {
         const bodyText = await safeReadText(res);
         const upstreamMsg = extractUpstreamMessage(bodyText);
+        const upstreamCode = extractUpstreamCode(bodyText);
         // Surface signalstack's own message (e.g. `INVALID_ITEM_STATE: must be
         // equal to one of the allowed values`) when present so the caller can
         // funnel it into the user-visible errors.csv. Falls back to the bare
@@ -222,10 +229,25 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
         const message = upstreamMsg
           ? `signalstack onboard returned ${res.status}: ${upstreamMsg}`
           : `signalstack onboard returned ${res.status}`;
+        // Distinguish the per-user profile cap (signals #349) from other 409s
+        // so callers can categorise it as a user/data condition rather than a
+        // generic conflict or system error.
+        const code =
+          res.status === 409 && upstreamCode === 'PROFILE_LIMIT_REACHED'
+            ? 'SIGNALSTACK_PROFILE_LIMIT_REACHED'
+            : this.codeForStatus(res.status);
+        // `signalsMessage` is the bare, user-safe sentence (no infra prefixes) —
+        // callers surfacing errors to end users (public forms) should prefer it;
+        // errors.csv/operators keep the prefixed `message`.
+        const signalsMessage = extractUpstreamMessageText(bodyText);
         return err(
           new UpstreamError(message, {
-            code: this.codeForStatus(res.status),
-            details: { status: res.status, body: bodyText },
+            code,
+            details: {
+              status: res.status,
+              body: bodyText,
+              ...(signalsMessage ? { signalsMessage } : {}),
+            },
           }),
         );
       }
@@ -370,10 +392,14 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
       limit: query.limit ?? 50,
       offset: query.offset ?? 0,
     };
+    const headers = {
+      ...this.headers,
+      ...(query.requestId ? { 'x-request-id': query.requestId } : {}),
+    };
     try {
       const res = await this.requestWithRetry(url, {
         method: 'POST',
-        headers: this.headers,
+        headers,
         body: JSON.stringify(body),
       });
 
@@ -458,6 +484,7 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
     const headers = {
       ...this.headers,
       'x-acting-org-id': this.actingOrgId,
+      ...(input.requestId ? { 'x-request-id': input.requestId } : {}),
     };
 
     try {
@@ -540,6 +567,8 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
     if (query.page !== undefined) params.set('page', String(query.page));
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     if (query.status) params.set('status', query.status);
+    if (query.lifecycle && query.lifecycle.length > 0)
+      params.set('lifecycle', query.lifecycle.join(','));
     if (query.refresh) params.set('refresh', 'true');
     // domain intentionally NOT forwarded — see method docblock.
     const qs = params.toString();
@@ -548,6 +577,7 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
     const headers = {
       ...this.headers,
       'x-acting-org-id': query.actingOrgId,
+      ...(query.requestId ? { 'x-request-id': query.requestId } : {}),
     };
 
     try {
@@ -705,6 +735,7 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
       ...this.headers,
       'x-acting-org-id': query.actingOrgId,
       accept: 'text/csv',
+      ...(query.requestId ? { 'x-request-id': query.requestId } : {}),
     };
 
     try {
@@ -775,6 +806,7 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
     const headers = {
       ...this.headers,
       'x-acting-org-id': query.actingOrgId,
+      ...(query.requestId ? { 'x-request-id': query.requestId } : {}),
     };
 
     try {
@@ -873,8 +905,6 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
     // is the truthful attribution surface.
     const body: Record<string, unknown> = {
       name: 'lookup',
-      terms_accepted: true,
-      privacy_accepted: true,
       channel: 'link',
       network: input.network,
       domain: input.domain,
@@ -885,6 +915,7 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
     const headers = {
       ...this.headers,
       'x-acting-org-id': input.actingOrgId,
+      ...(input.requestId ? { 'x-request-id': input.requestId } : {}),
     };
 
     try {
@@ -1055,10 +1086,14 @@ export class HttpSignalStackWriter extends SignalStackWriterBase {
     const url = `${this.baseUrl}/api/v1/network/item/fetch_local`;
     const body = { item_id: query.item_id, limit: 1, offset: 0 };
 
+    const headers = {
+      ...this.headers,
+      ...(query.requestId ? { 'x-request-id': query.requestId } : {}),
+    };
     try {
       const res = await this.requestWithRetry(url, {
         method: 'POST',
-        headers: this.headers,
+        headers,
         body: JSON.stringify(body),
       });
 
@@ -1172,6 +1207,38 @@ async function safeReadText(res: Response): Promise<string> {
  * JSON or carries no usable text. Combines `error` + `message` when both are
  * present so the caller sees both the machine code and the human text.
  */
+/** Extract signalstack's machine error code (the JSON `error` field), if any. */
+function extractUpstreamCode(bodyText: string): string | null {
+  if (!bodyText) return null;
+  try {
+    const obj = JSON.parse(bodyText) as Record<string, unknown>;
+    const e = obj?.['error'];
+    if (typeof e === 'string') return e;
+    if (isObject(e) && typeof e['code'] === 'string') return e['code'] as string;
+  } catch {
+    /* non-JSON body — no machine code */
+  }
+  return null;
+}
+
+/**
+ * The bare human `message` field from a signalstack JSON error body — WITHOUT
+ * the `"<CODE>: "` prefix that {@link extractUpstreamMessage} adds. Suitable for
+ * showing directly to an end user (e.g. a public registration form).
+ */
+function extractUpstreamMessageText(bodyText: string): string | null {
+  if (!bodyText) return null;
+  try {
+    const obj = JSON.parse(bodyText) as Record<string, unknown>;
+    if (typeof obj['message'] === 'string') return obj['message'] as string;
+    const e = obj['error'];
+    if (isObject(e) && typeof e['message'] === 'string') return e['message'] as string;
+  } catch {
+    /* non-JSON body */
+  }
+  return null;
+}
+
 function extractUpstreamMessage(bodyText: string): string | null {
   if (!bodyText) return null;
   let parsed: unknown;

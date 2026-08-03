@@ -32,6 +32,14 @@ Service-account-only endpoints additionally gate on `subject.startsWith('service
 
 Streaming CSV parsing is entirely `apps/worker`'s job (see `apps/worker/CLAUDE.md`). The API side (`routes/bulk-uploads.ts`) does: presigned S3 PUT → `/start` validates the object exists via `headObject` (size-0 check + `BULK_UPLOAD_MAX_BYTES` as belt-and-braces, since a presigned PUT can't itself cap size) → `store.markUploaded` → `enqueueBulkFileProcess` (`services/bulk-queue/index.ts`, `jobId = uploadId` for idempotent enqueue — a retry of `/start` can't double-enqueue). If enqueue fails after `markUploaded` succeeds, the row is left `uploaded` with no active job — recovery relies on the worker's stuck-job watchdog (`cron-watchdog.ts`, see `apps/worker/CLAUDE.md`), not a retry here.
 
+## Health probes & observability
+
+`/health/live` is a static liveness probe (no dependencies). `/health/ready` probes Postgres (`select 1`) + Redis (`ping`) with a 2s per-dependency timeout, returning `503` and naming the failing dependency otherwise. On `SIGTERM` the shutdown path drains Fastify and the PG pool, then `Promise.allSettled` closes the rate-limiter, Redis, and the bulk queue — **do not add a long-lived connection without also closing it here**, or shutdown will leak it.
+
+`signalstack-writer` forwards an optional `requestId` as the `x-request-id` header from request-scoped call sites (dashboard, public-lookup, registration-links, approvals) so a trace correlates across services. The worker `onboard`/login-backfill paths have no request context and don't propagate it (known follow-up).
+
+A Signals `409 PROFILE_LIMIT_REACHED` is mapped to `SIGNALSTACK_PROFILE_LIMIT_REACHED` and categorised as `limit_reached` (not `system_error`) in `errors.csv`, and surfaced on registration links. Note that `onboard` is **no longer idempotent** — it always inserts, bounded only by the profile cap.
+
 ## Tests
 
 Mixed convention within this app: most route/service files have a sibling `*.test.ts` (e.g. `aggregator-approvals.test.ts`), but several service subpackages use a `__tests__/` folder instead (`services/idp-admin/__tests__/`, `services/aggregator-store/__tests__/`). Either is fine here; match whichever convention the file you're touching already uses. One `.integration.test.ts` exists (`services/idp-admin/keycloak.integration.test.ts`), excluded from `pnpm -w test` per the repo-wide rule.

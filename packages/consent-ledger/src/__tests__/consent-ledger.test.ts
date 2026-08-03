@@ -121,6 +121,22 @@ describe('InMemoryConsentLedger.recordRegistrationConsent', () => {
     expect(result.value.source).toBe('registration');
   });
 
+  it('defaults source to "registration" when omitted, else records the given source', async () => {
+    const def = await ledger.recordRegistrationConsent(makeInput());
+    expect(def.success && def.value.source).toBe('registration');
+
+    // Bulk-upload attestation encodes the upload id + statement version here.
+    const bulk = await ledger.recordRegistrationConsent(
+      makeInput({
+        subjectId: '33333333-3333-3333-3333-333333333333',
+        source: 'bulk_upload:up-123:v1',
+      }),
+    );
+    expect(bulk.success).toBe(true);
+    if (!bulk.success) return;
+    expect(bulk.value.source).toBe('bulk_upload:up-123:v1');
+  });
+
   it('assigns a generated id to each record', async () => {
     const r1 = await ledger.recordRegistrationConsent(makeInput());
     const r2 = await ledger.recordRegistrationConsent(

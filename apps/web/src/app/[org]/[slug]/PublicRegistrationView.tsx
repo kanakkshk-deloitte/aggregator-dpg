@@ -11,6 +11,8 @@ import { I } from '../../../icons';
 import { useAggregatorConfig, DEFAULT_AGGREGATOR_CONFIG } from '../../../hooks/useAggregatorConfig';
 import { MinimalIdentityForm, type MinimalIdentityPayload } from './MinimalIdentityForm';
 import { LanguageSwitcher } from '../../../components/shell/LanguageSwitcher';
+import { ConsentModal, type ConsentTab } from '../../../components/consent/ConsentModal';
+import type { ParticipantConsent } from '../../../components/consent/consent-types';
 
 export interface PublicRegistrationViewProps {
   org: string;
@@ -47,6 +49,12 @@ export interface PublicRegistrationViewProps {
    * the phone number mandatory and drop the email field on the minimal form.
    */
   registrationMode?: string | null;
+  /**
+   * Participant consent copy for the modals (§4.1): Terms/Privacy documents +
+   * the distinct profile-creation statement. `null` when unavailable — the
+   * consent checkboxes then render plain labels with no modal links.
+   */
+  consentContent?: ParticipantConsent | null;
 }
 
 type SubmitState =
@@ -116,8 +124,17 @@ export function PublicRegistrationView({
   submissionShape,
   publicHintI18nKey,
   registrationMode,
+  consentContent = null,
 }: PublicRegistrationViewProps): JSX.Element {
   const t = useTranslations('profile.public_reg');
+  // Terms/Privacy modal for the participant consent copy (§4.1).
+  const [consentModal, setConsentModal] = useState<{ open: boolean; tab: ConsentTab }>({
+    open: false,
+    tab: 'terms',
+  });
+  // Profile-creation consent has its OWN statement (a separate consent point),
+  // shown in its own lightweight modal — not the Terms/Privacy one.
+  const [profileConsentModal, setProfileConsentModal] = useState(false);
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const [state, setState] = useState<SubmitState>({ status: 'idle' });
   /**
@@ -140,6 +157,23 @@ export function PublicRegistrationView({
   // Schema-validity of the visible form, driven by RjsfThemedForm. Gates the
   // submit button — disabled until every visible required field is valid.
   const [canSubmit, setCanSubmit] = useState(false);
+  // Single consent acceptance covering terms + privacy + profile-creation
+  // (§3.1's three points). Gates the submit button and is sent as
+  // consent_terms / consent_privacy / consent_profile (all true on accept),
+  // validated server-side (CONSENT_REQUIRED).
+  const [consentAccepted, setConsentAccepted] = useState(false);
+  // Year of birth → derived age (§4.4 snapshot: no birthdate stored). Drives
+  // the U18 branch and the compliance `age`, independent of the profile's own
+  // `age` schema field. A minor still submits, but without consent — the API
+  // omits age + compliance so Signals creates the account, and terms are
+  // accepted later in the Signalstack app. Fail-closed at the boundary: <= 18.
+  const [yearOfBirth, setYearOfBirth] = useState('');
+  const currentYear = new Date().getFullYear();
+  const yobNum = Number(yearOfBirth.trim());
+  const yobValid =
+    /^\d{4}$/.test(yearOfBirth.trim()) && yobNum >= currentYear - 120 && yobNum <= currentYear;
+  const derivedAge = yobValid ? currentYear - yobNum : NaN;
+  const isMinor = yobValid && derivedAge <= 18;
   const { data: cfg = DEFAULT_AGGREGATOR_CONFIG } = useAggregatorConfig();
   const brandShort = cfg.brand.short_name;
   const brandLogo = cfg.brand.logo?.default;
@@ -430,7 +464,16 @@ export function PublicRegistrationView({
           // Full profile submit. The server resolves the link's
           // registration_mode shape and silently accepts partial profiles
           // (missing required fields → signals classifies the item `draft`).
-          body: JSON.stringify(values),
+          // consent_terms/consent_privacy carry the registrant's accepted
+          // consent (#522); the API validates + records it, then strips the
+          // keys before the participant profile is built.
+          body: JSON.stringify({
+            ...values,
+            consent_terms: consentAccepted,
+            consent_privacy: consentAccepted,
+            consent_profile: consentAccepted,
+            year_of_birth: yearOfBirth.trim(),
+          }),
         },
       );
       // 409 with outcome=skipped is a dedup hit, not a failure: this
@@ -510,8 +553,17 @@ export function PublicRegistrationView({
             brandColor={heroGradient}
             hintI18nKey={publicHintI18nKey}
             requirePhone={registrationMode === 'voice'}
+            consentContent={consentContent}
           />
         </div>
+        {consentContent && (
+          <ConsentModal
+            open={consentModal.open}
+            onOpenChange={(open) => setConsentModal((s) => ({ ...s, open }))}
+            initialTab={consentModal.tab}
+            content={consentContent}
+          />
+        )}
       </div>
     );
   }
@@ -779,32 +831,101 @@ export function PublicRegistrationView({
                     }}
                   >
                     <div className="mt-4 flex flex-col gap-3">
-                      <button
-                        type="submit"
-                        disabled={state.status === 'submitting' || !canSubmit}
-                        style={
-                          state.status === 'submitting' || !canSubmit
-                            ? undefined
-                            : { backgroundColor: cfg.brand.primary_color }
-                        }
-                        className={`w-full py-3 rounded-[12px] font-display font-bold text-[15px] text-white transition-all
+                      <label className="block">
+                        <span className="text-[14px] font-medium text-[var(--bd-fg)]">
+                          {t('year_of_birth_label')}
+                          <span className="text-rose-500 ml-0.5">*</span>
+                        </span>
+                        <select
+                          value={yearOfBirth}
+                          onChange={(e) => setYearOfBirth(e.target.value)}
+                          className="mt-1 w-full rounded-[10px] border border-[var(--bd-border)] px-3 py-2 text-[14px]"
+                          required
+                        >
+                          <option value="">{t('year_of_birth_placeholder')}</option>
+                          {Array.from({ length: 101 }, (_, i) => currentYear - i).map((y) => (
+                            <option key={y} value={String(y)}>
+                              {y}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {isMinor ? (
+                        // Minor: no consent here — Signals creates the account
+                        // without it; terms are accepted in the Signalstack app
+                        // after signing in. Submit still proceeds.
+                        <div className="rounded-[12px] border border-[var(--bd-border)] bg-[var(--bd-primary-50)] px-4 py-3.5 text-[14px] text-[var(--bd-fg)]">
+                          {t('u18_notice')}
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-2.5 rounded-[12px] border border-[var(--bd-border)] px-4 py-3.5 text-[14px] text-[var(--bd-fg)]">
+                          <input
+                            id="consent-all"
+                            type="checkbox"
+                            checked={consentAccepted}
+                            onChange={(e) => setConsentAccepted(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer"
+                            aria-required
+                          />
+                          <span>
+                            {consentContent ? (
+                              <>
+                                {t('consent_accept_prefix')}
+                                <button
+                                  type="button"
+                                  className="underline text-[var(--bd-primary-600)]"
+                                  onClick={() => setConsentModal({ open: true, tab: 'terms' })}
+                                >
+                                  {t('consent_docs_link')}
+                                </button>
+                                {t('consent_profile_conjunction')}
+                                {consentContent.profileCreation && (
+                                  <>
+                                    {' '}
+                                    <button
+                                      type="button"
+                                      className="underline text-[var(--bd-primary-600)]"
+                                      onClick={() => setProfileConsentModal(true)}
+                                    >
+                                      {t('consent_profile_link')}
+                                    </button>
+                                  </>
+                                )}
+                              </>
+                            ) : (
+                              t('consent_label')
+                            )}
+                          </span>
+                        </div>
+                      )}
+                      {(() => {
+                        // Adults must accept both consents; a minor submits
+                        // without consent (age + compliance omitted server-side).
+                        const blocked =
+                          state.status === 'submitting' ||
+                          !canSubmit ||
+                          !yobValid ||
+                          (!isMinor && !consentAccepted);
+                        return (
+                          <button
+                            type="submit"
+                            disabled={blocked}
+                            style={
+                              blocked ? undefined : { backgroundColor: cfg.brand.primary_color }
+                            }
+                            className={`w-full py-3 rounded-[12px] font-display font-bold text-[15px] text-white transition-all
                     ${
-                      state.status === 'submitting' || !canSubmit
+                      blocked
                         ? 'bg-[var(--bd-primary-100)] text-[var(--bd-primary-600)] cursor-not-allowed'
                         : 'hover:opacity-90 bd-shadow-lg'
                     }`}
-                      >
-                        {state.status === 'submitting' ? t('btn_submitting') : t('btn_submit')}
-                      </button>
+                          >
+                            {state.status === 'submitting' ? t('btn_submitting') : t('btn_submit')}
+                          </button>
+                        );
+                      })()}
                     </div>
                   </RjsfThemedForm>
-                )}
-
-                {!isAccountOnly && (
-                  <div className="mt-5 text-[12px] text-ink-400 flex items-start gap-2">
-                    <I.shield size={13} className="mt-0.5 shrink-0" />
-                    {t('privacy_note')}
-                  </div>
                 )}
               </>
             )}
@@ -818,6 +939,48 @@ export function PublicRegistrationView({
           </span>
         </p>
       </div>
+      {consentContent && (
+        <ConsentModal
+          open={consentModal.open}
+          onOpenChange={(open) => setConsentModal((s) => ({ ...s, open }))}
+          initialTab={consentModal.tab}
+          content={consentContent}
+        />
+      )}
+      {consentContent?.profileCreation && profileConsentModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="relative max-w-md w-full rounded-[14px] bg-white p-6 shadow-xl">
+            <button
+              type="button"
+              aria-label={t('consent_profile_modal_close')}
+              className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full text-ink-400 hover:bg-[var(--bd-primary-50)] hover:text-ink-700"
+              onClick={() => setProfileConsentModal(false)}
+            >
+              <I.x size={18} />
+            </button>
+            <h2 className="font-display font-bold text-[16px] text-[var(--bd-fg)] pr-8">
+              {t('consent_profile_modal_title')}
+            </h2>
+            <p className="mt-3 text-[14px] text-ink-700">
+              {consentContent.profileCreation.statement}
+            </p>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                className="rounded-[10px] px-4 py-2 text-[14px] font-semibold text-white"
+                style={{ backgroundColor: cfg.brand.primary_color }}
+                onClick={() => setProfileConsentModal(false)}
+              >
+                {t('consent_profile_modal_agree')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -27,4 +27,12 @@ export async function closeDb(): Promise<void> {
   db = null;
 }
 
+/**
+ * Test helper — inject a fake Drizzle db so unit tests exercise DB-reading
+ * code paths without a live Postgres. Pass `null` to reset.
+ */
+export function _setDb(instance: NodePgDatabase<typeof schema> | null): void {
+  db = instance;
+}
+
 export { schema };

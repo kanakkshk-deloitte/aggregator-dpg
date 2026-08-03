@@ -14,6 +14,15 @@ DST_DIR="/opt/keycloak/data/import"
 
 : "${PUBLIC_BASE_URL:?PUBLIC_BASE_URL must be set (e.g. http://1.2.3.4 or https://portal.example.com)}"
 
+# Client secrets — substituted into the realm's clients[].secret fields so the
+# checked-in realm carries NO real credentials. Fail-hard when unset: a
+# confidential client imported with an empty/placeholder secret is a silent
+# credential-leak footgun. These MUST match the values the api/web services
+# read (KEYCLOAK_ADMIN_CLIENT_SECRET / OIDC_CLIENT_SECRET / BFF_SERVICE_CLIENT_SECRET).
+: "${AGGREGATOR_API_SECRET:?AGGREGATOR_API_SECRET must be set (aggregator-api client secret; = KEYCLOAK_ADMIN_CLIENT_SECRET)}"
+: "${AGGREGATOR_PORTAL_SECRET:?AGGREGATOR_PORTAL_SECRET must be set (aggregator-portal client secret; = OIDC_CLIENT_SECRET)}"
+: "${AGGREGATOR_BFF_SECRET:?AGGREGATOR_BFF_SECRET must be set (aggregator-bff client secret; = BFF_SERVICE_CLIENT_SECRET)}"
+
 # SMTP placeholders. Empty values are valid: when SMTP_AUTH=false, Keycloak
 # ignores SMTP_USER/SMTP_PASSWORD even if they are empty strings.
 : "${SMTP_HOST:=mailhog}"
@@ -45,6 +54,9 @@ SMTP_AUTH_ESC=$(escape "$SMTP_AUTH")
 SMTP_USER_ESC=$(escape "$SMTP_USER")
 SMTP_PASSWORD_ESC=$(escape "$SMTP_PASSWORD")
 BRAND_LONG_NAME_ESC=$(escape "$BRAND_LONG_NAME")
+AGGREGATOR_API_SECRET_ESC=$(escape "$AGGREGATOR_API_SECRET")
+AGGREGATOR_PORTAL_SECRET_ESC=$(escape "$AGGREGATOR_PORTAL_SECRET")
+AGGREGATOR_BFF_SECRET_ESC=$(escape "$AGGREGATOR_BFF_SECRET")
 
 for src in "$SRC_DIR"/*.json; do
   [ -f "$src" ] || continue
@@ -61,6 +73,9 @@ for src in "$SRC_DIR"/*.json; do
     -e "s|__SMTP_USER__|${SMTP_USER_ESC}|g" \
     -e "s|__SMTP_PASSWORD__|${SMTP_PASSWORD_ESC}|g" \
     -e "s|__BRAND_LONG_NAME__|${BRAND_LONG_NAME_ESC}|g" \
+    -e "s|__AGGREGATOR_API_SECRET__|${AGGREGATOR_API_SECRET_ESC}|g" \
+    -e "s|__AGGREGATOR_PORTAL_SECRET__|${AGGREGATOR_PORTAL_SECRET_ESC}|g" \
+    -e "s|__AGGREGATOR_BFF_SECRET__|${AGGREGATOR_BFF_SECRET_ESC}|g" \
     "$src" > "$dst"
   echo "rendered $(basename "$src") -> $dst (PUBLIC_BASE_URL=$PUBLIC_BASE_URL, SMTP=$SMTP_HOST:$SMTP_PORT auth=$SMTP_AUTH)"
 done

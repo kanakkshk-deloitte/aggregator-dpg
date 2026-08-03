@@ -9,6 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import formbody from '@fastify/formbody';
@@ -20,6 +21,7 @@ import {
   validatorCompiler,
 } from 'fastify-type-provider-zod';
 import { config, corsOrigins, apiReferenceEnabled } from './config.js';
+import { loggerOptions } from './logger.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerAggregatorRegistrationRoutes } from './routes/aggregator-registrations.js';
 import { registerAggregatorMaintenanceRoutes } from './routes/aggregator-maintenance.js';
@@ -40,37 +42,17 @@ import { HttpError } from './errors/http-error.js';
 import { coerceToHttpError, toEnvelope, toLogPayload } from './errors/serialize.js';
 
 const REQUEST_ID_HEADER = 'x-request-id';
+const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: {
-      level: config.LOG_LEVEL,
-      base: { service: 'aggregator-api', env: config.NODE_ENV },
-      redact: {
-        paths: [
-          'req.headers.authorization',
-          'req.headers.cookie',
-          '*.password',
-          '*.token',
-          '*.access_token',
-          '*.refresh_token',
-        ],
-        censor: '[REDACTED]',
-      },
-      ...(config.NODE_ENV === 'development'
-        ? {
-            transport: {
-              target: 'pino-pretty',
-              options: {
-                colorize: true,
-                translateTime: 'SYS:HH:MM:ss.l',
-                singleLine: false,
-                ignore: 'pid,hostname,service,env',
-              },
-            },
-          }
-        : {}),
-    },
+    // Build the request logger from the shared options (single source of truth
+    // for level, base fields, and — critically — the PII/secret `redact`
+    // paths). A prior inline copy here drifted from `logger.ts` and omitted the
+    // email/phone redactions, so request-scoped `req.log` leaked participant
+    // PII. Sharing `loggerOptions` keeps request logging and the rest of the
+    // API on one redaction policy.
+    logger: loggerOptions,
     // Trust only the upstream proxies named in `TRUST_PROXY`. Blanket
     // `true` would let any caller forge `X-Forwarded-For` and bypass the
     // public rate limiter, which is keyed off `req.ip`. The default trusts
@@ -114,8 +96,20 @@ export async function buildApp(): Promise<FastifyInstance> {
           title: 'Aggregator DPG API',
           description:
             'Aggregator BFF for the Blue Dots / Purple Dots networks — handles aggregator registration, brand + network config, public participant onboarding (link + bulk), and the dashboard rollup proxy to signalstack.',
-          version: '1.0.0',
+          version: pkg.version,
         },
+        // Deployments are per instance, so the published spec carries a
+        // substitute-your-host URL (from the dump script's PUBLIC_API_URL)
+        // plus a local-dev entry; deduped when they coincide.
+        servers: [
+          {
+            url: config.PUBLIC_API_URL,
+            description: "Your deployment's public host (set per instance)",
+          },
+          ...(config.PUBLIC_API_URL === 'http://localhost:4000'
+            ? []
+            : [{ url: 'http://localhost:4000', description: 'Local development' }]),
+        ],
         components: {
           securitySchemes: {
             bearerAuth: {

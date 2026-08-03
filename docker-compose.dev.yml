@@ -1,0 +1,50 @@
+# docker-compose.dev.yml
+#
+# DEV-ONLY overlay for local hybrid development. Relaxes TLS verification (to
+# accept a self-signed pebble cert for local https OIDC discovery) and
+# re-publishes backing-service ports so apps run OUTSIDE the container
+# (`pnpm --filter ... dev`) can reach them.
+#
+# NOT auto-merged: it is named `.dev.yml`, not `.override.yml`, precisely so a
+# bare `docker compose up -d` (the VM/prod path) stays locked down. It is
+# layered explicitly by `make up` / `pnpm stack:up`:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#     --profile storage up -d --build
+# NEVER use this overlay on a VM / prod deploy.
+#
+# All published ports bind to 127.0.0.1 only — a dev laptop must not expose its
+# Postgres/Redis/MinIO to the LAN.
+
+services:
+  # INSTANCE_ENV is forced back to `development` here so the api/worker TLS
+  # guard (assertTlsPosture) WARNS instead of refusing to boot: the base file
+  # defaults INSTANCE_ENV=production, and production + NODE_TLS_REJECT_UNAUTHORIZED=0
+  # is a hard-fail. This overlay is the one sanctioned place that pairing is
+  # allowed, so it must also declare the non-prod env that makes it legal.
+  web:
+    environment:
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      INSTANCE_ENV: development
+  api:
+    environment:
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      INSTANCE_ENV: development
+  worker:
+    environment:
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      INSTANCE_ENV: development
+
+  postgres:
+    ports:
+      - "127.0.0.1:5433:5432"
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+  # MinIO stays gated behind the `storage` profile (declared here too so the
+  # port additions attach to the same service). `stack:up` passes
+  # `--profile storage`.
+  minio:
+    profiles: ["storage"]
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"

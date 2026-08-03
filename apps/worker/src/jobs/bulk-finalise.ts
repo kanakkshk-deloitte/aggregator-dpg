@@ -19,7 +19,7 @@
 
 import { and, eq } from 'drizzle-orm';
 import Papa from 'papaparse';
-import type { BulkFinaliseJob } from '@aggregator-dpg/queue';
+import { type BulkFinaliseJob, bulkRedisKeys } from '@aggregator-dpg/queue';
 import { schema, getDb } from '../db.js';
 import { getRedis } from '../services/redis.js';
 import { putObject } from '../object-storage.js';
@@ -174,14 +174,7 @@ export async function finaliseBulk(job: BulkFinaliseJob): Promise<FinaliseOutcom
   });
 
   // 8. Cleanup Redis keys — only after all persistence succeeded.
-  await redis.del(
-    `${ns}:processed`,
-    `${ns}:counters`,
-    `${ns}:errors`,
-    `${ns}:error_rows`,
-    `${ns}:meta`,
-    `${ns}:lines`,
-  );
+  await redis.del(...bulkRedisKeys(job.uploadId));
 
   log.info({
     status: 'success',

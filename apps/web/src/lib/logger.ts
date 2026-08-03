@@ -27,6 +27,14 @@ export const logger = pino({
       '*.token',
       '*.access_token',
       '*.refresh_token',
+      // Participant PII — never log email/phone (registration/proxy paths carry
+      // them in bodies and error fields). Cover the common one/two-level nestings.
+      'email',
+      'phone',
+      '*.email',
+      '*.phone',
+      '*.*.email',
+      '*.*.phone',
     ],
     censor: '[REDACTED]',
   },

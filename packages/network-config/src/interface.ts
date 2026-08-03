@@ -154,7 +154,13 @@ export type BrandConfig = z.infer<typeof BrandConfigSchema>;
  * how to bridge it to the aggregator's identity model.
  */
 export const NetworkBindingSchema = z.object({
-  source: z.string().url(),
+  /**
+   * URL of the upstream signalstack `network.json`. Optional in the YAML
+   * because a deployment may provide it via the `AGGREGATOR_NETWORK_SOURCE`
+   * env override instead (#512); the loader fails `load()` when neither is
+   * set.
+   */
+  source: z.string().url().optional(),
   field_overrides: z.record(z.string(), IdentitySelectorsSchema).optional(),
   csv_array_delimiter: z.string().min(1).default('|'),
 });

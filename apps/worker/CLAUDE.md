@@ -9,3 +9,7 @@ Guidance specific to working inside `apps/worker`. Read the root `CLAUDE.md` fir
 ## `link-metrics-rollup.ts`: the file's own "idempotent, restart-safe" claim is incomplete
 
 The header comment states: _"Idempotent. Restart-safe via `rolled_up_at IS NULL` filter."_ That's true only if the whole rollup (aggregate → upsert-with-increment → mark-rolled-up) completes atomically — **it doesn't**. The per-bucket `onConflictDoUpdate` (`total/passed/failed/skipped += EXCLUDED.*`) and the final `UPDATE ... SET rolled_up_at = NOW()` are separate statements, not wrapped in `db.transaction()` (confirmed: no `.transaction(` call anywhere in this file, unlike `bulk-finalise.ts` which does use one). If the process crashes after some bucket increments commit but before the final mark-rolled-up write, those rows are still `rolled_up_at IS NULL` — the next run re-selects them and **re-increments the same totals a second time**, silently double-counting. If you're touching this file: either wrap steps 3+4 in a transaction, or at minimum don't repeat the "restart-safe" claim elsewhere without this caveat.
+
+## Bulk `bu:{id}:*` working keys carry a TTL so PII self-expires
+
+The bulk-upload working keys (`bu:{id}:lines` = raw CSV, `bu:{id}:errors` = per-row errors including PII) carry `BULK_UPLOAD_REDIS_TTL_SECONDS` (default 24h), refreshed on each row-commit so the PII self-expires as a backstop. The stuck-job watchdog also deletes these keys on failure. Pino loggers redact `email` / `phone` (plus secrets), so PII never lands in logs.

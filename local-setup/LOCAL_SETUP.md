@@ -365,9 +365,12 @@ reuse them below:
 | `SIGNALS_REDIS_PASSWORD`               | signals redis URL            |
 | `APPROVAL_TOKEN_SECRET`, `SESSION_KEY` | aggregator api / web         |
 
-The two OIDC client secrets are the `.env` defaults (already reconciled into
-Keycloak by `keycloak-init`): `aggregator-api-dev-secret-change-me` and
-`aggregator-portal-dev-secret-change-me`.
+The three client secrets default to localhost-only dev values, rendered into
+the realm import by `render-realm.sh` (override via `OIDC_API_CLIENT_SECRET`,
+`OIDC_PORTAL_CLIENT_SECRET`, `OIDC_BFF_CLIENT_SECRET`):
+`aggregator-api-local-dev-secret` (aggregator-api), `aggregator-portal-local-dev-secret`
+(aggregator-portal), and `aggregator-bff-local-dev-secret` (the dedicated
+minimal-scope `aggregator-bff` client the web BFF uses — never `aggregator-api`).
 
 ### Step 2 — signals-dpg from source
 

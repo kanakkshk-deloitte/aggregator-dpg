@@ -377,3 +377,124 @@ describe('AggregatorConfigSchema.registration_modes', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('FileNetworkConfigLoader — AGGREGATOR_NETWORK_SOURCE override (#512)', () => {
+  let tmpDir: string;
+  let configPath: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agg-cfg-override-'));
+    configPath = path.join(tmpDir, 'aggregator.config.yaml');
+    await fs.writeFile(configPath, BLUE_DOT_YAML, 'utf8');
+    delete process.env.AGGREGATOR_NETWORK_SOURCE;
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+    delete process.env.AGGREGATOR_NETWORK_SOURCE;
+  });
+
+  it('fetches network.json from the explicit override instead of the YAML source', async () => {
+    const seen: string[] = [];
+    const loader = new FileNetworkConfigLoader({
+      configPath,
+      networkSourceOverride: 'https://schemas.example.org/blue_dot/network.json',
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify(BLUE_DOT_NETWORK), { status: 200 });
+      },
+    });
+    const result = await loader.load();
+    expect(result.success).toBe(true);
+    expect(seen).toEqual(['https://schemas.example.org/blue_dot/network.json']);
+  });
+
+  it('defaults the override from the AGGREGATOR_NETWORK_SOURCE env var', async () => {
+    process.env.AGGREGATOR_NETWORK_SOURCE = 'https://schemas.example.org/from-env/network.json';
+    const seen: string[] = [];
+    const loader = new FileNetworkConfigLoader({
+      configPath,
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify(BLUE_DOT_NETWORK), { status: 200 });
+      },
+    });
+    const result = await loader.load();
+    expect(result.success).toBe(true);
+    expect(seen).toEqual(['https://schemas.example.org/from-env/network.json']);
+  });
+
+  it('uses the YAML source when no override is set', async () => {
+    const seen: string[] = [];
+    const loader = new FileNetworkConfigLoader({
+      configPath,
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify(BLUE_DOT_NETWORK), { status: 200 });
+      },
+    });
+    const result = await loader.load();
+    expect(result.success).toBe(true);
+    expect(seen).toEqual(['https://example.invalid/blue_dot/network.json']);
+  });
+
+  it('fails load() with CONFIG_PARSE_FAILED on a malformed override URL', async () => {
+    const loader = new FileNetworkConfigLoader({
+      configPath,
+      networkSourceOverride: 'not-a-url',
+      fetchImpl: async () => new Response(JSON.stringify(BLUE_DOT_NETWORK), { status: 200 }),
+    });
+    const result = await loader.load();
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect((result.error as { code?: string }).code).toBe('CONFIG_PARSE_FAILED');
+  });
+
+  it('boots from the env override alone when the YAML omits network.source (#512)', async () => {
+    const noSourceYaml = BLUE_DOT_YAML.replace(/^\s*source:.*$/m, "    csv_array_delimiter: '|'");
+    const noSourcePath = path.join(tmpDir, 'no-source.yaml');
+    await fs.writeFile(noSourcePath, noSourceYaml, 'utf8');
+    const seen: string[] = [];
+    const loader = new FileNetworkConfigLoader({
+      configPath: noSourcePath,
+      networkSourceOverride: 'https://schemas.example.org/blue_dot/network.json',
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify(BLUE_DOT_NETWORK), { status: 200 });
+      },
+    });
+    const result = await loader.load();
+    expect(result.success).toBe(true);
+    expect(seen).toEqual(['https://schemas.example.org/blue_dot/network.json']);
+  });
+
+  it('fails load() with CONFIG_PARSE_FAILED when neither YAML source nor override is set', async () => {
+    const noSourceYaml = BLUE_DOT_YAML.replace(/^\s*source:.*$/m, "    csv_array_delimiter: '|'");
+    const noSourcePath = path.join(tmpDir, 'no-source.yaml');
+    await fs.writeFile(noSourcePath, noSourceYaml, 'utf8');
+    const loader = new FileNetworkConfigLoader({
+      configPath: noSourcePath,
+      fetchImpl: async () => new Response(JSON.stringify(BLUE_DOT_NETWORK), { status: 200 }),
+    });
+    const result = await loader.load();
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect((result.error as { code?: string }).code).toBe('CONFIG_PARSE_FAILED');
+    expect((result.error as { message?: string }).message).toContain('AGGREGATOR_NETWORK_SOURCE');
+  });
+
+  it('treats a blank env value as absent (falls back to the YAML source)', async () => {
+    process.env.AGGREGATOR_NETWORK_SOURCE = '   ';
+    const seen: string[] = [];
+    const loader = new FileNetworkConfigLoader({
+      configPath,
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify(BLUE_DOT_NETWORK), { status: 200 });
+      },
+    });
+    const result = await loader.load();
+    expect(result.success).toBe(true);
+    expect(seen).toEqual(['https://example.invalid/blue_dot/network.json']);
+  });
+});

@@ -16,3 +16,12 @@ export interface ConsentDocContent {
   /** Current-version Privacy Policy document. */
   privacy: { version: number; title: string; content: string };
 }
+
+/**
+ * Participant consent copy: the Terms/Privacy documents plus the distinct
+ * profile-creation consent statement (its own point, §3.1 — NOT terms/privacy).
+ */
+export interface ParticipantConsent extends ConsentDocContent {
+  /** Current-version profile-creation consent statement, when configured. */
+  profileCreation?: { version: number; statement: string };
+}

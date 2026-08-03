@@ -58,7 +58,17 @@ export interface SignalStackProfile {
  * signalstack organisation id (sourced from `aggregators.signalstack_org_id`),
  * NOT the platform-wide acting org id used by aggregator upsert.
  */
+/** One participant compliance point forwarded to Signals `/admin/participant`. */
+export interface ComplianceEntry {
+  /** Compliance point key, e.g. `user_terms`, `user_privacy`, `profile_creation`. */
+  key: string;
+  /** Accept-only: `false` makes Signals reject with `CONSENT_DECLINED`. */
+  value: boolean;
+}
+
 export interface SignalStackOnboardParticipantInput {
+  /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
+  requestId?: string;
   /** Signalstack organisation id the participant is being linked under. */
   actingOrgId: string;
   /** Display name of the participant; falls back to participant UUID upstream. */
@@ -67,10 +77,27 @@ export interface SignalStackOnboardParticipantInput {
   phoneNumber?: string;
   /** Email address — at least one of phoneNumber / email is required. */
   email?: string;
-  /** Whether the participant has accepted the aggregator's T&C. */
-  terms_accepted: boolean;
-  /** Whether the participant has accepted the aggregator's privacy policy. */
-  privacy_accepted: boolean;
+  /**
+   * @deprecated Signals ignores these — consent is recorded only via
+   * {@link SignalStackOnboardParticipantInput.compliance}. Retained optionally
+   * for callers mid-migration; never forwarded on the request body.
+   */
+  terms_accepted?: boolean;
+  /** @deprecated See {@link SignalStackOnboardParticipantInput.terms_accepted}. */
+  privacy_accepted?: boolean;
+  /**
+   * Participant compliance points recorded by Signals on `/admin/participant`
+   * (the live consent mechanism). Accept-only: any `value:false` → Signals
+   * `CONSENT_DECLINED`. `user_terms`/`user_privacy` are both-or-none, and on a
+   * guardian-gated domain recording them requires {@link age}. Omitted keys are
+   * skipped. Absent/empty ⇒ no consent recorded for this push.
+   */
+  compliance?: ComplianceEntry[];
+  /**
+   * Participant age. Required by Signals when recording `user_terms`/
+   * `user_privacy` on a guardian-gated domain; otherwise optional.
+   */
+  age?: number;
   /** Channel attribution — distinguishes bulk-upload from link submission. */
   channel: SignalStackOnboardChannel;
   /**
@@ -136,6 +163,8 @@ export interface SignalStackOnboardParticipantResult {
  * rest are pagination + optional refinement.
  */
 export interface SignalStackItemQuery {
+  /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
+  requestId?: string;
   aggregator_id: string;
   item_network: string;
   item_domain: string;
@@ -178,6 +207,8 @@ export interface SignalStackItemList {
  * one, so the writer is safe to re-fire from a login-time fallback.
  */
 export interface SignalStackUpsertAggregatorInput {
+  /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
+  requestId?: string;
   external_id: string;
   name: string;
   slug: string;
@@ -221,11 +252,20 @@ export interface SignalStackAggregator {
  * when upstream support lands.
  */
 export interface SignalStackDashboardQuery {
+  /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
+  requestId?: string;
   actingOrgId: string;
   page?: number;
   limit?: number;
   status?: string;
   domain?: string;
+  /**
+   * Lifecycle statuses to include (`draft` | `live` | `paused` | `retired`).
+   * Forwarded as a comma-separated `?lifecycle=` filter. Absent ⇒ Signals'
+   * default. The aggregator dashboard passes `['draft','live']` so paused +
+   * retired profiles are excluded server-side.
+   */
+  lifecycle?: readonly string[];
   /**
    * When true, forwards `?refresh=true` to signalstack so it bypasses the
    * TTL cache and recomputes the rollup synchronously. Off by default.
@@ -313,6 +353,8 @@ export interface SignalStackDashboardPage {
  * impl currently drops it.
  */
 export interface SignalStackDashboardExportQuery {
+  /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
+  requestId?: string;
   actingOrgId: string;
   status?: string;
   domain?: string;
@@ -340,6 +382,8 @@ export interface SignalStackDashboardExport {
  * signalstack scopes decryption to items this aggregator onboarded.
  */
 export interface SignalStackFetchDecryptedProfilesQuery {
+  /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
+  requestId?: string;
   actingOrgId: string;
   itemIds: string[];
 }
@@ -382,6 +426,8 @@ export interface SignalStackDecryptedProfiles {
  * signalstack scopes the lifecycle answer to the calling aggregator's view.
  */
 export interface SignalStackProbeUserInput {
+  /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
+  requestId?: string;
   /** Signalstack organisation id the probe is performed under. */
   actingOrgId: string;
   /** Email address — at least one of email / phoneNumber is required. */
@@ -427,6 +473,8 @@ export interface SignalStackProbeUserResult {
  * does not receive a stale prompt.
  */
 export interface SignalStackGetItemQuery {
+  /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
+  requestId?: string;
   /** Signalstack item id minted by a prior `onboard()` call. */
   item_id: string;
 }

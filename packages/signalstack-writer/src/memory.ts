@@ -134,6 +134,16 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
         }),
       );
     }
+    // Mirror Signals' hard-reject of under-18 onboards via the admin API
+    // (`U18_NOT_ALLOWED`) so callers can exercise the §4.4 redirect mapping.
+    if (typeof input.age === 'number' && input.age <= 18) {
+      return err(
+        new UpstreamError(
+          'signalstack onboard returned 400: U18_NOT_ALLOWED: under-18 users cannot be onboarded via this API; use the portal',
+          { code: 'SIGNALSTACK_BAD_REQUEST' },
+        ),
+      );
+    }
 
     // Foreign-user short-circuit: signalstack reports the user already
     // exists under a different aggregator, so we mint a synthetic user_id

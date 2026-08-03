@@ -86,6 +86,13 @@ export const AudienceSchema = z.object({
     terms: DocSchema,
     /** Privacy Policy document. */
     privacy: DocSchema,
+    /**
+     * Operator attestation shown before a bulk upload — "I have permission
+     * from the individuals in this file" (#522 Task 1). Optional so the
+     * existing consent.json files stay valid until they add it; only the
+     * `aggregator` audience uses it.
+     */
+    bulk_upload_attestation: DocSchema.optional(),
   }),
 });
 

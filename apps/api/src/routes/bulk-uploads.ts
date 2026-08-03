@@ -36,6 +36,9 @@ import { getSchemaLoader } from '../services/schema-loader/index.js';
 import { buildCsvTemplate } from '../services/csv-template/index.js';
 import { readBulkSample } from '../services/csv-template/bulk-sample.js';
 import { getNetworkConfig } from '../services/network-config.js';
+import { loadConsentConfig } from '@aggregator-dpg/config-loader/fs';
+import { getConsentLedger } from '../services/consent-ledger/index.js';
+import { resolveActiveNetwork } from '@aggregator-dpg/network-config/paths';
 import { config } from '../config.js';
 import { getDb } from '../db/client.js';
 import { onboarding } from '../db/schema.js';
@@ -80,6 +83,17 @@ const CreateBulkUploadBodySchema = z
 const BulkUploadParamsSchema = z.object({
   id: z.string().min(1).describe('Bulk-upload job id (UUID).'),
 });
+
+/**
+ * Body for `/start`. The uploading aggregator must attest authority to submit
+ * the file's participants (#522 Task 1) — `attestation` must be `true` or the
+ * upload is rejected with 400 CONSENT_REQUIRED.
+ */
+const StartBulkUploadBodySchema = z
+  .object({
+    attestation: z.boolean().optional().describe('Operator attestation of authority to upload.'),
+  })
+  .passthrough();
 
 /**
  * Pagination query for the bulk-uploads list. Bounds are enforced here so the
@@ -333,6 +347,7 @@ export async function registerBulkUploadsRoutes(app: FastifyInstance): Promise<v
           'Transitions a pending job to running; the worker onboards each valid row to signalstack. Idempotent on already-running/completed jobs.',
         security: [{ bearerAuth: [] }],
         params: BulkUploadParamsSchema,
+        body: StartBulkUploadBodySchema,
         response: {
           200: BulkUploadResponseSchema,
           ...errorResponses(400, 401, 403, 500, 503),
@@ -343,6 +358,7 @@ export async function registerBulkUploadsRoutes(app: FastifyInstance): Promise<v
       const auth = await requireAuth(req);
       // Params are already validated by the route schema (id: non-empty string).
       const { id: uploadId } = req.params as z.infer<typeof BulkUploadParamsSchema>;
+      const body = req.body as z.infer<typeof StartBulkUploadBodySchema>;
       const log = req.log.child({
         operation: 'bulkUploads.start',
         actor: auth.userId,
@@ -370,6 +386,16 @@ export async function registerBulkUploadsRoutes(app: FastifyInstance): Promise<v
           latency_ms: Date.now() - start,
         });
         return reply.send(toResponse(upload));
+      }
+
+      // Operator attestation of authority (#522 Task 1): the aggregator must
+      // confirm they have permission to submit the file's participants. No
+      // attestation → reject before any S3 work or state transition.
+      if (body.attestation !== true) {
+        throw httpError('CONSENT_REQUIRED', {
+          detail: 'You must confirm authority to upload before starting.',
+          fields: { attestation: body.attestation ?? null },
+        });
       }
 
       const head = await headObject(upload.s3Key);
@@ -400,6 +426,23 @@ export async function registerBulkUploadsRoutes(app: FastifyInstance): Promise<v
         });
         throw httpError('SCHEMA_VALIDATION', {
           detail: `Uploaded CSV is too large (${head.contentLength} bytes; max ${config.BULK_UPLOAD_MAX_BYTES}).`,
+        });
+      }
+
+      // Record the operator attestation in the consent ledger BEFORE the row
+      // transitions / is enqueued — fail-closed, mirroring the registration
+      // consent contract (no upload is processed without a recorded
+      // attestation). No dedicated column: the source encodes the upload id +
+      // statement version (`bulk_upload:<uploadId>:v<n>`); terms/privacy
+      // versions in force are stored in their existing columns.
+      const attestationRecorded = await recordBulkUploadAttestation({
+        aggregatorId: auth.aggregatorId,
+        uploadId,
+        log,
+      });
+      if (!attestationRecorded) {
+        throw httpError('CONSENT_WRITE_FAILED', {
+          fields: { sub_operation: 'recordBulkUploadAttestation' },
         });
       }
 
@@ -799,4 +842,81 @@ function enforceAggregatorType(auth: AuthContext, participantType: string): void
       },
     });
   }
+}
+
+/**
+ * Records the operator's bulk-upload attestation in the consent ledger.
+ *
+ * Fail-closed (returns `false` on any failure) so the caller aborts the upload
+ * rather than processing it without a recorded attestation. Uses no dedicated
+ * columns: the `source` encodes the upload id and the attestation statement
+ * version (`bulk_upload:<uploadId>:v<n>`), while the terms/privacy versions in
+ * force at upload time are stored in their existing columns — satisfying the
+ * "who / when / terms+privacy version" record without a migration (#522 Task 1).
+ *
+ * @param aggregatorId - The uploading aggregator (ledger subject).
+ * @param uploadId - The bulk_uploads row this attestation authorises.
+ * @param log - Request-scoped logger.
+ * @returns `true` when the ledger row was written; `false` on any failure.
+ */
+async function recordBulkUploadAttestation({
+  aggregatorId,
+  uploadId,
+  log,
+}: {
+  aggregatorId: string;
+  uploadId: string;
+  log: ReturnType<FastifyRequest['log']['child']>;
+}): Promise<boolean> {
+  const { network, brand } = resolveActiveNetwork();
+  let termsVersion: number;
+  let privacyVersion: number;
+  let attestationVersion: number;
+  try {
+    const consentCfg = await loadConsentConfig(network, brand);
+    const docs = consentCfg.audiences.aggregator.documents;
+    const attestation = docs.bulk_upload_attestation;
+    if (!attestation) {
+      log.error(
+        { operation: 'consentLedger.recordBulkUploadAttestation', status: 'failure' },
+        'bulk_upload_attestation not configured for the aggregator audience',
+      );
+      return false;
+    }
+    termsVersion = docs.terms.current_version;
+    privacyVersion = docs.privacy.current_version;
+    attestationVersion = attestation.current_version;
+  } catch (e) {
+    log.error(
+      {
+        operation: 'consentLedger.recordBulkUploadAttestation',
+        status: 'failure',
+        error: e instanceof Error ? e.message : String(e),
+      },
+      'consent config load failed — bulk upload rejected',
+    );
+    return false;
+  }
+
+  const result = await getConsentLedger().recordRegistrationConsent({
+    subjectType: 'aggregator',
+    subjectId: aggregatorId,
+    network,
+    brand: brand ?? null,
+    termsVersion,
+    privacyVersion,
+    source: `bulk_upload:${uploadId}:v${attestationVersion}`,
+  });
+  if (!result.success) {
+    log.error(
+      {
+        operation: 'consentLedger.recordBulkUploadAttestation',
+        status: 'failure',
+        error: result.error.message,
+      },
+      'attestation ledger write failed — bulk upload rejected',
+    );
+    return false;
+  }
+  return true;
 }

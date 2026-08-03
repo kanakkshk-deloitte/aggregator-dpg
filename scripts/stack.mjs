@@ -229,28 +229,46 @@ function setup() {
   console.log('Setup complete. Run: pnpm stack:up   (or: make up)');
 }
 
-/** Brings the full stack up after a Docker preflight + .env check. */
+/**
+ * Compose args for the LOCAL DEV stack: base file + the dev overlay
+ * (docker-compose.dev.yml), plus the `storage` profile so local MinIO starts.
+ * The overlay relaxes TLS verification and binds backing-service ports to
+ * 127.0.0.1. A VM/prod deploy runs a bare `docker compose up -d` (base file
+ * only) and gets NONE of this — see docker-compose.dev.yml.
+ */
+const composeArgs = (...rest) => [
+  'compose',
+  '-f',
+  'docker-compose.yml',
+  '-f',
+  'docker-compose.dev.yml',
+  '--profile',
+  'storage',
+  ...rest,
+];
+
+/** Brings the full local dev stack up after a Docker preflight + .env check. */
 function up() {
   ensureDocker();
   if (!existsSync(envFile)) {
     console.error('No .env found — run: pnpm stack:setup');
     process.exit(1);
   }
-  run('docker', ['compose', 'up', '-d', '--build']);
+  run('docker', composeArgs('up', '-d', '--build'));
 }
 
-const down = () => run('docker', ['compose', 'down']);
-const reset = () => run('docker', ['compose', 'down', '-v']);
-const logs = () => run('docker', ['compose', 'logs', '-f']);
-const ps = () => run('docker', ['compose', 'ps']);
+const down = () => run('docker', composeArgs('down'));
+const reset = () => run('docker', composeArgs('down', '-v'));
+const logs = () => run('docker', composeArgs('logs', '-f'));
+const ps = () => run('docker', composeArgs('ps'));
 const psql = () =>
-  run('docker', ['compose', 'exec', 'postgres', 'psql', '-U', 'aggregator', '-d', 'aggregator']);
+  run('docker', composeArgs('exec', 'postgres', 'psql', '-U', 'aggregator', '-d', 'aggregator'));
 
 /** Rebuilds the web image (with NEXT_PUBLIC_* baked at compile time) and restarts it. */
 function rebuildWeb() {
   run('pnpm', ['--filter', '@aggregator-dpg/web', 'build']);
-  run('docker', ['compose', 'build', 'web']);
-  run('docker', ['compose', 'up', '-d', 'web']);
+  run('docker', composeArgs('build', 'web'));
+  run('docker', composeArgs('up', '-d', 'web'));
 }
 
 const HANDLERS = {

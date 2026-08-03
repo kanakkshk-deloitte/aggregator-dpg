@@ -1,6 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { createRequire } from 'node:module';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './app.js';
+
+const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
 /**
  * OpenAPI generation smoke test. Guards the documented contract surface:
@@ -91,6 +94,40 @@ describe('OpenAPI spec generation', () => {
         codes.some((c) => c.startsWith('4') || c.startsWith('5')),
         `GET ${path} documents no error responses`,
       ).toBe(true);
+    }
+  });
+
+  it('carries package version and a public server URL', async () => {
+    const meta = spec as unknown as {
+      info: { version: string };
+      servers?: Array<{ url: string }>;
+    };
+    expect(meta.info.version).toBe(pkg.version);
+    expect(meta.servers?.[0]?.url).toBeTruthy();
+  });
+
+  it('serves no docs surface when API_REFERENCE_ENABLED is false', async () => {
+    const originalEnv = process.env.API_REFERENCE_ENABLED;
+    process.env.API_REFERENCE_ENABLED = 'false';
+    vi.resetModules();
+    try {
+      const { buildApp: buildAppGated } = await import('./app.js');
+      const gatedApp = await buildAppGated();
+      await gatedApp.ready();
+      try {
+        expect((gatedApp as unknown as { swagger?: unknown }).swagger).toBeUndefined();
+        const res = await gatedApp.inject({ method: 'GET', url: '/api/reference' });
+        expect(res.statusCode).toBe(404);
+      } finally {
+        await gatedApp.close();
+      }
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.API_REFERENCE_ENABLED;
+      } else {
+        process.env.API_REFERENCE_ENABLED = originalEnv;
+      }
+      vi.resetModules();
     }
   });
 });

@@ -34,6 +34,7 @@ import {
   type SignalstackNetwork,
 } from './interface.js';
 import { sniffIdentitySelectors } from './sniffer.js';
+import { resolveNetworkSourceOverride } from './paths.js';
 
 /**
  * Loader-internal shape of the sibling `brand.json` file. Not exported
@@ -69,6 +70,14 @@ export interface FileNetworkConfigLoaderOptions {
   fetchImpl?: typeof fetch;
   /** Per-request timeout for the network.json GET. */
   fetchTimeoutMs?: number;
+  /**
+   * Deploy-time replacement for the YAML `aggregator.network.source` URL.
+   * Defaults to the `AGGREGATOR_NETWORK_SOURCE` env var (see
+   * {@link resolveNetworkSourceOverride}); pass explicitly in tests. Must be
+   * a valid URL — a malformed value fails `load()` with
+   * `CONFIG_PARSE_FAILED` instead of silently falling back to the YAML.
+   */
+  networkSourceOverride?: string;
 }
 
 export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
@@ -76,15 +85,17 @@ export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
   private readonly opts: Required<
     Pick<FileNetworkConfigLoaderOptions, 'configPath' | 'fetchTimeoutMs'>
   > &
-    Pick<FileNetworkConfigLoaderOptions, 'cacheDir' | 'fetchImpl'>;
+    Pick<FileNetworkConfigLoaderOptions, 'cacheDir' | 'fetchImpl' | 'networkSourceOverride'>;
 
   constructor(opts: FileNetworkConfigLoaderOptions) {
     super();
+    const sourceOverride = opts.networkSourceOverride ?? resolveNetworkSourceOverride();
     this.opts = {
       configPath: opts.configPath,
       fetchTimeoutMs: opts.fetchTimeoutMs ?? 5000,
       ...(opts.cacheDir ? { cacheDir: opts.cacheDir } : {}),
       ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+      ...(sourceOverride ? { networkSourceOverride: sourceOverride } : {}),
     };
   }
 
@@ -94,7 +105,36 @@ export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
     const yaml = await this.readYaml();
     if (!yaml.success) return err(yaml.error);
 
-    const network = await this.fetchNetwork(yaml.value.aggregator.network.source);
+    // Deploy-time env override (#512): swap the signalstack network.json
+    // source without rebuilding the image or editing the mounted YAML. The
+    // override is applied onto the parsed YAML so the resolved config and the
+    // fetch use the same value. Fail loud on a malformed URL — silently
+    // falling back to the YAML would mask a broken deployment.
+    const override = this.opts.networkSourceOverride;
+    if (override !== undefined) {
+      const checked = z.string().url().safeParse(override);
+      if (!checked.success) {
+        return err({
+          code: 'CONFIG_PARSE_FAILED',
+          message: `AGGREGATOR_NETWORK_SOURCE is not a valid URL: "${override}"`,
+        });
+      }
+      yaml.value.aggregator.network.source = checked.data;
+    }
+
+    // `source` is optional in the YAML (a deployment may rely solely on the
+    // env override) — but at least one of the two must resolve a URL.
+    const source = yaml.value.aggregator.network.source;
+    if (!source) {
+      return err({
+        code: 'CONFIG_PARSE_FAILED',
+        message:
+          'no network.json source configured — set AGGREGATOR_NETWORK_SOURCE or ' +
+          '`aggregator.network.source` in aggregator.config.yaml',
+      });
+    }
+
+    const network = await this.fetchNetwork(source);
     if (!network.success) return err(network.error);
 
     const resolved = resolveDomains(yaml.value, network.value);

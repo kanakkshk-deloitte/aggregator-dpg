@@ -8,6 +8,9 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import { runMigrations } from './db/migrate.js';
 import { closeDb } from './db/client.js';
+import { closeRateLimiter } from './services/rate-limiter/index.js';
+import { closeRedis } from './services/redis/index.js';
+import { closeBulkQueue } from './services/bulk-queue/index.js';
 import { getNetworkConfig } from './services/network-config.js';
 import { setApprovalBrand } from './views/approval-pages.js';
 import { setEmailBrand } from './services/email-templates/shared.js';
@@ -48,8 +51,12 @@ async function main(): Promise<void> {
   const shutdown = (signal: string) => async () => {
     logger.info({ signal }, 'shutting down');
     try {
+      // Drain HTTP first, then close every backing connection. The rate-limiter
+      // Redis, the shared API Redis, and the BullMQ enqueue queue were all
+      // previously leaked on SIGTERM (only Fastify + the PG pool were closed).
       await app.close();
       await closeDb();
+      await Promise.allSettled([closeRateLimiter(), closeRedis(), closeBulkQueue()]);
       process.exit(0);
     } catch (err) {
       logger.error({ err }, 'error during shutdown');

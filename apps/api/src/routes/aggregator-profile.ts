@@ -266,7 +266,9 @@ export async function registerAggregatorProfileRoutes(app: FastifyInstance): Pro
         if (!phoneR.ok) {
           throw httpError('INVALID_PHONE', {
             detail: phoneR.error.message,
-            fields: { input: raw.phone },
+            // Key it `phone` (not `input`) so the logger's `*.phone` redact
+            // path masks the raw number if this error is ever logged.
+            fields: { phone: raw.phone },
           });
         }
         normalisedContact = { ...raw, phone: phoneR.value };

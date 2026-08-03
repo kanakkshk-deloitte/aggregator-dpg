@@ -57,7 +57,13 @@ async function loadValidParticipantTypes(): Promise<Set<string>> {
   return new Set(cfg.domainIds);
 }
 
-type ErrorCategory = 'validation' | 'normalisation' | 'duplicate' | 'system_error';
+type ErrorCategory =
+  | 'validation'
+  | 'normalisation'
+  | 'duplicate'
+  | 'limit_reached'
+  | 'owned_elsewhere'
+  | 'system_error';
 
 interface RowOutcome {
   outcome: 'passed' | 'skipped' | 'failed';
@@ -239,9 +245,16 @@ export async function processBulkRow(job: BulkRowProcessJob): Promise<RowOutcome
       // `signalstack onboard returned 400: INVALID_ITEM_STATE: …`). Surface
       // it directly so operators see the actual rejection reason in
       // errors.csv instead of a generic status-code string.
+      // The per-user profile cap (signals #349) is a user/data condition, not a
+      // system fault — categorise it distinctly so errors.csv reads clearly.
+      const category: ErrorCategory = push.ownedElsewhere
+        ? 'owned_elsewhere'
+        : push.code === 'SIGNALSTACK_PROFILE_LIMIT_REACHED'
+          ? 'limit_reached'
+          : 'system_error';
       outcome = {
         outcome: 'failed',
-        category: 'system_error',
+        category,
         reasons: [`signalstack [${push.code}]: ${push.message}`],
       };
     }
@@ -289,6 +302,7 @@ async function commit(
     job.rowIndex,
     outcome.outcome,
     errorPayload,
+    config.BULK_UPLOAD_REDIS_TTL_SECONDS,
   );
 
   if (result.wasNew === 0) {
@@ -330,9 +344,11 @@ async function commit(
  * signalstack is treated as a downstream sink, not a transactional partner.
  * Returns void; status is observable via structured logs.
  */
-type SignalStackPushResult = { success: true } | { success: false; code: string; message: string };
+type SignalStackPushResult =
+  | { success: true }
+  | { success: false; code: string; message: string; ownedElsewhere?: boolean };
 
-async function pushToSignalStack(
+export async function pushToSignalStack(
   job: BulkRowProcessJob,
   participantId: string,
   phone: string | null,
@@ -431,6 +447,24 @@ async function pushToSignalStack(
       success: false,
       code: result.error.code,
       message: result.error.message,
+    };
+  }
+  // A 2xx with `owned_elsewhere` means signals recognised the person under a
+  // DIFFERENT aggregator and created no item here — it is NOT a successful
+  // onboard. The link path already surfaces this; the bulk path must too, or
+  // the row would be miscounted as `passed`. Fail the row with a clear reason.
+  if (result.value.owned_elsewhere) {
+    log.warn({
+      status: 'failure',
+      sub: 'signalstack.push',
+      reason: 'owned_elsewhere',
+      user_id: result.value.user_id,
+    });
+    return {
+      success: false,
+      code: 'SIGNALSTACK_OWNED_ELSEWHERE',
+      message: 'participant is already registered under a different aggregator',
+      ownedElsewhere: true,
     };
   }
   log.info({

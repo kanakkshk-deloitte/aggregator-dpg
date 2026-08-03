@@ -4,6 +4,7 @@ dist/
 *.tsbuildinfo
 pnpm-lock.yaml
 CHANGELOG.md
+openapi.json
 # Helm chart templates use Go-template syntax (`{{ ... }}`) inside YAML,
 # which prettier's YAML parser cannot parse. Skip the templates dir.
 helm/**/templates/**

@@ -15,6 +15,7 @@ import {
 } from '../../../../hooks/useAggregatorConfig';
 import type { BulkUploadStatus } from '../../../../services/onboarding.service';
 import { onboardingService } from '../../../../services/onboarding.service';
+import type { BulkAttestationContent } from '../../../../lib/bulk-attestation.server';
 
 // Module-level so its identity is stable across CSVUpload re-renders. Defining
 // it inline re-created the component every render, remounting the toast and
@@ -39,8 +40,20 @@ function UploadToast({ message, onDone }: { message: string; onDone: () => void 
   );
 }
 
-export function CSVUpload() {
+/** Props for {@link CSVUpload}. */
+export interface CSVUploadProps {
+  /**
+   * Operator attestation copy (#522 Task 1), loaded server-side. `null` ⇒ the
+   * checkbox shows a generic label. When present, the statement is shown and
+   * the aggregator must tick it before Upload is enabled; `attestation: true`
+   * is sent to `/start`, which validates + records it.
+   */
+  attestation?: BulkAttestationContent | null;
+}
+
+export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
   const t = useTranslations('onboarding');
+  const [attested, setAttested] = useState(false);
   const rawProfile = useProfileRaw();
   const { data: cfg = DEFAULT_AGGREGATOR_CONFIG } = useAggregatorConfig();
   // Aggregator registered participant focus, mirrored from the
@@ -89,7 +102,11 @@ export function CSVUpload() {
     setUploadError(null);
     setUploadNotice(null);
     try {
-      const result = await upload.mutateAsync({ file: pickedFile, participantType });
+      const result = await upload.mutateAsync({
+        file: pickedFile,
+        participantType,
+        attestation: true,
+      });
       setPickedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       if (result.duplicate) {
@@ -212,11 +229,22 @@ export function CSVUpload() {
         )}
       </Dropzone>
 
+      <label className="mt-4 flex items-start gap-2.5 rounded-[10px] border border-[var(--bd-border)] px-3.5 py-3 text-[13px] text-ink-800 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={attested}
+          onChange={(e) => setAttested(e.target.checked)}
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-[var(--bd-border)] accent-[var(--bd-primary-600)]"
+          aria-required
+        />
+        <span>{attestation ? attestation.content : t('csv.attestation_fallback')}</span>
+      </label>
+
       <div className="flex items-center justify-between mt-4">
         <div className="text-[12px] text-ink-400 flex items-center gap-2">
           <I.shield size={14} className="text-emerald-500" /> {t('csv.security_note')}
         </div>
-        <Button onClick={onUpload} disabled={!pickedFile || upload.isPending}>
+        <Button onClick={onUpload} disabled={!pickedFile || upload.isPending || !attested}>
           {upload.isPending ? t('csv.uploading') : t('csv.upload_button')}
         </Button>
       </div>

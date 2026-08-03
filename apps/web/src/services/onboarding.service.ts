@@ -218,9 +218,11 @@ export const onboardingService = {
     });
   },
 
-  async startBulkUpload(uploadId: string): Promise<BulkUploadStatus> {
+  async startBulkUpload(uploadId: string, attestation: boolean): Promise<BulkUploadStatus> {
     return jsonFetch<BulkUploadStatus>(`/api/bulk-uploads/${encodeURIComponent(uploadId)}/start`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ attestation }),
     });
   },
 
@@ -255,6 +257,7 @@ export const onboardingService = {
   async uploadCsv(
     file: File,
     participantType: string,
+    attestation: boolean,
   ): Promise<{
     uploadId: string;
     status: BulkUploadStatus;
@@ -270,7 +273,10 @@ export const onboardingService = {
     if (!put.ok) {
       throw new Error(`S3 PUT failed (${put.status}): ${await put.text().catch(() => '')}`);
     }
-    const status = (await this.startBulkUpload(presigned.upload_id)) as BulkUploadStatus & {
+    const status = (await this.startBulkUpload(
+      presigned.upload_id,
+      attestation,
+    )) as BulkUploadStatus & {
       duplicate?: boolean;
       message?: string;
     };

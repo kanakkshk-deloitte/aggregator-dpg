@@ -68,10 +68,18 @@ export async function enqueueBulkFileProcess(payload: BulkFileProcessJob): Promi
   }
 }
 
-/** Test-only — disconnect and clear cached singletons. */
-export async function _resetBulkQueue(): Promise<void> {
+/**
+ * Closes the BullMQ enqueue queue and its Redis connection. Idempotent; call
+ * from process shutdown so the queue + connection are not leaked on SIGTERM.
+ */
+export async function closeBulkQueue(): Promise<void> {
   await fileProcessQueue?.close();
   await connection?.quit().catch(() => undefined);
   fileProcessQueue = null;
   connection = null;
+}
+
+/** Test-only — disconnect and clear cached singletons. */
+export async function _resetBulkQueue(): Promise<void> {
+  await closeBulkQueue();
 }

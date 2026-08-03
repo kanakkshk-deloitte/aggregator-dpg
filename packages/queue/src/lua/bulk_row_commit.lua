@@ -15,6 +15,9 @@
 --   ARGV[1] = row_index             (integer as string)
 --   ARGV[2] = outcome               ("passed" | "failed" | "skipped")
 --   ARGV[3] = error_payload_json    (string; "" if outcome == "passed" or "skipped")
+--   ARGV[4] = ttl_seconds           (integer as string; TTL refreshed on every
+--                                    key so participant PII cannot outlive an
+--                                    abandoned/stuck upload. 0/absent = no TTL.)
 --
 -- Returns:
 --   {processed_count, total_rows_or_-1, reader_done_or_0, was_new_or_0}
@@ -32,6 +35,17 @@ if added == 1 then
   if ARGV[2] ~= 'passed' and ARGV[3] ~= '' then
     redis.call('HSET', KEYS[3], ARGV[1], ARGV[3])
     redis.call('SADD', KEYS[4], ARGV[1])
+  end
+end
+
+-- Refresh the TTL on every key we touch so the whole bu:{id} namespace
+-- (incl. the PII-bearing :errors hash) self-expires if this upload is later
+-- abandoned or wedged and never reaches the Finaliser's DEL. EXPIRE on a
+-- missing key is a harmless no-op (e.g. :errors before any failure).
+local ttl = tonumber(ARGV[4])
+if ttl and ttl > 0 then
+  for i = 1, 5 do
+    redis.call('EXPIRE', KEYS[i], ttl)
   end
 end
 

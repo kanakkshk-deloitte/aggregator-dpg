@@ -169,14 +169,15 @@ APPROVAL_TOKEN_SECRET=<openssl rand -hex 32>
 
 - `SUPPORT_EMAIL` — recipient for the portal "Contact support" form (Sidebar). Unset ⇒ the button is hidden and the endpoint returns 503. Uses the same mailer as registration emails; Reply-To is the submitting coordinator. Locally, mail lands in Mailpit (`:8025`).
 
-The Keycloak admin client secret in the example file matches the value the realm import sets locally. If you change it later, sync `KEYCLOAK_ADMIN_CLIENT_SECRET` here and `BFF_SERVICE_CLIENT_SECRET` in `apps/web/.env`.
+The realm import does **not** carry literal client secrets — `render-realm.sh` substitutes them from `KEYCLOAK_ADMIN_CLIENT_SECRET` (→ `aggregator-api`), `OIDC_CLIENT_SECRET` (→ `aggregator-portal`), and `BFF_SERVICE_CLIENT_SECRET` (→ `aggregator-bff`) at Keycloak boot, and fails hard if any is unset. Choose the secrets yourself; the app-side value must equal the value Keycloak rendered. The BFF uses the dedicated minimal-scope `aggregator-bff` client — **never** the `aggregator-api` client (which holds realm-management).
 
 ### apps/web/.env — required edits
 
 ```dotenv
 SESSION_KEY=<openssl rand -hex 32>          # different value from the API one
-OIDC_CLIENT_SECRET=<aggregator-portal secret from KC>
-BFF_SERVICE_CLIENT_SECRET=<same as KEYCLOAK_ADMIN_CLIENT_SECRET in apps/api/.env>
+OIDC_CLIENT_SECRET=<aggregator-portal secret — same value Keycloak rendered>
+BFF_SERVICE_CLIENT_ID=aggregator-bff
+BFF_SERVICE_CLIENT_SECRET=<aggregator-bff secret — same value Keycloak rendered>
 ```
 
 How to read the Keycloak client secrets the first time:
@@ -184,9 +185,8 @@ How to read the Keycloak client secrets the first time:
 1. Open <http://localhost:8080/admin> (admin / `admin` per the Compose file).
 2. Switch to the `aggregator` realm (top-left dropdown).
 3. **Clients → `aggregator-portal` → Credentials** → copy "Client secret" → paste into `apps/web/.env` as `OIDC_CLIENT_SECRET`.
-4. **Clients → `aggregator-api` → Credentials** → copy "Client secret" → paste into both:
-   - `apps/api/.env` → `KEYCLOAK_ADMIN_CLIENT_SECRET`
-   - `apps/web/.env` → `BFF_SERVICE_CLIENT_SECRET`
+4. **Clients → `aggregator-api` → Credentials** → copy "Client secret" → paste into `apps/api/.env` → `KEYCLOAK_ADMIN_CLIENT_SECRET`.
+5. **Clients → `aggregator-bff` → Credentials** → copy "Client secret" → paste into `apps/web/.env` → `BFF_SERVICE_CLIENT_SECRET`.
 
 ---
 

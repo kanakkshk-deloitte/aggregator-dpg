@@ -229,6 +229,12 @@ services:
       SMTP_SSL: "false"
       # SMS OTP: 'log' writes the code to keycloak logs (no Twilio/SNS/MSG91).
       KC_SPI_SMS_PROVIDER: log
+      # Client secrets substituted into the realm import by render-realm.sh
+      # (the realm JSON carries __AGGREGATOR_*_SECRET__ placeholders, no literals).
+      # Localhost-only dev defaults; must match the web/api service values below.
+      AGGREGATOR_API_SECRET: ${OIDC_API_CLIENT_SECRET:-aggregator-api-local-dev-secret}
+      AGGREGATOR_PORTAL_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-aggregator-portal-local-dev-secret}
+      AGGREGATOR_BFF_SECRET: ${OIDC_BFF_CLIENT_SECRET:-aggregator-bff-local-dev-secret}
     env_file:
       # Brand strings (BRAND_*, HERO_*) for the login theme.
       - ../config/${AGGREGATOR_NETWORK:-blue_dot}/keycloak.env
@@ -279,7 +285,7 @@ services:
       SMTP_USER: ""
       SMTP_PASSWORD: ""
       # Reconcile the portal client secret to match the web BFF config.
-      OIDC_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-aggregator-portal-dev-secret-change-me}
+      OIDC_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-aggregator-portal-local-dev-secret}
       PORTAL_CLIENT_ID: aggregator-portal
     volumes:
       - ../infra/keycloak/init:/init:ro
@@ -413,7 +419,7 @@ services:
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: ${KEYCLOAK_REALM:-aggregator}
       KEYCLOAK_ADMIN_CLIENT_ID: aggregator-api
-      KEYCLOAK_ADMIN_CLIENT_SECRET: ${OIDC_API_CLIENT_SECRET:-aggregator-api-dev-secret-change-me}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${OIDC_API_CLIENT_SECRET:-aggregator-api-local-dev-secret}
       # Mail -> Mailpit
       MAIL_PROVIDER: smtp
       SMTP_HOST: mailpit
@@ -496,13 +502,13 @@ services:
       # entry, container via docker DNS) so the token `iss` claim always matches.
       OIDC_ISSUER: http://keycloak:8080/realms/${KEYCLOAK_REALM:-aggregator}
       OIDC_CLIENT_ID: aggregator-portal
-      OIDC_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-aggregator-portal-dev-secret-change-me}
+      OIDC_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-aggregator-portal-local-dev-secret}
       OIDC_REDIRECT_URI: http://localhost:3100/api/auth/callback
       OIDC_POST_LOGOUT_REDIRECT_URI: http://localhost:3100/
       OIDC_SCOPE: openid profile email
       # BFF service account (anonymous-proxy routes) reuses the api client.
-      BFF_SERVICE_CLIENT_ID: aggregator-api
-      BFF_SERVICE_CLIENT_SECRET: ${OIDC_API_CLIENT_SECRET:-aggregator-api-dev-secret-change-me}
+      BFF_SERVICE_CLIENT_ID: aggregator-bff
+      BFF_SERVICE_CLIENT_SECRET: ${OIDC_BFF_CLIENT_SECRET:-aggregator-bff-local-dev-secret}
       SESSION_COOKIE_NAME: sid
       SESSION_TTL_SECONDS: "43200"
       SESSION_KEY: ${SESSION_KEY:?SESSION_KEY must be set in .env (>=32 chars)}

@@ -25,6 +25,22 @@ export interface ConfigPathEnv {
   AGGREGATOR_BRAND?: string;
   AGGREGATOR_CONFIG_PATH?: string;
   SCHEMA_ROOT_DIR?: string;
+  AGGREGATOR_NETWORK_SOURCE?: string;
+}
+
+/**
+ * Resolves the deploy-time override for the signalstack `network.json`
+ * URL. When `AGGREGATOR_NETWORK_SOURCE` is set (non-empty after trim)
+ * it wins over `aggregator.network.source` from the YAML, letting a
+ * deployment swap the schema source (e.g. via a Kubernetes ConfigMap)
+ * without rebuilding the image or editing the mounted config (#512).
+ *
+ * @param env - Env-var bag; defaults to `process.env`.
+ * @returns The override URL, or `undefined` when unset/blank.
+ */
+export function resolveNetworkSourceOverride(env: ConfigPathEnv = process.env): string | undefined {
+  const value = env.AGGREGATOR_NETWORK_SOURCE?.trim();
+  return value ? value : undefined;
 }
 
 /**

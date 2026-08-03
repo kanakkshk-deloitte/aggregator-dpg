@@ -192,6 +192,14 @@ export async function processBulkFile(job: BulkFileProcessJob): Promise<ProcessO
   // Now safe to publish total_rows + reader_done.
   await redis.hset(`${ns}:meta`, 'total_rows', String(rows.length), 'reader_done', '1');
 
+  // Bound the lifetime of the File Processor's keys — `:lines` holds the raw
+  // participant CSV (PII). The Finaliser DELs them on success; this TTL is the
+  // safety net for uploads that fail or are abandoned before then. The Row
+  // Processor's Lua refreshes the same TTL on its keys per commit.
+  const ttl = config.BULK_UPLOAD_REDIS_TTL_SECONDS;
+  await redis.expire(`${ns}:meta`, ttl);
+  await redis.expire(`${ns}:lines`, ttl);
+
   log.info({
     status: 'success',
     event_type: 'audit',

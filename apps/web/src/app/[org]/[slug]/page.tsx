@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { RJSFSchema } from '@rjsf/utils';
 import { resolveSchemaRoot } from '@/lib/config-paths';
+import { loadParticipantConsent } from '@/lib/participant-consent.server';
 import { PublicRegistrationView } from './PublicRegistrationView';
 
 export const metadata: Metadata = {
@@ -129,6 +130,10 @@ export default async function PublicRegistrationPage({ params }: PageProps) {
     }
   }
 
+  // Participant Terms/Privacy copy for the consent modal (interim: read from
+  // the Signals-copied config file; later the Signals /consent/active API).
+  const participantConsent = await loadParticipantConsent();
+
   return (
     <PublicRegistrationView
       org={org}
@@ -142,6 +147,7 @@ export default async function PublicRegistrationPage({ params }: PageProps) {
       submissionShape={submissionShape}
       publicHintI18nKey={hintKey}
       registrationMode={resolved.registration_mode ?? null}
+      consentContent={participantConsent}
     />
   );
 }

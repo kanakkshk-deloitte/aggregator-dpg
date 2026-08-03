@@ -51,7 +51,7 @@ export class InMemoryConsentLedger extends ConsentLedgerBase {
       privacyVersion: input.privacyVersion,
       network: input.network,
       brand: input.brand ?? null,
-      source: 'registration',
+      source: input.source ?? 'registration',
       acceptedAt: FIXED_NOW,
       createdAt: FIXED_NOW,
     };

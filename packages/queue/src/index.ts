@@ -123,6 +123,30 @@ export const DEFAULT_JOB_OPTS = {
   removeOnFail: { age: 604800 },
 } as const;
 
+// ─── Bulk-upload Redis key namespace ─────────────────────────────────────────
+
+/**
+ * Every per-upload Redis key under the `bu:{uploadId}:*` namespace used by the
+ * bulk pipeline. Some of these hold participant PII (`:lines` = raw CSV rows,
+ * `:errors` = per-row error detail incl. the raw row), so this is the single
+ * list to DEL on cleanup / terminal states — keeping the File Processor,
+ * Finaliser, and watchdog from drifting apart.
+ *
+ * @param uploadId - bulk_uploads.id.
+ * @returns The six fully-qualified Redis keys for this upload.
+ */
+export function bulkRedisKeys(uploadId: string): string[] {
+  const ns = `bu:${uploadId}`;
+  return [
+    `${ns}:processed`,
+    `${ns}:counters`,
+    `${ns}:errors`,
+    `${ns}:error_rows`,
+    `${ns}:meta`,
+    `${ns}:lines`,
+  ];
+}
+
 // ─── Lua scripts ─────────────────────────────────────────────────────────────
 
 export {

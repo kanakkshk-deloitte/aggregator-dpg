@@ -86,8 +86,15 @@ export function useOnboardingBySource() {
 export function useBulkUpload() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ file, participantType }: { file: File; participantType: string }) =>
-      onboardingService.uploadCsv(file, participantType),
+    mutationFn: ({
+      file,
+      participantType,
+      attestation,
+    }: {
+      file: File;
+      participantType: string;
+      attestation: boolean;
+    }) => onboardingService.uploadCsv(file, participantType, attestation),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['onboarding', 'summary'] });
     },

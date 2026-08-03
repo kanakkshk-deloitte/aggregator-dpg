@@ -4,6 +4,7 @@ import {
   resolveConfigPath,
   resolveSchemaRoot,
   resolveActiveNetwork,
+  resolveNetworkSourceOverride,
 } from '../paths.js';
 
 describe('resolveConfigDir', () => {
@@ -162,5 +163,23 @@ describe('resolveActiveNetwork', () => {
     const { network } = resolveActiveNetwork({});
     const dir = resolveConfigDir({});
     expect(dir).toContain(network);
+  });
+});
+
+describe('resolveNetworkSourceOverride', () => {
+  it('returns the trimmed URL when AGGREGATOR_NETWORK_SOURCE is set', () => {
+    const url = resolveNetworkSourceOverride({
+      AGGREGATOR_NETWORK_SOURCE: ' https://schemas.example.org/blue_dot/network.json ',
+    });
+    expect(url).toBe('https://schemas.example.org/blue_dot/network.json');
+  });
+
+  it('returns undefined when unset', () => {
+    expect(resolveNetworkSourceOverride({})).toBeUndefined();
+  });
+
+  it('treats empty and whitespace-only values as absent', () => {
+    expect(resolveNetworkSourceOverride({ AGGREGATOR_NETWORK_SOURCE: '' })).toBeUndefined();
+    expect(resolveNetworkSourceOverride({ AGGREGATOR_NETWORK_SOURCE: '   ' })).toBeUndefined();
   });
 });

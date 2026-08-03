@@ -6,7 +6,7 @@
  *   KEYCLOAK_URL=http://localhost:8080 \
  *   KEYCLOAK_REALM=aggregator \
  *   KEYCLOAK_ADMIN_CLIENT_ID=aggregator-api \
- *   KEYCLOAK_ADMIN_CLIENT_SECRET=aggregator-api-dev-secret-change-me \
+ *   KEYCLOAK_ADMIN_CLIENT_SECRET=aggregator-api-local-dev-secret \
  *   pnpm --filter @aggregator-dpg/api test
  */
 

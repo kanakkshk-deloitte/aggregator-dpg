@@ -49,6 +49,17 @@
               "effective_from": "2026-07-01"
             }
           ]
+        },
+        "bulk_upload_attestation": {
+          "current_version": 1,
+          "versions": [
+            {
+              "version": 1,
+              "title": "Bulk Upload Authorisation",
+              "content": "I confirm that I have obtained permission from each individual whose details are included in this file to submit their information for onboarding, and that the information provided is accurate to the best of my knowledge.",
+              "effective_from": "2026-08-01"
+            }
+          ]
         }
       }
     }

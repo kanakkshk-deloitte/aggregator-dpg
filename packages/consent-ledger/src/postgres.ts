@@ -105,7 +105,7 @@ export class PostgresConsentLedger extends ConsentLedgerBase {
           privacyVersion: validInput.privacyVersion,
           network: validInput.network,
           brand: validInput.brand ?? null,
-          source: 'registration',
+          source: input.source ?? 'registration',
           acceptedAt: now,
         })
         .returning();

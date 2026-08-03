@@ -258,6 +258,7 @@ export async function registerAggregatorApprovalRoutes(app: FastifyInstance): Pr
             name: lookup.aggregator.name,
             slug: lookup.aggregator.orgSlug,
             domains: aggregatorDomains,
+            requestId: req.id,
           });
           if (!upsertResult.success) {
             log.error(

@@ -158,6 +158,7 @@ export async function registerPublicLookupRoute(app: FastifyInstance): Promise<v
 
       const probe = await ss.probeUser({
         actingOrgId,
+        requestId: req.id,
         ...(q.email ? { email: q.email } : {}),
         ...(phoneNumber ? { phoneNumber } : {}),
         network: q.network,

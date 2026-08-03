@@ -14,7 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import { Readable } from 'node:stream';
 import Papa from 'papaparse';
-import { streamCsvParse, reconstructCsvLine, createUtf8DecodeStream } from './bulk-file-stream.js';
+import { streamCsvParse, createUtf8DecodeStream } from './bulk-file-stream.js';
 
 const HEADER = 'name,email,city';
 const REQUIRED = ['name', 'email'];
@@ -153,31 +153,6 @@ describe('streamCsvParse — encoding', () => {
   });
 });
 
-describe('reconstructCsvLine — Finaliser :lines contract', () => {
-  it('round-trips through positional re-parse to the original cell values', () => {
-    const headers = ['name', 'email', 'note'];
-    const payload = { name: 'Asha', email: 'asha@x.io', note: 'has, comma "and" quote' };
-    const line = reconstructCsvLine(headers, payload);
-    // The Finaliser re-parses each stored line positionally (header:false).
-    const cells = (Papa.parse<string[]>(line, { header: false }).data[0] ?? []) as string[];
-    expect(cells).toEqual(['Asha', 'asha@x.io', 'has, comma "and" quote']);
-  });
-
-  it('emits cells in header order, filling missing keys with empty strings', () => {
-    const headers = ['a', 'b', 'c'];
-    const line = reconstructCsvLine(headers, { b: 'two' });
-    const cells = (Papa.parse<string[]>(line, { header: false }).data[0] ?? []) as string[];
-    expect(cells).toEqual(['', 'two', '']);
-  });
-
-  it('appends surplus cells from a ragged row (PapaParse __parsed_extra)', () => {
-    const headers = ['a', 'b'];
-    const line = reconstructCsvLine(headers, { a: 'x', b: 'y', __parsed_extra: ['z1', 'z2'] });
-    const cells = (Papa.parse<string[]>(line, { header: false }).data[0] ?? []) as string[];
-    expect(cells).toEqual(['x', 'y', 'z1', 'z2']);
-  });
-});
-
 describe('streamCsvParse — ragged rows', () => {
   it('keeps surplus columns in rawLine but excludes PapaParse internals from payload', async () => {
     // Header has 2 cols; the data row has 3 → the 3rd lands in __parsed_extra.
@@ -225,5 +200,39 @@ describe('createUtf8DecodeStream', () => {
         for await (const _ of src.pipe(createUtf8DecodeStream())) void _;
       })(),
     ).rejects.toThrowError(/encoding/i);
+  });
+});
+
+describe('streamCsvParse — large-file guarantees (positional parsing)', () => {
+  // Guards the positional-parsing contract on inputs well past PapaParse's
+  // ~1 KB internal chunk boundary: header mode (`header: true`) re-invokes its
+  // header logic on later chunk cycles, which clobbered the derived header
+  // list on big files (#500). Positional parsing must stay immune at any file
+  // size / blank-cell mix — no `_N` rename artifacts can appear in headers or
+  // payloads because header derivation happens exactly once, from record 0.
+  // (Note: this input does not fail on the pre-fix parser — it pins the
+  // guarantee, it does not reproduce the original corruption.)
+  it('parses a >1KB CSV with blank cells (250 rows) with clean headers and payloads', async () => {
+    // `city` blank on every row — blank cells near chunk boundaries are the
+    // riskiest shape for any header re-derivation machinery.
+    const dataRows = Array.from({ length: 250 }, (_, i) => `Name ${i},user${i}@example.io,`);
+    const csv = [HEADER, ...dataRows].join('\n');
+    expect(Buffer.byteLength(csv, 'utf8')).toBeGreaterThan(1024);
+
+    const res = await streamCsvParse(csv, opts());
+
+    expect(res.status).toBe('ok');
+    if (res.status !== 'ok') return;
+    expect(res.headers).toEqual(['name', 'email', 'city']);
+    expect(res.rows).toHaveLength(250);
+    // A late row (past the chunk boundary) must map by position, not to `_N`.
+    expect(res.rows[249]!.payload).toMatchObject({ name: 'Name 249', email: 'user249@example.io' });
+    // No payload key or value may be a `_N` rename artifact.
+    for (const row of res.rows) {
+      for (const [k, v] of Object.entries(row.payload)) {
+        expect(k).not.toMatch(/^_\d+$/);
+        expect(String(v)).not.toMatch(/^_\d+$/);
+      }
+    }
   });
 });

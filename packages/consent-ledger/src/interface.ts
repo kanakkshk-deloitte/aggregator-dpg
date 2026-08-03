@@ -37,6 +37,12 @@ export const RecordConsentInputSchema = z.object({
   termsVersion: z.number().int().min(1),
   /** Version of the Privacy Policy document accepted. */
   privacyVersion: z.number().int().min(1),
+  /**
+   * How consent was captured. Defaults to `'registration'` when omitted.
+   * The bulk-upload operator attestation encodes the upload + statement
+   * version here, e.g. `bulk_upload:<uploadId>:v1` (no dedicated column).
+   */
+  source: z.string().min(1).optional(),
 });
 
 /** TypeScript type inferred from {@link RecordConsentInputSchema}. */
@@ -89,12 +95,12 @@ export type ConsentRecord = z.infer<typeof ConsentRecordSchema>;
  */
 export abstract class ConsentLedgerBase {
   /**
-   * Appends one registration-consent record for the given subject.
+   * Appends one consent record for the given subject.
    *
-   * The `source` field is always set to `'registration'` by the concrete
-   * implementation; `acceptedAt` is server-stamped at write time.
+   * The `source` field defaults to `'registration'` when the input omits it;
+   * `acceptedAt` is server-stamped at write time.
    *
-   * @param input - Validated registration-consent payload.
+   * @param input - Validated consent payload.
    * @returns `ok(ConsentRecord)` on successful insert; `err(BaseError)` on
    *   validation failure or DB/upstream error.
    */

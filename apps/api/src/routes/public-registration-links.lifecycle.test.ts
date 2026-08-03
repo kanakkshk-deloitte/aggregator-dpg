@@ -192,6 +192,13 @@ describe('POST /public/v1/aggregators/:orgSlug/registrations/:slug — lifecycle
     name: 'Asha Kumari',
     phone: '+919876543210',
     email: 'asha@example.com',
+    // Consent is now required on every registration-link submit (#522). The
+    // account_and_profile shape additionally requires profile-creation consent
+    // and a year of birth (age is derived + sent with the compliance push).
+    consent_terms: true,
+    consent_privacy: true,
+    consent_profile: true,
+    year_of_birth: 1990,
   };
 
   it('returns lifecycle_status="live" on default classification', async () => {
@@ -239,6 +246,10 @@ describe('POST /public/v1/aggregators/:orgSlug/registrations/:slug — lifecycle
         phone: '+919876500000',
         email: 'partial@example.com',
         partial: true,
+        consent_terms: true,
+        consent_privacy: true,
+        consent_profile: true,
+        year_of_birth: 1990,
       },
     });
     expect(r.statusCode).toBe(201);
@@ -269,5 +280,35 @@ describe('POST /public/v1/aggregators/:orgSlug/registrations/:slug — lifecycle
     expect(body.outcome).toBe('skipped');
     expect(body.owned_elsewhere).toBe(true);
     expect(body.lifecycle_status).toBeNull();
+  });
+
+  it('creates a minor without consent — age + compliance omitted (#522 §4.4)', async () => {
+    // A minor's year of birth → derived age <= 18. The API must NOT send a
+    // top-level age or a compliance block (which would trip Signals'
+    // U18_NOT_ALLOWED); Signals then creates the account with no consent. No
+    // consent fields are sent here either, proving they are not required.
+    const r = await app.inject({
+      method: 'POST',
+      url: `/public/v1/aggregators/${ORG_SLUG}/registrations/${LINK_SLUG}`,
+      payload: {
+        name: 'Minor User',
+        phone: '+919876500015',
+        email: 'minor@example.com',
+        year_of_birth: 2015,
+      },
+    });
+    expect(r.statusCode).toBe(201);
+    expect((r.json() as { outcome: string }).outcome).toBe('passed');
+  });
+
+  it('rejects a submit with 400 CONSENT_REQUIRED when consent is not given (#522)', async () => {
+    const { consent_terms: _t, consent_privacy: _p, ...noConsent } = basePayload;
+    const r = await app.inject({
+      method: 'POST',
+      url: `/public/v1/aggregators/${ORG_SLUG}/registrations/${LINK_SLUG}`,
+      payload: { ...noConsent, phone: '+919876500042', email: 'noconsent@example.com' },
+    });
+    expect(r.statusCode).toBe(400);
+    expect((r.json() as { error?: { code?: string } }).error?.code).toBe('CONSENT_REQUIRED');
   });
 });

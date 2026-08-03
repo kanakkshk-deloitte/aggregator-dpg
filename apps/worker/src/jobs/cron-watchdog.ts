@@ -13,7 +13,9 @@
  */
 
 import { and, eq, inArray, isNotNull, lt } from 'drizzle-orm';
+import { bulkRedisKeys } from '@aggregator-dpg/queue';
 import { getDb, schema } from '../db.js';
+import { getRedis } from '../services/redis.js';
 import { logger } from '../logger.js';
 
 const RETENTION_DAYS = 90;
@@ -56,6 +58,18 @@ export async function runWatchdog(): Promise<WatchdogOutcome> {
     )
     .returning({ id: schema.bulkUploads.id });
 
+  // Actively purge the Redis working set (incl. the PII-bearing `:lines` and
+  // `:errors` keys) for uploads we just marked failed — the happy-path DEL in
+  // bulk-finalise never runs for these. The per-key TTL is the backstop if this
+  // pass is missed; this makes cleanup immediate. `abandoned` uploads are still
+  // `pending` (usually no keys written yet) — DEL is a harmless no-op there.
+  const terminalIds = [...abandoned, ...stuck].map((r) => r.id);
+  let redisKeysPurged = 0;
+  if (terminalIds.length > 0) {
+    const keys = terminalIds.flatMap((id) => bulkRedisKeys(id));
+    redisKeysPurged = await getRedis().del(...keys);
+  }
+
   // Retention: terminal-status bulk uploads beyond cutoff. Keep onboarding
   // rollups untouched (forever per design); cascade FK from
   // link_submission.participant_id is set null on participant delete, but
@@ -85,6 +99,7 @@ export async function runWatchdog(): Promise<WatchdogOutcome> {
     latency_ms: Date.now() - start,
     abandoned: abandoned.length,
     stuck: stuck.length,
+    redis_keys_purged: redisKeysPurged,
     bulk_purged: bulkPurged.length,
     submissions_purged: submissionsPurged.length,
   });

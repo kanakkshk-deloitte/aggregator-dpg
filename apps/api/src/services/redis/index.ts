@@ -22,3 +22,12 @@ export function getRedis(): Redis {
 export function _setRedis(r: Redis | null): void {
   instance = r;
 }
+
+/**
+ * Closes the shared Redis connection. Idempotent; call from process shutdown.
+ * Previously this singleton was leaked on SIGTERM (nothing closed it).
+ */
+export async function closeRedis(): Promise<void> {
+  await instance?.quit().catch(() => undefined);
+  instance = null;
+}

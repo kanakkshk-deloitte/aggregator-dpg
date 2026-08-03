@@ -10,7 +10,7 @@
 import pino from 'pino';
 import { config } from './config.js';
 
-const REDACT_PATHS = [
+export const REDACT_PATHS = [
   'req.headers.authorization',
   'req.headers.cookie',
   'headers.authorization',
@@ -21,9 +21,24 @@ const REDACT_PATHS = [
   '*.refresh_token',
   'body.password',
   'body.token',
+  // Participant PII — email/phone must never reach the log stream. Registration
+  // error paths attach them under `fields`/`body`, participant payloads under
+  // `payload`/`data`; cover the common one- and two-level nestings pino allows.
+  'email',
+  'phone',
+  '*.email',
+  '*.phone',
+  '*.*.email',
+  '*.*.phone',
 ];
 
-export const logger = pino({
+/**
+ * Shared pino options. Exported so the Fastify request logger (`app.ts`) is
+ * built from the *same* config — most importantly the same `redact` paths —
+ * rather than a hand-maintained copy that can (and did) drift and drop the
+ * PII redactions on the request-scoped `req.log`.
+ */
+export const loggerOptions: pino.LoggerOptions = {
   level: config.LOG_LEVEL,
   base: { service: 'aggregator-api', env: config.NODE_ENV },
   redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
@@ -40,4 +55,6 @@ export const logger = pino({
         },
       }
     : {}),
-});
+};
+
+export const logger = pino(loggerOptions);

@@ -279,6 +279,11 @@ export async function registerPublicRegistrationLinkRoutes(app: FastifyInstance)
         const allowed = new Set<string>([
           'consent_terms',
           'consent_privacy',
+          // Age/year-of-birth required with consent on guardian-gated domains
+          // (§4.4); the account_only form collects year_of_birth (age kept for
+          // backward compatibility with older clients).
+          'age',
+          'year_of_birth',
           ...[
             linkDomainCfgEarly.identity.name,
             linkDomainCfgEarly.identity.phone,
@@ -334,8 +339,65 @@ export async function registerPublicRegistrationLinkRoutes(app: FastifyInstance)
       // it.
       const body: Record<string, unknown> = { ...rawBody };
       delete body['partial'];
+
       const submitMode: 'with_item' | 'account_only' =
         submissionShape === 'account_only' ? 'account_only' : 'with_item';
+
+      // Consent booleans are captured outside the participant profile schema,
+      // then stripped from `body` so they never reach Ajv (a+p) or the
+      // signalstack item_state. `consent_profile` (profile_creation) is a
+      // distinct point on the with_item shape. See the minor branch below —
+      // consent is required for adults only.
+      const termsOk = body['consent_terms'] === true;
+      const privacyOk = body['consent_privacy'] === true;
+      const profileConsentOk = body['consent_profile'] === true;
+      delete body['consent_terms'];
+      delete body['consent_privacy'];
+      delete body['consent_profile'];
+
+      // Year of birth (snapshot model, no birthdate stored) → derived age.
+      // Stripped from `body` so it never reaches Ajv / item_state; the a+p
+      // profile keeps its own `age` schema field (which does NOT trigger the
+      // U18 gate — only the top-level `age` does). Falls back to body `age`
+      // for older clients.
+      const yobRaw = body['year_of_birth'];
+      delete body['year_of_birth'];
+      const coerceNum = (v: unknown): number | undefined =>
+        typeof v === 'number'
+          ? v
+          : typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))
+            ? Number(v)
+            : undefined;
+      const yob = coerceNum(yobRaw);
+      const derivedAge =
+        yob !== undefined ? new Date().getUTCFullYear() - yob : coerceNum(body['age']);
+
+      // U18 (§4.4): a minor cannot establish consent here — they accept terms
+      // in the Signals app after signing in. Signals rejects any onboard that
+      // carries a top-level `age < 18` (`U18_NOT_ALLOWED`) but creates the user
+      // when NEITHER age NOR compliance is sent. So for a minor we submit
+      // WITHOUT age and WITHOUT compliance (no consent required); for an adult
+      // we require consent and forward both. Age is unknown ⇒ treat as adult
+      // (form always collects year of birth).
+      const isMinor = derivedAge !== undefined && derivedAge <= 18;
+      if (!isMinor) {
+        const missingConsent: string[] = [];
+        if (!termsOk) missingConsent.push('user_terms');
+        if (!privacyOk) missingConsent.push('user_privacy');
+        if (submitMode === 'with_item' && !profileConsentOk)
+          missingConsent.push('profile_creation');
+        if (missingConsent.length > 0) {
+          throw httpError('CONSENT_REQUIRED', { fields: { missing: missingConsent } });
+        }
+      }
+      const ageNum = isMinor ? undefined : derivedAge;
+      const compliance = isMinor
+        ? undefined
+        : [
+            { key: 'user_terms', value: true },
+            { key: 'user_privacy', value: true },
+            ...(submitMode === 'account_only' ? [] : [{ key: 'profile_creation', value: true }]),
+          ];
 
       // Identity selectors come from the resolved network config so the
       // route stays generic across signalstack networks. The sniffer
@@ -549,11 +611,16 @@ export async function registerPublicRegistrationLinkRoutes(app: FastifyInstance)
           const pushPhone = phoneNormalised ?? phoneFromBody;
           const result = await ss.onboard({
             actingOrgId: signalstackOrgId,
+            requestId: req.id,
             name,
             ...(pushPhone ? { phoneNumber: pushPhone } : {}),
             ...(emailNormalised ? { email: emailNormalised } : {}),
-            terms_accepted: networkCfg.aggregator.onboarding.presume_consent,
-            privacy_accepted: networkCfg.aggregator.onboarding.presume_consent,
+            // Adult: record consent via the `compliance` array (the live Signals
+            // mechanism, never the deprecated flags) + forward age. Minor: both
+            // omitted so Signals creates the user without consent (§4.4) — they
+            // accept terms in the Signals app after signing in.
+            ...(compliance ? { compliance } : {}),
+            ...(ageNum !== undefined ? { age: ageNum } : {}),
             channel: 'link',
             source_id: link.id,
             network: config.SIGNALSTACK_ITEM_NETWORK,
@@ -572,8 +639,30 @@ export async function registerPublicRegistrationLinkRoutes(app: FastifyInstance)
               link_id: link.id,
               participant_id: participantRowId,
             });
+            // Profile cap (signals #349): show the bare user-facing sentence
+            // (no `signalstack onboard returned 409: PROFILE_LIMIT_REACHED:`
+            // infra prefixes) directly on the public form. Falls back to the
+            // generic string for any other push failure.
+            const signalsMessage = (
+              result.error.details as { signalsMessage?: unknown } | undefined
+            )?.signalsMessage;
+            // Belt-and-braces (§4.4): the form gates minors client-side, but a
+            // bypassed client that pushes an under-18 gets Signals'
+            // `U18_NOT_ALLOWED`. Map it to the finish-in-the-app response
+            // instead of a generic push failure.
+            if (result.error.message.includes('U18_NOT_ALLOWED')) {
+              throw httpError('U18_REGISTRATION_REDIRECT', {
+                fields: { code: result.error.code, message: result.error.message },
+                cause: result.error,
+              });
+            }
+            const detail =
+              result.error.code === 'SIGNALSTACK_PROFILE_LIMIT_REACHED' &&
+              typeof signalsMessage === 'string'
+                ? signalsMessage
+                : `Signalstack rejected the participant push (${result.error.code}).`;
             throw httpError('SIGNALSTACK_PUSH_FAILED', {
-              detail: `Signalstack rejected the participant push (${result.error.code}).`,
+              detail,
               fields: { code: result.error.code, message: result.error.message },
               cause: result.error,
             });

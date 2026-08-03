@@ -129,7 +129,9 @@ export async function registerAggregatorRegistrationRoutes(app: FastifyInstance)
       if (!phoneResult.ok) {
         throw httpError('INVALID_PHONE', {
           detail: phoneResult.error.message,
-          fields: { input: body.contact.phone },
+          // Key it `phone` (not `input`) so the logger's `*.phone` redact path
+          // masks the raw number if this error is ever logged.
+          fields: { phone: body.contact.phone },
         });
       }
       const phoneE164 = phoneResult.value;

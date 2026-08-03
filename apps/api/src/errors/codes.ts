@@ -47,6 +47,21 @@ export const ERR = {
     detail: 'One or more fields failed validation.',
     hint: 'Zod or Ajv rejected the request body. See response.error.fields for offending paths.',
   },
+  CONSENT_REQUIRED: {
+    code: 'CONSENT_REQUIRED',
+    status: 400,
+    title: 'Consent required',
+    detail: 'You must accept the terms and privacy policy to continue.',
+    hint: 'The registration submit did not carry consent_terms=true and consent_privacy=true. The form must send both as booleans.',
+  },
+  U18_REGISTRATION_REDIRECT: {
+    code: 'U18_REGISTRATION_REDIRECT',
+    status: 400,
+    title: 'Finish in the Signalstack app',
+    detail:
+      'Under-18 registration cannot be completed here. Please finish in the Signalstack app, where a parent or guardian can confirm.',
+    hint: "Signals rejected the push with U18_NOT_ALLOWED. The form gates minors client-side (§4.4); this is the belt-and-braces mapping for a bypassed client. Signals' draft-create + u18_redirect_required path is not implemented upstream.",
+  },
   BAD_JSON: {
     code: 'BAD_JSON',
     status: 400,

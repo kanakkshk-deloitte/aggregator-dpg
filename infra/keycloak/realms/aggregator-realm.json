@@ -1,7 +1,20 @@
 {
   "realm": "aggregator",
   "enabled": true,
-  "sslRequired": "none",
+  "sslRequired": "external",
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "minimumQuickLoginWaitSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "actionTokenGeneratedByUserLifespan": 300,
   "displayName": "__BRAND_LONG_NAME__",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
@@ -98,7 +111,7 @@
       "enabled": true,
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
-      "secret": "aggregator-portal-dev-secret-change-me",
+      "secret": "__AGGREGATOR_PORTAL_SECRET__",
       "directAccessGrantsEnabled": false,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
@@ -199,16 +212,27 @@
             "multivalued": "false",
             "aggregate.attrs": "false"
           }
+        },
+        {
+          "name": "aggregator-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "aggregator-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
         }
       ]
     },
     {
       "clientId": "aggregator-api",
       "name": "Aggregator API (service account)",
-      "description": "Confidential client for apps/api Keycloak admin ops (create users on approval, org groups + org_owner role). Service account holds realm-management roles manage-users and manage-realm.",
+      "description": "Confidential client for apps/api Keycloak admin ops (create users on approval, org groups + org_owner role). Service account holds realm-management roles manage-users and manage-realm. Its secret must NOT be shared with the portal BFF — the BFF uses the minimal-scope aggregator-bff client below.",
       "enabled": true,
       "publicClient": false,
-      "secret": "aggregator-api-dev-secret-change-me",
+      "secret": "__AGGREGATOR_API_SECRET__",
       "directAccessGrantsEnabled": false,
       "standardFlowEnabled": false,
       "implicitFlowEnabled": false,
@@ -217,6 +241,35 @@
       "attributes": {
         "use.refresh.tokens": "false"
       }
+    },
+    {
+      "clientId": "aggregator-bff",
+      "name": "Aggregator Portal BFF (anonymous proxy)",
+      "description": "Minimal-scope confidential client for the web BFF's client_credentials grant on anonymous-proxy routes (e.g. POST /api/aggregator/register). Holds NO realm-management roles — it only mints a service-account access token to authenticate to the aggregator API. Kept separate from aggregator-api so a leaked BFF secret cannot administer the realm.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "__AGGREGATOR_BFF_SECRET__",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "attributes": {
+        "use.refresh.tokens": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "aggregator-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "aggregator-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [

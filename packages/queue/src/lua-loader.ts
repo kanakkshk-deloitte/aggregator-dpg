@@ -49,6 +49,7 @@ export interface BulkRowCommitResult {
  * @param rowIndex - row position in the original CSV (0-indexed after header).
  * @param outcome - 'passed' | 'failed' | 'skipped'.
  * @param errorPayloadJson - JSON-serialised error details when outcome != passed; empty string otherwise.
+ * @param ttlSeconds - TTL (re)applied to every bu:{id} key so participant PII self-expires if the upload is abandoned/stuck; pass 0 to skip.
  */
 export async function runBulkRowCommit(
   redis: Redis,
@@ -56,6 +57,7 @@ export async function runBulkRowCommit(
   rowIndex: number,
   outcome: BulkRowOutcome,
   errorPayloadJson: string,
+  ttlSeconds: number,
 ): Promise<BulkRowCommitResult> {
   const ns = `bu:${uploadId}`;
   const keys = [
@@ -65,7 +67,7 @@ export async function runBulkRowCommit(
     `${ns}:error_rows`,
     `${ns}:meta`,
   ];
-  const args = [String(rowIndex), outcome, errorPayloadJson];
+  const args = [String(rowIndex), outcome, errorPayloadJson, String(ttlSeconds)];
 
   let raw: unknown;
   try {

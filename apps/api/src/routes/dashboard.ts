@@ -46,6 +46,13 @@ import { httpError } from '../errors/http-error.js';
 const TILE_CAP = 1000;
 
 /**
+ * Lifecycle statuses the aggregator dashboard surfaces. Signals filters the
+ * rollup + items to this set (paused + retired are excluded). Broaden here if
+ * a deployment should show more buckets.
+ */
+const DASHBOARD_LIFECYCLE = ['draft', 'live'] as const;
+
+/**
  * Max rows signalstack's `fetch_local` accepts per request (`limit` is
  * validated `<= 100` upstream). Any wider window — a >100 page or the
  * TILE_CAP sweep — is gathered by paging at this size. Keep in sync with
@@ -175,6 +182,7 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
         item_domain: domain,
         item_type: domainCfg.itemType,
         lifecycle_filter: 'all' as const,
+        requestId: req.id,
       };
 
       // signalstack's `fetch_local` caps `limit` at SS_MAX_PAGE per request, so
@@ -340,10 +348,14 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
 
       const result = await ss.fetchDashboard({
         actingOrgId,
+        requestId: req.id,
         page,
         limit,
         ...(status ? { status } : {}),
         domain,
+        // Aggregator dashboard shows only draft + live profiles; paused +
+        // retired are excluded server-side by signalstack (#lifecycle-filter).
+        lifecycle: DASHBOARD_LIFECYCLE,
         refresh,
       });
 
@@ -427,6 +439,7 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
 
       const result = await ss.exportDashboardCsv({
         actingOrgId,
+        requestId: req.id,
         ...(status ? { status } : {}),
         domain,
         refresh,
@@ -505,7 +518,11 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
       }
 
       const actingOrgId = await resolveActingOrgId(auth, log);
-      const result = await ss.fetchDecryptedProfiles({ actingOrgId, itemIds: item_ids });
+      const result = await ss.fetchDecryptedProfiles({
+        actingOrgId,
+        itemIds: item_ids,
+        requestId: req.id,
+      });
       if (!result.success) {
         log.error({
           status: 'failure',

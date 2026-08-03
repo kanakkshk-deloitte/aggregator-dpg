@@ -100,14 +100,7 @@ export async function authenticate(req: FastifyRequest): Promise<AuthResult> {
 
   let payload: JWTPayload;
   try {
-    if (testOverride) {
-      payload = await testOverride(token);
-    } else {
-      const jwks = getJwks();
-      const issuer = expectedIssuer();
-      const { payload: verified } = await jwtVerify(token, jwks, { issuer });
-      payload = verified;
-    }
+    payload = await verifyToken(token);
   } catch (err) {
     return {
       ok: false,
@@ -338,14 +331,7 @@ export async function authenticateAny(req: FastifyRequest): Promise<AnyAuthResul
 
   let payload: JWTPayload;
   try {
-    if (testOverride) {
-      payload = await testOverride(token);
-    } else {
-      const jwks = getJwks();
-      const issuer = expectedIssuer();
-      const { payload: verified } = await jwtVerify(token, jwks, { issuer });
-      payload = verified;
-    }
+    payload = await verifyToken(token);
   } catch (err) {
     return {
       ok: false,
@@ -384,6 +370,79 @@ function readAggregatorId(payload: JWTPayload): string | undefined {
   if (typeof direct === 'string' && direct.length > 0) return direct;
   if (Array.isArray(direct) && typeof direct[0] === 'string') return direct[0];
   return undefined;
+}
+
+/**
+ * Verifies a raw Bearer token against the Keycloak realm and returns its
+ * claims.
+ *
+ * Beyond the signature + `iss` + `exp` checks jose performs, this adds two
+ * client-scoping controls that stop a token minted for a *different* client
+ * (or a different resource server) from being replayed against this API:
+ *
+ * - **`aud` (audience)** — when `KEYCLOAK_EXPECTED_AUDIENCE` is set, jose
+ *   requires the token's `aud` to contain it. Off by default because it needs
+ *   the realm's audience mapper (see `aggregator-realm.json`) to be present;
+ *   enable it once tokens actually carry the API audience.
+ * - **`azp` (authorized party)** — when `KEYCLOAK_ALLOWED_AZP` is set, the
+ *   token's `azp` (the client that requested it) must be in that allow-list.
+ *   Unlike `aud`, `azp` is always emitted by Keycloak, so this is the primary,
+ *   deploy-safe gate.
+ *
+ * Both are no-ops when their env var is unset, preserving prior behaviour.
+ *
+ * @param token - The raw JWT from the `Authorization: Bearer` header.
+ * @returns The verified JWT claim set.
+ * @throws {Error} If verification fails, or `azp` is not in the allow-list.
+ */
+async function verifyToken(token: string): Promise<JWTPayload> {
+  let payload: JWTPayload;
+  if (testOverride) {
+    payload = await testOverride(token);
+  } else {
+    const jwks = getJwks();
+    const audience = expectedAudience();
+    const { payload: verified } = await jwtVerify(token, jwks, {
+      issuer: expectedIssuer(),
+      ...(audience ? { audience } : {}),
+    });
+    payload = verified;
+  }
+  assertAllowedAzp(payload);
+  return payload;
+}
+
+/**
+ * Rejects a token whose `azp` is not in the configured allow-list.
+ *
+ * @param payload - The verified JWT claim set.
+ * @throws {Error} If an allow-list is configured and `azp` is absent or not in it.
+ */
+function assertAllowedAzp(payload: JWTPayload): void {
+  const allow = allowedAzp();
+  if (allow.length === 0) return; // gate disabled when unconfigured
+  const azp = (payload as Record<string, unknown>).azp;
+  if (typeof azp !== 'string' || !allow.includes(azp)) {
+    throw new Error(
+      `token azp '${typeof azp === 'string' ? azp : 'absent'}' is not an allowed client`,
+    );
+  }
+}
+
+/** Optional expected token audience (`KEYCLOAK_EXPECTED_AUDIENCE`). */
+function expectedAudience(): string | undefined {
+  const v = process.env.KEYCLOAK_EXPECTED_AUDIENCE;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+
+/** Allow-listed `azp` client ids (`KEYCLOAK_ALLOWED_AZP`, comma-separated). */
+function allowedAzp(): string[] {
+  const v = process.env.KEYCLOAK_ALLOWED_AZP;
+  if (!v) return [];
+  return v
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 function getJwks(): ReturnType<typeof createRemoteJWKSet> {

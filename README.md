@@ -175,6 +175,7 @@ Four areas, matching PRD § 4:
 
 - **Aggregate summary cards** — status counts (New / Active / At Risk / Inactive for seekers; New / Satisfied / Active / At Risk / Inactive for providers), participation metrics, new-in-last-7-days.
 - **Participant list** — paginated, searchable by name, filterable by status. Each row: name, date of joining, profile completion, application status counts (applied / shortlisted / rejected / pending), computed status, recommended follow-up.
+- **Lifecycle scope** — the list (`GET /v1/dashboard/items`) returns only **draft + live** profiles by default; paused and retired are excluded. A `?lifecycle=draft|live|paused|account_only` filter narrows to a single bucket, while the summary tiles still count the full dataset (#562).
 - **Detail drawer** — read-only participant detail from Signal Processing Service output.
 - **CSV export** — export of the current filtered list for offline follow-up and reporting.
 

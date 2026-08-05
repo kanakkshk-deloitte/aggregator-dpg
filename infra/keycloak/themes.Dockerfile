@@ -27,7 +27,7 @@
 #
 # Or simpler — pass `--build-arg-file config/<network>/keycloak.env`.
 
-FROM busybox:1.36
+FROM busybox:1.38
 
 ARG NETWORK=blue_dot
 ARG BRAND_SHORT_NAME=Aggregator

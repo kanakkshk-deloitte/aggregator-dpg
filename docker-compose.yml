@@ -45,8 +45,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-aggregator}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: ${POSTGRES_DB:-aggregator}
-    ports:
-      - "5433:5432" # host 5433 → container 5432 (avoids clashes with a system Postgres on 5432)
     # No host port mapping — reachable only as `postgres:5432` inside the
     # compose network. Host access for `pnpm --filter ... dev` comes from the
     # loopback-bound port in docker-compose.dev.yml (make up / stack:up layers it).
@@ -64,8 +62,6 @@ services:
     container_name: aggregator-redis
     restart: unless-stopped
     command: [ "redis-server", "--save", "60", "1", "--loglevel", "warning" ]
-    ports:
-      - "6379:6379"
     # No host port mapping — reachable only as `redis:6379` inside the compose
     # network. Host access for local dev comes from docker-compose.dev.yml.
     volumes:

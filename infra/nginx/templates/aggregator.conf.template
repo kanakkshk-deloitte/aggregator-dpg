@@ -14,6 +14,9 @@
 # Path map:
 #   /                → web         (Next.js, owns /api/auth/* for OIDC handshake)
 #   /backend/        → api         (prefix stripped)
+#   /signals-api/    → signals-api (prefix stripped)
+#   /signals-ui/     → signals-ui  (prefix stripped)
+#   /metabase/       → metabase    (prefix stripped)
 #   /auth/           → keycloak    (KC_HTTP_RELATIVE_PATH=/auth — prefix preserved)
 #   /mail/           → mailhog UI
 #
@@ -80,6 +83,89 @@ server {
 
         proxy_read_timeout  300s;
         proxy_send_timeout  300s;
+    }
+
+    # ─── /signals-api/ → signals-api (strip prefix) ─────────────────────
+    # Example: /signals-api/reference -> /reference on signals-api.
+    location /signals-api/ {
+        proxy_pass http://signals_api_upstream/;
+
+        proxy_set_header Host               $host;
+        proxy_set_header X-Real-IP          $remote_addr;
+        proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto  $scheme;
+        proxy_set_header X-Forwarded-Host   $host;
+        proxy_set_header X-Forwarded-Prefix /signals-api;
+
+        proxy_read_timeout  300s;
+        proxy_send_timeout  300s;
+    }
+
+    # ─── /signals-ui/ → signals-ui (strip prefix) ───────────────────────
+    # Note: if the UI is built with absolute root asset paths (/assets/*),
+    # deploy it on a dedicated host or rebuild with a prefixed base path.
+    location /signals-ui/ {
+        proxy_pass http://signals_ui_upstream/;
+
+        proxy_set_header Host               $host;
+        proxy_set_header X-Real-IP          $remote_addr;
+        proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto  $scheme;
+        proxy_set_header X-Forwarded-Host   $host;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade            $http_upgrade;
+        proxy_set_header Connection         $connection_upgrade;
+
+        # Signals UI is currently built with root-absolute URLs
+        # (/assets/*, /config.js, /analytics.js). When mounted under
+        # /signals-ui/, rewrite those links in HTML responses.
+        proxy_set_header Accept-Encoding "";
+        sub_filter_once off;
+        sub_filter_types text/html;
+        sub_filter 'src="/assets/' 'src="/signals-ui/assets/';
+        sub_filter 'href="/assets/' 'href="/signals-ui/assets/';
+        sub_filter 'src="/config.js"' 'src="/signals-ui/config.js"';
+        sub_filter 'src="/analytics.js"' 'src="/signals-ui/analytics.js"';
+
+        proxy_read_timeout  120s;
+        proxy_send_timeout  120s;
+    }
+
+    # Keep backward-compatible root URL for the India boundary PMTiles asset.
+    # The UI is mounted under /signals-ui/, but this file is referenced by
+    # some deployments/tools at the host root.
+    location = /india_boundary_corrections.pmtiles {
+        proxy_pass http://signals_ui_upstream/india_boundary_corrections.pmtiles;
+
+        proxy_set_header Host               $host;
+        proxy_set_header X-Real-IP          $remote_addr;
+        proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto  $scheme;
+        proxy_set_header X-Forwarded-Host   $host;
+
+        proxy_read_timeout  120s;
+        proxy_send_timeout  120s;
+    }
+
+    # ─── /metabase/ → metabase (strip prefix) ──────────────────────────
+    # Example: /metabase/api/health -> /api/health on metabase.
+    location /metabase/ {
+        proxy_pass http://metabase_upstream/;
+
+        proxy_set_header Host               $host;
+        proxy_set_header X-Real-IP          $remote_addr;
+        proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto  $scheme;
+        proxy_set_header X-Forwarded-Host   $host;
+        proxy_set_header X-Forwarded-Prefix /metabase;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade            $http_upgrade;
+        proxy_set_header Connection         $connection_upgrade;
+
+        proxy_read_timeout  120s;
+        proxy_send_timeout  120s;
     }
 
     # ─── /auth/ → keycloak (preserve prefix) ────────────────────────────

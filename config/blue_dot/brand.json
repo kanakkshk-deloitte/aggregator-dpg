@@ -8,8 +8,8 @@
   "logo": {
     "default": "/brand/blue-dot/logo.png",
     "light": "/brand/blue-dot/logo-light.png",
-    "withStrapline": "/brand/blue-dot/logo-with-strapline.png",
-    "withStraplineLight": "/brand/blue-dot/logo-with-strapline-light.png",
+    "withStrapline": "/brand/blue-dot/logo.png",
+    "withStraplineLight": "/brand/blue-dot/logo-light.png",
     "onBrand": "/brand/blue-dot/logo-on-brand.png"
   },
   "colours": {

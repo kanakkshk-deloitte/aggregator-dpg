@@ -601,6 +601,11 @@ services:
       keycloak:
         condition: service_healthy
 
+networks:
+  default:
+    external: true
+    name: dpg_share
+
 volumes:
   aggregator-postgres-data:
   redis-data:

@@ -1,6 +1,5 @@
 /**
- * Singleton ioredis connection for the worker process. Used by both BullMQ
- * Worker(s) and direct Lua-script calls.
+ * Shared ioredis connection for the worker app, used by BullMQ and Lua scripts.
  */
 
 import { createRedisConnection } from '@aggregator-dpg/queue';

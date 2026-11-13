@@ -1,9 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { discoverPackages } from '../discovery.js';
 import { ConfigError } from '@aggregator-dpg/shared-primitives/errors';
+
+/**
+ * Creates a package that ships only src/config.schema.ts (no dist build),
+ * exercising the dev-mode (tsx) import fallback in importConfigModule.
+ */
+function makeSrcOnlyPackage(root: string, dirName: string, configKeyValue: string): void {
+  const pkgDir = join(root, dirName);
+  const srcDir = join(pkgDir, 'src');
+  mkdirSync(srcDir, { recursive: true });
+  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: `@test/${dirName}` }), 'utf8');
+  writeFileSync(
+    join(srcDir, 'config.schema.ts'),
+    `export const configKey = ${JSON.stringify(configKeyValue)};\nexport const configSchema = { parse: () => ({}) };\n`,
+    'utf8',
+  );
+}
 
 /**
  * Creates a minimal package with a dist/config.schema.js in a temp directory.
@@ -56,6 +72,13 @@ describe('discoverPackages', () => {
 
   it('returns empty map when packagesDir does not exist', async () => {
     const result = await discoverPackages(join(tmpDir, 'nonexistent'));
+    expect(result.size).toBe(0);
+  });
+
+  it('skips a package directory that has no package.json', async () => {
+    const dir = join(tmpDir, 'no-package-json');
+    mkdirSync(dir);
+    const result = await discoverPackages(tmpDir);
     expect(result.size).toBe(0);
   });
 
@@ -135,5 +158,38 @@ describe('discoverPackages', () => {
     );
     const result = await discoverPackages(tmpDir);
     expect(result.get('pkgA')?.configDefaults).toBeUndefined();
+  });
+
+  it('falls back to src/config.schema.ts when no dist build exists', async () => {
+    makeSrcOnlyPackage(tmpDir, 'pkg-src', 'pkgSrc');
+    const result = await discoverPackages(tmpDir);
+    expect(result.has('pkgSrc')).toBe(true);
+    expect(result.get('pkgSrc')?.packageName).toBe('@test/pkg-src');
+  });
+
+  it('falls back to the directory name when package.json is malformed JSON', async () => {
+    makePackage(tmpDir, 'pkg-a', { configKey: 'pkgA' });
+    writeFileSync(join(tmpDir, 'pkg-a', 'package.json'), '{ not valid json', 'utf8');
+    const result = await discoverPackages(tmpDir);
+    expect(result.get('pkgA')?.packageName).toBe('pkg-a');
+  });
+
+  it('falls back to the directory name when package.json has no "name" field', async () => {
+    makePackage(tmpDir, 'pkg-a', { configKey: 'pkgA' });
+    writeFileSync(
+      join(tmpDir, 'pkg-a', 'package.json'),
+      JSON.stringify({ version: '1.0.0' }),
+      'utf8',
+    );
+    const result = await discoverPackages(tmpDir);
+    expect(result.get('pkgA')?.packageName).toBe('pkg-a');
+  });
+
+  it('skips entries whose stat() throws (e.g. a broken symlink)', async () => {
+    symlinkSync(join(tmpDir, 'nonexistent-target'), join(tmpDir, 'broken-link'));
+    makePackage(tmpDir, 'valid-pkg', { configKey: 'valid' });
+    const result = await discoverPackages(tmpDir);
+    expect(result.size).toBe(1);
+    expect(result.has('valid')).toBe(true);
   });
 });

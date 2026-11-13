@@ -5,21 +5,24 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { Languages } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/Select';
-import { getEnabledLocales, LOCALE_NAMES } from '../../i18n/config';
+import { LOCALE_NAMES } from '../../i18n/config';
+import { useEnabledLocales } from '../../i18n/EnabledLocalesProvider';
 import { setLocale } from '../../i18n/locale-cookie';
 
 /**
- * Dropdown that switches the UI language. Options are rendered dynamically
- * from `NEXT_PUBLIC_ENABLED_LANGUAGES`; selecting one persists the choice to
- * the NEXT_LOCALE cookie and refreshes the route so server components re-render
- * in the new language. Hidden when fewer than two languages are enabled.
+ * Dropdown that switches the UI language. Options come from
+ * `EnabledLocalesProvider`; choosing one sets the NEXT_LOCALE cookie and
+ * refreshes the route. Hidden when fewer than two languages are enabled.
+ *
+ * Reads the list from context, not `process.env`, because client components
+ * have env values inlined at build time.
  */
 export function LanguageSwitcher() {
   const locale = useLocale();
   const t = useTranslations('language');
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const enabled = getEnabledLocales();
+  const enabled = useEnabledLocales();
 
   if (enabled.length < 2) return null;
 

@@ -5,6 +5,7 @@ import {
   paginatedSchema,
   FilterSchema,
   SortDirectionSchema,
+  fieldsQuerySchema,
 } from '../dto/index.js';
 import { z } from 'zod';
 
@@ -100,5 +101,25 @@ describe('SortDirectionSchema', () => {
 
   it('rejects invalid direction', () => {
     expect(() => SortDirectionSchema.parse('DESC')).toThrow();
+  });
+});
+
+describe('fieldsQuerySchema', () => {
+  const fields = fieldsQuerySchema(['a_b', 'c']);
+
+  it('parses a comma-separated list without repeats', () => {
+    expect(fields.parse('a_b')).toEqual(['a_b']);
+    expect(fields.parse('c,a_b,c')).toEqual(['c', 'a_b']);
+  });
+
+  it('treats an absent or empty value as nothing requested', () => {
+    expect(fields.parse(undefined)).toEqual([]);
+    expect(fields.parse('')).toEqual([]);
+  });
+
+  it('refuses unknown names, spaces and empty entries', () => {
+    for (const bad of ['d', 'a_b,d', 'a_b, c', ',c', 'c,', 'a', 'a_bc']) {
+      expect(fields.safeParse(bad).success).toBe(false);
+    }
   });
 });

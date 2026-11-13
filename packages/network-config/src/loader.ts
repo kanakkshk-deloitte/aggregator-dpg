@@ -1,11 +1,10 @@
 /**
- * File + HTTP config loader.
+ * File and HTTP network-config loader for the api and worker.
  *
  * Reads `aggregator.config.yaml` from disk, fetches the upstream
- * signalstack `network.json` over HTTPS, sniffs identity selectors,
- * and resolves a singleton {@link ResolvedNetworkConfig} the api +
- * worker consume. Last-known-good cache lets the aggregator survive
- * a transient signalstack/GitHub outage on restart.
+ * signalstack `network.json` over HTTPS, derives identity selectors, and
+ * builds one {@link ResolvedNetworkConfig}. A last-known-good cache lets
+ * the aggregator start when the upstream is briefly unavailable.
  *
  * @module @aggregator-dpg/network-config/loader
  */
@@ -21,26 +20,29 @@ import type { BaseError } from '@aggregator-dpg/shared-primitives/errors';
 
 import {
   AggregatorYamlSchema,
+  BrandAttributionSchema,
   BrandLogoSchema,
   BrandPaletteSchema,
   BrandTypographySchema,
   NetworkConfigLoaderBase,
+  ParticipantConsentDocSchema,
   type AggregatorYaml,
   type IdentitySelectors,
   type NetworkConfigError,
   type NetworkDomain,
+  type ParticipantConsentDoc,
   type ResolvedDomain,
   type ResolvedNetworkConfig,
   type SignalstackNetwork,
 } from './interface.js';
 import { sniffIdentitySelectors } from './sniffer.js';
-import { resolveNetworkSourceOverride } from './paths.js';
+import { applyUrlRule } from './uri-fields.js';
+import { resolveConsentSourceOverride, resolveNetworkSourceOverride } from './paths.js';
 
 /**
- * Loader-internal shape of the sibling `brand.json` file. Not exported
- * from the package — external callers consume the merged
- * `BrandConfig` (with `palette`/`typography`/`logo`) on
- * `ResolvedNetworkConfig.aggregator.brand`.
+ * Shape of the sibling `brand.json` file.
+ *
+ * Internal. Callers read the merged result on `ResolvedNetworkConfig.aggregator.brand`.
  */
 const BrandJsonSchema = z.object({
   brand: z
@@ -52,6 +54,7 @@ const BrandJsonSchema = z.object({
     })
     .optional(),
   logo: BrandLogoSchema.optional(),
+  attribution: z.array(BrandAttributionSchema).optional(),
   colours: BrandPaletteSchema.optional(),
   typography: BrandTypographySchema.optional(),
 });
@@ -61,23 +64,29 @@ export interface FileNetworkConfigLoaderOptions {
   /** Absolute path to the aggregator YAML config. */
   configPath: string;
   /**
-   * Directory for the last-known-good signalstack network.json. The
-   * fetcher writes a copy here on success and falls back to it on
-   * upstream failure. Skip the cache by leaving this unset.
+   * Directory for the last-known-good fetched files.
+   *
+   * Written on a successful fetch and read when the fetch fails. Unset disables the cache.
    */
   cacheDir?: string;
-  /** Override for the network.json fetcher. Tests inject a stub. */
+  /** Fetch implementation. Tests inject a stub. */
   fetchImpl?: typeof fetch;
-  /** Per-request timeout for the network.json GET. */
+  /** Per-request fetch timeout in milliseconds. */
   fetchTimeoutMs?: number;
   /**
-   * Deploy-time replacement for the YAML `aggregator.network.source` URL.
-   * Defaults to the `AGGREGATOR_NETWORK_SOURCE` env var (see
-   * {@link resolveNetworkSourceOverride}); pass explicitly in tests. Must be
-   * a valid URL — a malformed value fails `load()` with
-   * `CONFIG_PARSE_FAILED` instead of silently falling back to the YAML.
+   * Replaces the YAML `aggregator.network.source` URL.
+   *
+   * Defaults to `AGGREGATOR_NETWORK_SOURCE` (see {@link resolveNetworkSourceOverride}).
+   * A malformed URL fails `load()` with `CONFIG_PARSE_FAILED`.
    */
   networkSourceOverride?: string;
+  /**
+   * Replaces the YAML `aggregator.network.consent_source` URL.
+   *
+   * Defaults to `AGGREGATOR_PARTICIPANT_CONSENT_SOURCE` (see {@link resolveConsentSourceOverride}).
+   * A malformed URL fails `load()` with `CONFIG_PARSE_FAILED`.
+   */
+  consentSourceOverride?: string;
 }
 
 export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
@@ -85,17 +94,22 @@ export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
   private readonly opts: Required<
     Pick<FileNetworkConfigLoaderOptions, 'configPath' | 'fetchTimeoutMs'>
   > &
-    Pick<FileNetworkConfigLoaderOptions, 'cacheDir' | 'fetchImpl' | 'networkSourceOverride'>;
+    Pick<
+      FileNetworkConfigLoaderOptions,
+      'cacheDir' | 'fetchImpl' | 'networkSourceOverride' | 'consentSourceOverride'
+    >;
 
   constructor(opts: FileNetworkConfigLoaderOptions) {
     super();
     const sourceOverride = opts.networkSourceOverride ?? resolveNetworkSourceOverride();
+    const consentOverride = opts.consentSourceOverride ?? resolveConsentSourceOverride();
     this.opts = {
       configPath: opts.configPath,
       fetchTimeoutMs: opts.fetchTimeoutMs ?? 5000,
       ...(opts.cacheDir ? { cacheDir: opts.cacheDir } : {}),
       ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
       ...(sourceOverride ? { networkSourceOverride: sourceOverride } : {}),
+      ...(consentOverride ? { consentSourceOverride: consentOverride } : {}),
     };
   }
 
@@ -105,11 +119,8 @@ export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
     const yaml = await this.readYaml();
     if (!yaml.success) return err(yaml.error);
 
-    // Deploy-time env override (#512): swap the signalstack network.json
-    // source without rebuilding the image or editing the mounted YAML. The
-    // override is applied onto the parsed YAML so the resolved config and the
-    // fetch use the same value. Fail loud on a malformed URL — silently
-    // falling back to the YAML would mask a broken deployment.
+    // The env override replaces the YAML source, so the resolved config and the
+    // fetch use the same URL. A malformed URL is an error, not a fallback.
     const override = this.opts.networkSourceOverride;
     if (override !== undefined) {
       const checked = z.string().url().safeParse(override);
@@ -122,8 +133,7 @@ export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
       yaml.value.aggregator.network.source = checked.data;
     }
 
-    // `source` is optional in the YAML (a deployment may rely solely on the
-    // env override) — but at least one of the two must resolve a URL.
+    // Either the YAML or the env override must provide a URL.
     const source = yaml.value.aggregator.network.source;
     if (!source) {
       return err({
@@ -139,6 +149,26 @@ export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
 
     const resolved = resolveDomains(yaml.value, network.value);
     if (!resolved.success) return err(resolved.error);
+
+    // Participant consent is fetched like network.json, but a fetch failure is
+    // not fatal: `participantConsent` stays undefined and the web app uses its
+    // on-disk copy. A malformed override URL is still an error.
+    const consentOverride = this.opts.consentSourceOverride;
+    if (consentOverride !== undefined) {
+      const checked = z.string().url().safeParse(consentOverride);
+      if (!checked.success) {
+        return err({
+          code: 'CONFIG_PARSE_FAILED',
+          message: `AGGREGATOR_PARTICIPANT_CONSENT_SOURCE is not a valid URL: "${consentOverride}"`,
+        });
+      }
+      yaml.value.aggregator.network.consent_source = checked.data;
+    }
+    const consentSource = yaml.value.aggregator.network.consent_source;
+    if (consentSource) {
+      const consent = await this.fetchConsent(consentSource);
+      if (consent) resolved.value.participantConsent = consent;
+    }
 
     this.cached = resolved.value;
     return ok(resolved.value);
@@ -179,9 +209,12 @@ export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
   }
 
   /**
-   * Merge a sibling `brand.json` (design-system file) into the parsed
-   * YAML brand block. Absent or malformed file falls through — the
-   * aggregator must still boot on flat YAML fields alone.
+   * Merges a sibling `brand.json` into the parsed YAML brand block.
+   *
+   * A missing file is fine. An invalid file returns `CONFIG_PARSE_FAILED`.
+   *
+   * @param yaml - The validated aggregator config.
+   * @returns The config with brand tokens merged in, or a parse error.
    */
   private async mergeBrandJson(
     yaml: AggregatorYaml,
@@ -191,7 +224,7 @@ export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
     try {
       raw = await fs.readFile(brandPath, 'utf8');
     } catch {
-      // brand.json is optional — silent fall-through.
+      // brand.json is optional.
       return ok(yaml);
     }
     let parsed: unknown;
@@ -232,7 +265,7 @@ export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
       if (!checked.success) {
         return this.recoverFromCache(url, checked.error.message);
       }
-      await this.writeCache(url, payload);
+      await this.writeCacheFile(url, 'network', payload);
       return ok(payload);
     } catch (e) {
       const cause = e as Error;
@@ -268,24 +301,74 @@ export class FileNetworkConfigLoader extends NetworkConfigLoaderBase {
     }
   }
 
-  private async writeCache(url: string, payload: SignalstackNetwork): Promise<void> {
-    const cachePath = this.cachePath(url);
+  /**
+   * Writes a fetched payload to its last-known-good cache file, best effort.
+   *
+   * @param url - Source URL; sets the file name.
+   * @param kind - Selects the file name suffix.
+   * @param payload - The data to write.
+   */
+  private async writeCacheFile(
+    url: string,
+    kind: 'network' | 'consent',
+    payload: unknown,
+  ): Promise<void> {
+    const cachePath = this.cachePath(url, kind);
     if (!cachePath) return;
     try {
       await fs.mkdir(path.dirname(cachePath), { recursive: true });
       await fs.writeFile(cachePath, JSON.stringify(payload, null, 2), 'utf8');
     } catch {
-      // Best-effort cache write — fall through silently. The next boot
-      // will re-attempt the upstream fetch.
+      // Best effort. The next boot fetches again.
     }
   }
 
-  private cachePath(url: string): string | null {
+  private cachePath(url: string, kind: 'network' | 'consent' = 'network'): string | null {
     if (!this.opts.cacheDir) return null;
-    // Deterministic file name per network so different deployments
-    // sharing a host don't overwrite each other.
+    // One file per source URL, so deployments sharing a host do not collide.
     const safe = url.replace(/[^a-z0-9]/gi, '_').slice(0, 200);
-    return path.join(this.opts.cacheDir, `${safe}.network.json`);
+    return path.join(this.opts.cacheDir, `${safe}.${kind}.json`);
+  }
+
+  // ─── participant consent.json ───────────────────────────────────────────────
+
+  /**
+   * Fetches and validates the participant `consent.json`, with timeout and cache.
+   *
+   * Never fails boot.
+   *
+   * @param url - The consent document URL.
+   * @returns The document, or null on failure with no cached copy.
+   */
+  private async fetchConsent(url: string): Promise<ParticipantConsentDoc | null> {
+    const fetchImpl = this.opts.fetchImpl ?? fetch;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.opts.fetchTimeoutMs);
+    try {
+      const res = await fetchImpl(url, { signal: controller.signal });
+      if (!res.ok) return this.recoverConsentFromCache(url);
+      const checked = ParticipantConsentDocSchema.safeParse(await res.json());
+      if (!checked.success) return this.recoverConsentFromCache(url);
+      await this.writeCacheFile(url, 'consent', checked.data);
+      return checked.data;
+    } catch {
+      return this.recoverConsentFromCache(url);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async recoverConsentFromCache(url: string): Promise<ParticipantConsentDoc | null> {
+    const cachePath = this.cachePath(url, 'consent');
+    if (!cachePath) return null;
+    try {
+      const parsed = ParticipantConsentDocSchema.safeParse(
+        JSON.parse(await fs.readFile(cachePath, 'utf8')),
+      );
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -337,7 +420,10 @@ function resolveDomains(
       });
     }
     const itemType = itemTypes[0]!;
-    const schema = d.item_schemas[itemType] as Record<string, unknown>;
+    // Link fields get Signals' URL rule here, once, so the registration form,
+    // the public submit route and the bulk worker all validate them exactly as
+    // Signals will on the push (#904).
+    const schema = applyUrlRule(d.item_schemas[itemType] as Record<string, unknown>);
     const identity = pickIdentity(d, schema, overrides[d.id]);
     if (!identity) {
       return err({
@@ -355,6 +441,9 @@ function resolveDomains(
       itemType,
       schema,
       identity,
+      // Missing keys default to off: no consent step and no birth year.
+      guardianConsentRequired: d.guardian_consent_required === true,
+      goLiveRequired: Array.isArray(d.go_live_required) ? d.go_live_required : [],
       ...(d.dashboard_tiles !== undefined ? { dashboardTiles: d.dashboard_tiles } : {}),
       ...(d.status_rules !== undefined ? { statusRules: d.status_rules } : {}),
     };
@@ -382,10 +471,10 @@ function pickIdentity(
 }
 
 /**
- * Overlay design-token fields (`palette`, `typography`, `logo`,
- * `strapline`) from a sibling `brand.json` onto the YAML brand
- * block. Flat YAML fields (`primary_color`, `short_name`, ...) always
- * win — they are deploy-state and operator-authoritative.
+ * Copies design tokens from `brand.json` onto the YAML brand block.
+ *
+ * Sets `palette`, `typography`, `logo`, `attribution` and `strapline`. Flat
+ * YAML fields such as `primary_color` are not changed.
  */
 function applyBrandJson(yaml: AggregatorYaml, brand: BrandJson): AggregatorYaml {
   return {
@@ -397,6 +486,7 @@ function applyBrandJson(yaml: AggregatorYaml, brand: BrandJson): AggregatorYaml 
         ...(brand.colours ? { palette: brand.colours } : {}),
         ...(brand.typography ? { typography: brand.typography } : {}),
         ...(brand.logo ? { logo: brand.logo } : {}),
+        ...(brand.attribution ? { attribution: brand.attribution } : {}),
         ...(brand.brand?.strapline ? { strapline: brand.brand.strapline } : {}),
       },
     },

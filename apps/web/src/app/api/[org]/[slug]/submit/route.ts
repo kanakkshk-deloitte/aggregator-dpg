@@ -1,14 +1,14 @@
 /**
  * BFF proxy for anonymous participant submissions.
  *
- * The browser is unauthenticated — the `(org, slug)` pair is the access
- * token. This route forwards the JSON body to
- * `/public/v1/aggregators/:orgSlug/registrations/:slug` on the API. No
- * Bearer header, no service token — public endpoint by design.
+ * The caller is unauthenticated; the `(org, slug)` pair grants access.
+ * Forwards the JSON body to `/public/v1/aggregators/:orgSlug/registrations/:slug`
+ * with no Bearer or service token.
  *
  * POST /api/[org]/[slug]/submit
  */
 
+import { randomUUID } from 'node:crypto';
 import { type NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
@@ -16,9 +16,7 @@ export const runtime = 'nodejs';
 const UPSTREAM_TIMEOUT_MS = 10_000;
 const REQUEST_ID_HEADER = 'x-request-id';
 /**
- * Maximum public-submit body size. Participant schemas are short flat
- * objects; 32 KB is a generous ceiling that still bounds API work per
- * request. Anything larger is almost certainly abuse.
+ * Maximum public-submit body size in bytes.
  */
 const MAX_BODY_BYTES = 32_000;
 
@@ -49,14 +47,11 @@ interface RouteParams {
 
 export async function POST(req: NextRequest, { params }: RouteParams): Promise<NextResponse> {
   const { org, slug } = await params;
-  const reqId =
-    req.headers.get(REQUEST_ID_HEADER) ?? `req-${Math.random().toString(36).slice(2, 10)}`;
+  const reqId = req.headers.get(REQUEST_ID_HEADER) ?? `req-${randomUUID()}`;
 
   const base = process.env.API_BASE_URL ?? 'http://localhost:4000';
 
-  // Read raw text first so we can enforce a hard byte cap before paying
-  // the JSON-parse cost. Next defaults to ~1 MB which is far more than
-  // any participant schema can legitimately fill.
+  // Read raw text first to enforce the size cap before parsing JSON.
   let raw: string;
   try {
     raw = await req.text();
@@ -95,10 +90,8 @@ export async function POST(req: NextRequest, { params }: RouteParams): Promise<N
     );
   }
 
-  // Forward the originating client IP and user-agent so the API rate
-  // limiter (`req.ip`) buckets per real caller, not per BFF instance.
-  // `x-forwarded-for` may already carry an upstream chain — preserve it,
-  // appending the BFF's view of the client when it's missing.
+  // Forward the client IP and user-agent so the API rate-limits per caller.
+  // An existing `x-forwarded-for` chain is kept as-is.
   const incomingXff = req.headers.get('x-forwarded-for');
   const clientIp =
     (incomingXff?.split(',')[0]?.trim() ?? '') || ((req as { ip?: string }).ip ?? '');

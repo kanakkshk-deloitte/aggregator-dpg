@@ -1,0 +1,43 @@
+{
+  "name": "@aggregator-dpg/campaign-audit",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./interface": {
+      "import": "./dist/interface.js",
+      "types": "./dist/interface.d.ts"
+    },
+    "./postgres": {
+      "import": "./dist/postgres.js",
+      "types": "./dist/postgres.d.ts"
+    },
+    "./testing": {
+      "import": "./dist/testing/index.js",
+      "types": "./dist/testing/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@aggregator-dpg/db-schema": "workspace:*",
+    "@aggregator-dpg/shared-primitives": "workspace:*",
+    "drizzle-orm": "^0.45.4",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@aggregator-dpg/tsconfig": "workspace:*",
+    "@types/node": "^26.6.3",
+    "@vitest/coverage-v8": "^4.1.12",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.12"
+  }
+}

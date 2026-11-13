@@ -8,12 +8,9 @@
  *   - Address   — https://schema.beckn.io/Address/v2.0/attributes.yaml
  *   - GeoJSON   — https://schema.beckn.io/GeoJSONGeometry/v2.0/attributes.yaml
  *
- * The upstream Beckn schemas leave most fields optional. This module narrows
- * `phone` + `email` on Contact to required at the aggregator API layer
- * (matching the DB CHECK constraint `aggregators_contact_shape_chk` in
- * migration 0005) and enforces per-element GeoJSON `type` validity for
- * locations — the latter cannot be a DB CHECK because Postgres forbids
- * subqueries inside CHECK expressions.
+ * Beckn leaves most fields optional. Here `phone` and `email` on Contact are
+ * required. Each location's GeoJSON `type` is validated here because Postgres
+ * cannot check it.
  *
  * @module @aggregator-dpg/shared-primitives/beckn
  */
@@ -23,10 +20,8 @@ import { z } from 'zod';
 // ─── Phone normalisation ────────────────────────────────────────────────────
 
 /**
- * Loose E.164-ish accept pattern. Mirrors the existing
- * `registration.v1.json` regex so the API layer and the JSON Schema validator
- * agree on what reaches the database. Strict E.164 normalisation
- * (`+91XXXXXXXXXX`) happens downstream in `services/phone.ts`.
+ * Loose phone pattern. Matches the `registration.v1.json` regex. Strict
+ * normalisation happens later in `normalisePhone`.
  */
 const PHONE_REGEX = /^(\+?\d{10,15}|\d{10})$/;
 

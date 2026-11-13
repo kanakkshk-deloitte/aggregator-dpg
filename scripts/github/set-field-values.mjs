@@ -6,36 +6,36 @@
 //
 // Usage: node scripts/github/set-field-values.mjs [--owner sanketika-labs] [--project 3]
 
-import { readFileSync, existsSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { readFileSync, existsSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 
 const flag = (name) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
 
-const OWNER = flag("--owner") ?? "sanketika-labs";
-const PROJECT_NUMBER = Number(flag("--project") ?? 3);
-const MAP_PATH = "scripts/github/.issue-map.json";
+const OWNER = flag('--owner') ?? 'sanketika-labs';
+const PROJECT_NUMBER = Number(flag('--project') ?? 3);
+const MAP_PATH = 'scripts/github/.issue-map.json';
 
 if (!existsSync(MAP_PATH)) {
   console.error(`Missing ${MAP_PATH}; run push-issues.mjs first.`);
   process.exit(1);
 }
-const issueMap = JSON.parse(readFileSync(MAP_PATH, "utf8"));
+const issueMap = JSON.parse(readFileSync(MAP_PATH, 'utf8'));
 const epicByNumber = Object.fromEntries(
-  Object.entries(issueMap.epics).map(([key, num]) => [num, key])
+  Object.entries(issueMap.epics).map(([key, num]) => [num, key]),
 );
 
 // reverse-lookup "feature number -> epic key"
 const featureToEpic = {};
 for (const [compoundKey, featureNum] of Object.entries(issueMap.features)) {
-  const epicKey = compoundKey.split("::")[0];
+  const epicKey = compoundKey.split('::')[0];
   featureToEpic[featureNum] = epicKey;
 }
 
 function gh(cmd, { parse = true } = {}) {
-  const out = execSync(`gh ${cmd}`, { encoding: "utf8" });
+  const out = execSync(`gh ${cmd}`, { encoding: 'utf8' });
   return parse ? JSON.parse(out) : out.trim();
 }
 
@@ -43,7 +43,7 @@ function graphqlInline(query) {
   // Write query to a tempfile and pass via --field query=@file to avoid shell escaping.
   const tmp = `/tmp/gql-${process.pid}-${Date.now()}.graphql`;
   execSync(`cat > ${tmp}`, { input: query });
-  const out = execSync(`gh api graphql -F query=@${tmp}`, { encoding: "utf8" });
+  const out = execSync(`gh api graphql -F query=@${tmp}`, { encoding: 'utf8' });
   execSync(`rm -f ${tmp}`);
   return JSON.parse(out);
 }
@@ -67,12 +67,12 @@ const projectMeta = graphqlInline(
         }
       }
     }
-  }`
+  }`,
 );
 
 const project = projectMeta.data.organization.projectV2;
 if (!project) {
-  console.error("Project not found");
+  console.error('Project not found');
   process.exit(1);
 }
 const fields = {};
@@ -88,12 +88,12 @@ function optionId(fieldName, optionName) {
 }
 
 // -------- Fetch all project items --------
-console.log("Fetching all project items (may take a moment) …");
+console.log('Fetching all project items (may take a moment) …');
 async function fetchAllItems() {
   let items = [];
   let cursor = null;
   while (true) {
-    const cursorArg = cursor ? `, after: "${cursor}"` : "";
+    const cursorArg = cursor ? `, after: "${cursor}"` : '';
     const q = `{
       organization(login: "${OWNER}") {
         projectV2(number: ${PROJECT_NUMBER}) {
@@ -132,10 +132,10 @@ function deriveValues(labels) {
   const out = {};
 
   // Phase
-  const phaseLabel = labels.find((l) => l.startsWith("phase:"));
+  const phaseLabel = labels.find((l) => l.startsWith('phase:'));
   if (phaseLabel) {
-    const raw = phaseLabel.slice("phase:".length);
-    out.Phase = raw === "post-mvp" ? "Post-MVP" : raw;
+    const raw = phaseLabel.slice('phase:'.length);
+    out.Phase = raw === 'post-mvp' ? 'Post-MVP' : raw;
   }
 
   // Area — pick the first area: label; issues may have multiple. Area field
@@ -143,20 +143,20 @@ function deriveValues(labels) {
   // precedence: backend > frontend > db > auth > observability > security >
   // sps > config > qa > devex.
   const areaPref = [
-    "backend",
-    "frontend",
-    "db",
-    "auth",
-    "observability",
-    "security",
-    "sps",
-    "config",
-    "qa",
-    "devex",
+    'backend',
+    'frontend',
+    'db',
+    'auth',
+    'observability',
+    'security',
+    'sps',
+    'config',
+    'qa',
+    'devex',
   ];
   const areaLabels = labels
-    .filter((l) => l.startsWith("area:"))
-    .map((l) => l.slice("area:".length));
+    .filter((l) => l.startsWith('area:'))
+    .map((l) => l.slice('area:'.length));
   for (const pref of areaPref) {
     if (areaLabels.includes(pref)) {
       out.Area = pref;
@@ -165,16 +165,14 @@ function deriveValues(labels) {
   }
 
   // Priority
-  const priorityLabel = labels.find((l) => l.startsWith("priority:"));
+  const priorityLabel = labels.find((l) => l.startsWith('priority:'));
   if (priorityLabel) {
-    out.Priority = priorityLabel.slice("priority:".length).toUpperCase();
+    out.Priority = priorityLabel.slice('priority:'.length).toUpperCase();
   }
 
   // JTBD — concat all jtbd: labels
-  const jtbds = labels
-    .filter((l) => l.startsWith("jtbd:"))
-    .map((l) => l.slice("jtbd:".length));
-  if (jtbds.length) out.JTBD = jtbds.join(", ");
+  const jtbds = labels.filter((l) => l.startsWith('jtbd:')).map((l) => l.slice('jtbd:'.length));
+  if (jtbds.length) out.JTBD = jtbds.join(', ');
 
   return out;
 }
@@ -196,7 +194,7 @@ function updateSingleSelect(itemId, fieldName, optionName) {
 function updateText(itemId, fieldName, text) {
   const fieldId = fields[fieldName]?.id;
   if (!fieldId) return false;
-  const escaped = text.replace(/"/g, '\\"');
+  const escaped = text.replaceAll('"', String.raw`\"`);
   const m = `mutation{updateProjectV2ItemFieldValue(input:{projectId:"${project.id}",itemId:"${itemId}",fieldId:"${fieldId}",value:{text:"${escaped}"}}){projectV2Item{id}}}`;
   gh(`api graphql -f query='${m}'`, { parse: false });
   return true;
@@ -206,20 +204,20 @@ function updateText(itemId, fieldName, text) {
 let n = 0;
 let errors = 0;
 for (const item of items) {
-  if (!item.content || item.content.__typename !== "Issue") continue;
+  if (item.content?.__typename !== 'Issue') continue;
   const issueNum = item.content.number;
-  const labels = (item.content.labels?.nodes ?? []).map((l) => l.name);
+  const labels = item.content.labels?.nodes?.map((l) => l.name) ?? [];
   const vals = deriveValues(labels);
 
   try {
-    if (vals.Phase) updateSingleSelect(item.id, "Phase", vals.Phase);
-    if (vals.Area) updateSingleSelect(item.id, "Area", vals.Area);
-    if (vals.Priority) updateSingleSelect(item.id, "Priority", vals.Priority);
-    if (vals.JTBD) updateText(item.id, "JTBD", vals.JTBD);
+    if (vals.Phase) updateSingleSelect(item.id, 'Phase', vals.Phase);
+    if (vals.Area) updateSingleSelect(item.id, 'Area', vals.Area);
+    if (vals.Priority) updateSingleSelect(item.id, 'Priority', vals.Priority);
+    if (vals.JTBD) updateText(item.id, 'JTBD', vals.JTBD);
 
     // Epic: epic issues set to their own key; features set to their parent epic key
     const epicKey = epicByNumber[issueNum] ?? featureToEpic[issueNum];
-    if (epicKey) updateSingleSelect(item.id, "Epic", epicKey);
+    if (epicKey) updateSingleSelect(item.id, 'Epic', epicKey);
   } catch (e) {
     errors++;
     console.warn(`  #${issueNum}: ${e.message?.slice(0, 200) ?? e}`);

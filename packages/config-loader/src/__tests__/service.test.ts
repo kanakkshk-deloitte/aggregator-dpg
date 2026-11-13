@@ -87,6 +87,15 @@ describe('ConfigServiceFake', () => {
     });
   });
 
+  describe('watch', () => {
+    it('returns a no-op unsubscribe function', () => {
+      const cfg = new ConfigServiceFake({});
+      const unsubscribe = cfg.watch();
+      expect(typeof unsubscribe).toBe('function');
+      expect(() => unsubscribe()).not.toThrow();
+    });
+  });
+
   describe('slice', () => {
     it('returns the typed top-level slice', () => {
       const cfg = new ConfigServiceFake({ db: { host: 'localhost', port: 5432 } });

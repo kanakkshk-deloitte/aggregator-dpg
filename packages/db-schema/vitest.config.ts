@@ -7,7 +7,8 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov'],
       include: ['src/**/*.ts'],
-      exclude: ['src/__tests__/**'],
+      // schema-types.ts has only types, so there is no runtime code to cover.
+      exclude: ['src/__tests__/**', 'src/schema-types.ts'],
       thresholds: { lines: 70 },
     },
   },

@@ -1,16 +1,13 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { ReactNode, JSX } from 'react';
 import { I } from '../../icons';
 
 /**
- * Inline "why is submit disabled" hint. Pairs with a gated submit button so a
- * disabled button always explains itself — without this the button looks
- * clickable but silently swallows the click (e.g. an invalid mobile number the
- * user can't see is the blocker).
+ * Inline hint that explains why a submit button is disabled.
  *
- * Renders nothing when `reasons` is empty (form is submittable). Each reason is
- * a short, user-facing sentence describing one unmet requirement.
+ * Renders nothing when `reasons` is empty. Each reason is a short, user-facing
+ * sentence for one unmet requirement.
  */
 export function SubmitBlockers({
   reasons,
@@ -22,10 +19,9 @@ export function SubmitBlockers({
 }): JSX.Element | null {
   if (reasons.length === 0) return null;
   return (
-    <div
-      role="status"
+    <output
       aria-live="polite"
-      className="rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800"
+      className="block rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800"
     >
       <div className="flex items-start gap-2">
         <I.alert size={14} className="mt-0.5 shrink-0 text-amber-600" />
@@ -38,6 +34,6 @@ export function SubmitBlockers({
           </ul>
         </div>
       </div>
-    </div>
+    </output>
   );
 }

@@ -18,10 +18,12 @@ This document was written before build and remains the product-intent spec. Wher
 - **Stack** — the API/BFF is **Fastify** (not "Express or Fastify"); the portal is **Next.js 15 (App Router)**; a **BullMQ worker** runs bulk-upload processing; storage is **Postgres + Drizzle** + S3 + Redis. It is a **pnpm + Turbo** monorepo (`apps/api`, `apps/web`, `apps/worker`, `packages/*`).
 - **Identity & auth** — authentication is **Keycloak** (realm `aggregator`, OIDC Authorization-Code + PKCE) with a custom **email/phone OTP** authenticator SPI, not a bespoke local JWT service. Portal sessions are Redis-backed signed cookies. `aggregator_id` is still asserted server-side on every request and never trusted from the client.
 - **Registration & approval** — approval is an **in-app, token-based email flow** (signed approval-token link → approver page → atomic compare-and-set on the row → Keycloak user enable + role assignment), with expired-link regeneration, resubmit-reclaim of a pending/rejected registration, and a service-auth endpoint that prunes stale pending registrations. It is no longer a purely manual/external process (§4.1 / §6.1).
-- **Org → coordinator hierarchy** — an optional parent-organisation → coordinator hierarchy sits behind the per-instance **`ORG_HIERARCHY_ENABLED`** flag (default off = the flat flow described here). When on, a parent org registers/approves separately (system-of-record `aggregator_orgs` table + mirrored Keycloak group + `org_owner` realm role), and each coordinator is bound to an active org (`aggregators.parent_org_id`).
-- **Consent** — registration now **captures consent** (§7.3): a required consent checkbox + read-only Terms/Privacy popup on both registration forms, with document text managed as versioned config-as-code (`config/**/consent.json`, per `org` / `aggregator` audience) and every acceptance written to an append-only `aggregator_consent_record` ledger (fail-closed — no subject is provisioned without a consent row).
+- **Organisations** — every coordinator belongs to an organisation (always on since migration 0028; the former `ORG_HIERARCHY_ENABLED` flag is gone). An organisation registers and is approved separately (`organisations` table + mirrored Keycloak group + `org_owner` realm role), and each coordinator is bound to an active org (`users.org_id`). Coordinators with no organisation of their own belong to the fixed **Default** organisation, which keeps the flat registration flow.
+- **Consent** — registration now **captures consent** (§7.3): a required consent checkbox + read-only Terms/Privacy popup on both registration forms, with document text managed as versioned config-as-code (`config/**/consent.json`, per `org` / `aggregator` audience) and every acceptance written to an append-only `aggregator_consent_record` ledger (fail-closed — no subject is provisioned without a consent row). Consent is recorded **once, at registration**: the profile PATCH rejects a `consent` field with `400 SCHEMA_VALIDATION`.
+
 - **Profile is a read-only registration form** — the `/profile` page renders the **same** `registration.v1` schema as the public registration page (single source via `apps/web/src/lib/aggregator-schema.server.ts`), populated and fully disabled — not the edit-in-place form described in §4.2. Changes are raised through a **"Request an update"** panel that lists the schema-flagged (`x-updatable`) fields; the admin-approval flow behind the submit is a stub (backend tracked separately), so it only acknowledges "coming soon" today.
-- **Contact support** — an authenticated coordinator can send a support message from the portal (Sidebar → "Contact support"). The BFF forwards to the API's `POST /v1/support`, which emails the submission via the aggregator's own mailer (`getMailer()`) with **Reply-To set to the submitting coordinator**. The feature is gated by the per-instance **`SUPPORT_EMAIL`** env: when unset, `GET /v1/support/config` reports `enabled: false`, the Sidebar entry is hidden, and `POST /v1/support` returns `503 SUPPORT_NOT_CONFIGURED` (a failed send is `502 SUPPORT_SEND_FAILED`).
+- **Contact support** — an authenticated coordinator can send a support message from the portal (Sidebar → "Contact support"). The BFF forwards to the API's `POST /v1/support`, which emails the submission via the aggregator's own mailer (`getMailer()`) with **Reply-To set to the submitting coordinator**. The feature is gated by the per-instance **`SUPPORT_EMAIL`** env: when unset, `GET /v1/support/config` reports `enabled: false`, the Sidebar entry is hidden, and `POST /v1/support` returns `503 SUPPORT_NOT_CONFIGURED` (a failed send is `502 SUPPORT_SEND_FAILED`). The form accepts optional image/video/audio **attachments** (base64, server-side MIME allowlist + filename sanitisation, up to `SUPPORT_ATTACHMENT_MAX_FILES` files totalling `SUPPORT_ATTACHMENT_MAX_TOTAL_BYTES` decoded), mailed as real MIME attachments, and is per-coordinator rate-limited.
+- **Mobile layout** — the logged-in portal is usable on phones (#817): below 1024px the sidebar becomes a slide-in drawer behind a menu button, and pages, dashboard tables and dialogs reflow for narrow screens. From 1024px up it renders as before.
 - **Consent-gated bulk onboarding** — bulk-uploaded accounts are not discoverable until the participant consents at first contact; the upload success message reflects this: _"Accounts will be live once the user logs in on the platform or via the call."_
 - **Not yet built** — the standalone **Signal Processing Service** (§2.3, §5.2) is not implemented; derived/dashboard metrics are served by the API reading upstream. Treat §5.2 and the two-service diagram as target architecture, not current state.
 
@@ -45,7 +47,7 @@ This document translates the Aggregator Product Note (Draft 2) into an engineeri
 | AG-2  | See connection activity per participant; prioritise follow-up |
 | AG-6  | Share an aggregated summary with Ecosystem Manager / funder   |
 
-**Out of scope for MVP** (tracked for later phases): AG-0a (self-service registration status tracking inside the app), AG-3/AG-4 (in-app connection notifications and direct outreach), AG-5 (Aggregator-of-Aggregators view), AG-7/AG-8 (natural-language queries and ad-hoc report generation), and the eight items in the PRD's Future Scope list (write-back of profile contact changes, unstructured bulk upload, credential issuance on bulk create, voice-call onboarding, lifecycle management, RBAC tiers).
+**Out of scope for MVP** (tracked for later phases): AG-0a (self-service registration status tracking inside the app), AG-3/AG-4 (in-app connection notifications and direct outreach), AG-5 (Aggregator-of-Aggregators view), AG-7/AG-8 (natural-language queries and ad-hoc report generation), and the eight items in the PRD's Future Scope list (write-back of profile contact changes, unstructured bulk upload, credential issuance on bulk create, inbound voice-call participant onboarding (a participant self-onboarding over a phone call — distinct from, and not to be confused with, the shipped campaign-voice **outreach** channel that dials existing participants), lifecycle management, RBAC tiers).
 
 ---
 
@@ -155,7 +157,7 @@ Four areas, matching PRD § 4:
 
 ### 4.1 Registration (pre-login)
 
-- **New member request** — short form (org name, aggregator type, admin name, email, phone) + T&Cs + consent checkbox. On submit, POSTs to Aggregator API, which emails the dedicated admin address. Approval is manual/external; the admin creates the org entry in the Signals Stack. An approval confirmation email is sent to the requester.
+- **New member request** — short form (org name, aggregator type, admin name, email, phone) + T&Cs + consent checkbox. On submit, POSTs to the Aggregator API, which records the registration plus an append-only consent-ledger row (fail-closed — no subject provisioned without one) and emails a **signed approval-token link** to the dedicated admin address. Approval is now **in-app**: the approver opens the link → approver page → atomic compare-and-set on the row → Keycloak user enable + role assignment → confirmation email to the requester. Expired links regenerate, a pending/rejected request can be resubmit-reclaimed, and a service-auth endpoint prunes stale pending registrations. (This supersedes the original manual/external approval — see the summary above and **Implementation status**.)
 - **Existing member login** — email-or-phone + OTP. On OTP verify, the Aggregator API looks up the org in the Signals Stack by email/phone, issues a session JWT.
 
 ### 4.2 Profile
@@ -167,7 +169,7 @@ Four areas, matching PRD § 4:
 ### 4.3 Onboard
 
 - **Overall health** card — total registered / verified / discoverable (from Signal Processing Service).
-- **Bulk upload** — upload CSV against a seeker or provider template; Aggregator API validates rows, calls Signals Stack bulk-create endpoints, records a `bulk_upload_batch` row, shows per-row success/flag status. Bulk-created accounts are consent-gated: the success message tells the coordinator that "Accounts will be live once the user logs in on the platform or via the call" (discoverability is unlocked only after the participant consents at first contact).
+- **Bulk upload** — download a template for the seeker or provider type, fill it in, upload the result as CSV; Aggregator API validates rows, calls Signals Stack bulk-create endpoints, records a `bulk_upload_batch` row, shows per-row success/flag status. Bulk-created accounts are consent-gated: the success message tells the coordinator that "Accounts will be live once the user logs in on the platform or via the call" (discoverability is unlocked only after the participant consents at first contact).
 - **Link & QR generation** — Aggregator fills required fields (role, campaign label), system generates a signed link and QR image. Link carries `aggregator_id` and `mode` as query params; target registration page records the source mode. Join count per link is pulled from Signal Processing Service (mode-wise counts filtered by `link_id`, assuming the Signals Stack supports `link_id` attribution; see open item in § 8.1).
 - **Flagged profiles** — list of profiles with `profile_completion_pct < threshold` or format errors from the most recent bulk upload. Action = trigger a follow-up (logged as intent in MVP; actual outreach is out of scope).
 
@@ -196,24 +198,25 @@ Node.js + TypeScript, **Fastify** (as built). Stateless, deployed behind the pla
 
 #### Endpoint sketch (REST, all JSON)
 
-| Method    | Path                             | Purpose                                           |
-| --------- | -------------------------------- | ------------------------------------------------- |
-| POST      | `/v1/auth/otp/request`           | Request OTP to email/phone                        |
-| POST      | `/v1/auth/otp/verify`            | Exchange OTP for session JWT                      |
-| POST      | `/v1/registration-requests`      | Submit new-aggregator request (pre-login)         |
-| GET       | `/v1/me`                         | Current aggregator org + verified flag            |
-| GET       | `/v1/profile/schema`             | Current profile schema (versioned)                |
-| GET/PATCH | `/v1/profile`                    | Read/update aggregator profile                    |
-| GET       | `/v1/onboard/summary`            | Registered / verified / discoverable counts       |
-| POST      | `/v1/onboard/links`              | Create onboarding link (returns URL + QR payload) |
-| GET       | `/v1/onboard/links`              | List links with join counts per mode              |
-| POST      | `/v1/onboard/bulk-uploads`       | Multipart CSV upload; returns batch id            |
-| GET       | `/v1/onboard/bulk-uploads/:id`   | Batch status + per-row outcomes                   |
-| GET       | `/v1/onboard/flagged-profiles`   | Incomplete/flagged profile list                   |
-| GET       | `/v1/blue-dots/summary`          | Aggregate status + participation metrics          |
-| GET       | `/v1/blue-dots/participants`     | Paginated participant list with filters & search  |
-| GET       | `/v1/blue-dots/participants/:id` | Participant detail                                |
-| GET       | `/v1/blue-dots/export`           | CSV export of current filter                      |
+| Method    | Path                             | Purpose                                                       |
+| --------- | -------------------------------- | ------------------------------------------------------------- |
+| POST      | `/v1/auth/otp/request`           | Request OTP to email/phone                                    |
+| POST      | `/v1/auth/otp/verify`            | Exchange OTP for session JWT                                  |
+| POST      | `/v1/registration-requests`      | Submit new-aggregator request (pre-login)                     |
+| GET       | `/v1/me`                         | Current aggregator org + verified flag                        |
+| GET       | `/v1/profile/schema`             | Current profile schema (versioned)                            |
+| GET/PATCH | `/v1/profile`                    | Read/update aggregator profile                                |
+| GET       | `/v1/onboard/summary`            | Registered / verified / discoverable counts                   |
+| POST      | `/v1/onboard/links`              | Create onboarding link (returns URL + QR payload)             |
+| GET       | `/v1/onboard/links`              | List links with join counts per mode                          |
+| POST      | `/v1/onboard/bulk-uploads`       | Multipart CSV upload; returns batch id                        |
+| GET       | `/v1/bulk-uploads/template`      | Template download; `?participant_type=` + `?format=csv\|xlsx` |
+| GET       | `/v1/onboard/bulk-uploads/:id`   | Batch status + per-row outcomes                               |
+| GET       | `/v1/onboard/flagged-profiles`   | Incomplete/flagged profile list                               |
+| GET       | `/v1/blue-dots/summary`          | Aggregate status + participation metrics                      |
+| GET       | `/v1/blue-dots/participants`     | Paginated participant list with filters & search              |
+| GET       | `/v1/blue-dots/participants/:id` | Participant detail                                            |
+| GET       | `/v1/blue-dots/export`           | CSV export of current filter                                  |
 
 Every listing endpoint accepts `aggregator_id` implicitly from the session and applies it as a hard filter at query time.
 
@@ -247,8 +250,6 @@ MVP recommendation: **Option A with a 5–15 minute refresh cadence.** The PRD's
 Single logical database, owned by the Aggregator API. Suggested tables:
 
 ```
-aggregator_profile_schema      (id, version, schema_json, active, created_at)
-aggregator_profile             (aggregator_id PK, schema_version, values_json, updated_at)
 onboarding_link                (id PK, aggregator_id, mode, target_role, label, created_at, expires_at, revoked_at)
 bulk_upload_batch              (id PK, aggregator_id, filename, total, succeeded, flagged, created_at, created_by)
 bulk_upload_row                (id PK, batch_id FK, row_number, raw_row_json, outcome, error_code, error_message)
@@ -290,9 +291,21 @@ Diagrams in the PRD (Flows 1–4) are authoritative. Implementation notes:
 
 ### 6.3 Bulk upload
 
-1. Aggregator uploads CSV → API validates against template schema (seeker or provider).
+1. Aggregator uploads CSV → API validates against template schema (seeker or provider). See the template formats below.
 2. For each valid row, API calls the Signals Stack bulk-create endpoint; failures are recorded with `error_code`.
 3. `bulk_upload_batch` and `bulk_upload_row` rows persisted; summary shown immediately on completion.
+
+**Rate limits** (#848). Each coordinator may start **5 uploads per hour** and download **30 templates per hour**; beyond that the API returns `429 RATE_LIMITED` with a `retryAfterSeconds` hint. The limits are fixed in code (`apps/api/src/services/bulk-upload-rate.ts`), not configurable per deployment.
+
+**Template formats** (`GET /v1/bulk-uploads/template?participant_type=seeker|provider`, #564). Both are generated from the participant schema resolved out of `network.json` and are gated on the caller's registered `aggregator_type` — nothing is shipped in the repo. The previously committed `bulk-samples/*.csv` were deleted because they had rotted into templates the parser itself rejects.
+
+| `?format=`      | Returns                                                                                                                                                                                                                                                                                            |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `csv` (default) | `text/csv` — the header row plus one example row. What a caller generating its own file needs.                                                                                                                                                                                                     |
+| `xlsx`          | A four-tab workbook for that type: **Instructions** (and the colour legend), **Allowed values** (every column, closed sets first), **Sample data** (worked rows covering every conditional branch), and **Enter your &lt;type&gt;s** (the empty grid, with a dropdown on every closed-set column). |
+
+**The upload path is unchanged and still accepts `.csv` only.** The workbook is what an operator fills in and then exports with _File > Save As > CSV_ — it exists because a CSV cannot tell an operator which columns are required, which values a closed set accepts, or that an array cell is delimiter-joined, each of which is a class of failure otherwise only reported after the fact, per row, in `errors.csv`. The grid deliberately keeps **machine-name headers** rather than the human `title` from `network.json`, because the exported CSV's header line is what `bulk-file-stream` matches against. Array-typed fields use the network's `csv_array_delimiter`.
+
 4. Profile-completeness flags surface later via the Signal Processing Service (because completion % is a computed signal).
 
 ### 6.4 My Blue Dots list
@@ -320,7 +333,7 @@ Diagrams in the PRD (Flows 1–4) are authoritative. Implementation notes:
 ### 7.2 Authorisation
 
 - MVP has a single portal role: the aggregator/coordinator admin. All four areas accessible.
-- A parent-org tier now exists behind `ORG_HIERARCHY_ENABLED` (see **Implementation status**): an `org_owner` Keycloak realm role approves the coordinators bound to that org. Broader RBAC tiers (admin / super-admin) remain Future Scope item 8.
+- A parent-org tier exists on every instance (see **Implementation status**): an `org_owner` Keycloak realm role approves the coordinators bound to that org. Broader RBAC tiers (admin / super-admin) remain Future Scope item 8.
 
 ### 7.3 DPDP and consent
 
@@ -373,25 +386,21 @@ Engineering controls required regardless of how these resolve:
 
 **Message catalogs:** `apps/web/src/i18n/messages/<code>.json` — one file per locale. `en.json` is the canonical source of truth. `kn.json` and `hi.json` must mirror the full key tree; a parity test in the web package enforces this.
 
-**Runtime language switcher:** controlled by the `NEXT_PUBLIC_ENABLED_LANGUAGES` env var (comma-separated locale codes, e.g. `en,kn,hi`). Only codes listed here appear in the UI switcher; `en` is always included as the fallback. If the var is unset all supported locales are shown.
+**Runtime language switcher:** controlled by the `ENABLED_LANGUAGES` env var (comma-separated, ordered locale codes, e.g. `en,kn,hi`). Only codes listed here appear in the UI switcher; `en` is always included as the fallback. If the var is unset all supported locales are shown. Setting it to a single code (`ENABLED_LANGUAGES=en`) hides the switcher entirely.
+
+It is a **true runtime** setting: the root layout is a server component, so it reads the value per request and publishes it to client components via `EnabledLocalesProvider`. Changing the language set is an env edit plus a container restart — **no image rebuild**. The same value also gates the server side, so a stale `NEXT_LOCALE` cookie or an `Accept-Language` header naming a disabled language falls back to `en` rather than pinning the UI to it.
+
+`NEXT_PUBLIC_ENABLED_LANGUAGES` is still read as a fallback so deployments can migrate without a flag day; prefer the unprefixed name, and note the prefixed one is build-time only (see the note below).
 
 **Adding a new language:**
 
 1. Add `apps/web/src/i18n/messages/<code>.json` with every key present in `en.json`.
 2. Add the locale code to `SUPPORTED_LOCALES` and a display name to `LOCALE_NAMES` in `apps/web/src/i18n/config.ts`.
-3. Include the code in `NEXT_PUBLIC_ENABLED_LANGUAGES` in your `.env` (dev) or as a Docker build arg (prod — see Docker section below).
+3. Include the code in `ENABLED_LANGUAGES` in your `.env`.
 
 **Scope:** UI chrome only (navigation, labels, headings, status text). RJSF form field labels, API response strings, and transactional emails are **not** localised.
 
-**Docker / production note:** `NEXT_PUBLIC_ENABLED_LANGUAGES` is baked into the client bundle at `next build` time, not at runtime. When building the `web` Docker image you must pass it as a build arg:
-
-```bash
-docker build \
-  --build-arg NEXT_PUBLIC_ENABLED_LANGUAGES=en,kn,hi \
-  -f apps/web/Dockerfile .
-```
-
-With `docker compose` the value flows automatically from `.env` via the `build.args` entry in `docker-compose.yml`; override it in `.env` before running `make up` or `docker compose up -d --build`.
+**Why the name has no `NEXT_PUBLIC_` prefix:** Next.js inlines `NEXT_PUBLIC_*` into the client bundle at `next build`, so any such var read from a client component is frozen into the image and cannot be changed by an operator without rebuilding — which defeats the point of it being configuration. The `web` image therefore takes **no** `NEXT_PUBLIC_*` build args at all and carries no deployment-specific values; anything the browser needs is resolved in a server component and passed down. Do not add a `NEXT_PUBLIC_*` var for something an operator is expected to tune.
 
 ---
 

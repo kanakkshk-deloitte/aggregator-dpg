@@ -108,7 +108,9 @@ Rules:
 
 ## Step 6 — Create PR (only after ALL tasks done)
 
-Always target the `develop` branch:
+Always target the `develop` branch.
+
+A feature that touches more than one block (packages, api, worker, web, infra/config/docs) ships as a stack of PRs, one per block, based on `develop`. Follow `.claude/rules/pull-requests.md`. The single PR below is for a one-block feature, or a combined PR the user approved.
 
 ```bash
 gh pr create \

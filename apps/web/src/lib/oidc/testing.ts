@@ -1,8 +1,7 @@
 /**
  * In-memory OIDC adapter fake for tests.
  *
- * Skips real network calls and returns canned token sets so route handlers
- * and integration tests can exercise the BFF without booting Keycloak.
+ * Returns seeded token sets with no network calls, so tests run without Keycloak.
  */
 
 import {
@@ -14,6 +13,12 @@ import {
   type OidcResult,
   type TokenSet,
 } from './interface';
+
+/**
+ * Origin for the fake's authorization and logout URLs. Never called; `https`
+ * avoids cleartext URL literals.
+ */
+const FAKE_ISSUER = 'https://kc.fake';
 
 interface SeededExchange {
   code: string;
@@ -42,7 +47,7 @@ export class IdentityProviderFake extends IdentityProviderAdapter {
   }
 
   async buildAuthorizationUrl(input: AuthorizationUrlInput): Promise<string> {
-    const url = new URL('http://kc.fake/authorize');
+    const url = new URL(`${FAKE_ISSUER}/authorize`);
     url.searchParams.set('state', input.state);
     url.searchParams.set('nonce', input.nonce);
     url.searchParams.set('code_challenge', input.codeChallenge);
@@ -84,8 +89,9 @@ export class IdentityProviderFake extends IdentityProviderAdapter {
   }
 
   async buildLogoutUrl(input: LogoutUrlInput): Promise<string> {
-    const url = new URL('http://kc.fake/logout');
-    url.searchParams.set('id_token_hint', input.idToken);
+    const url = new URL(`${FAKE_ISSUER}/logout`);
+    if (input.idToken) url.searchParams.set('id_token_hint', input.idToken);
+    else url.searchParams.set('client_id', 'fake-client');
     url.searchParams.set('post_logout_redirect_uri', input.postLogoutRedirectUri);
     return url.toString();
   }

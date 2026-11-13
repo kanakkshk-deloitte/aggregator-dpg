@@ -16,6 +16,49 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 /** Absolute path to the repository root (parent of scripts/). */
 export const repoRoot = join(__dirname, '..');
 
+/**
+ * Root-owned system directories searched for a child-process executable,
+ * most trusted first. Deliberately excludes `/usr/local/bin` and
+ * `/opt/homebrew/bin`: Homebrew chowns those to the invoking user on macOS,
+ * so they are exactly the user-writable directories S4036 warns about and
+ * would defeat the point of resolving here rather than through `PATH`.
+ */
+const DEFAULT_SYSTEM_ROOT = String.raw`C:\Windows`;
+
+const SYSTEM_BIN_DIRS =
+  process.platform === 'win32'
+    ? [
+        join(process.env.SystemRoot ?? DEFAULT_SYSTEM_ROOT, 'System32'),
+        process.env.SystemRoot ?? DEFAULT_SYSTEM_ROOT,
+      ]
+    : ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+
+/**
+ * Resolves an executable name to an absolute path under SYSTEM_BIN_DIRS.
+ *
+ * Best-effort hardening, not a guarantee: `sudo` and `tee` live in `/usr/bin`
+ * on every supported platform and are always resolved, but `docker` and
+ * `pnpm` commonly install outside these prefixes (Docker Desktop ships in
+ * `/Applications` on macOS), and for those this returns the bare name and the
+ * lookup still goes through `PATH` — the same behaviour as before. This is a
+ * host-side dev script, so keeping those working matters more than refusing
+ * to run; treat the fallback as unhardened.
+ *
+ * @param {string} name - Bare executable name (e.g. `docker`).
+ * @returns {string} The absolute path when found under a root-owned system
+ *   directory, otherwise the bare name (resolved via PATH by the caller).
+ */
+export function resolveExecutable(name) {
+  const suffixes = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
+  for (const dir of SYSTEM_BIN_DIRS) {
+    for (const suffix of suffixes) {
+      const candidate = join(dir, `${name}${suffix}`);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return name;
+}
+
 /** Host entries the browser + containers must resolve to the local machine. */
 export const HOST_ENTRIES = [
   ['127.0.0.1', 'keycloak'],
@@ -88,7 +131,7 @@ export function chooseEnvSource({ envExists, localExists, templateExists }) {
  */
 export function missingHostEntries(content, entries = HOST_ENTRIES) {
   return entries.filter(([ip, host]) => {
-    const escapedIp = ip.replace(/\./g, '\\.');
+    const escapedIp = ip.replaceAll('.', '\\.');
     const re = new RegExp(`^\\s*${escapedIp}\\s+${host}(\\s|$)`, 'm');
     return !re.test(content);
   });
@@ -138,7 +181,7 @@ export function parseCommand(argv) {
  * @throws {Error} If the process cannot start or exits non-zero.
  */
 function run(cmd, args, opts = {}) {
-  const res = spawnSync(cmd, args, { stdio: 'inherit', cwd: repoRoot, ...opts });
+  const res = spawnSync(resolveExecutable(cmd), args, { stdio: 'inherit', cwd: repoRoot, ...opts });
   if (res.error) throw res.error;
   if (typeof res.status === 'number' && res.status !== 0) {
     throw new Error(`${cmd} ${args.join(' ')} exited with code ${res.status}`);
@@ -148,7 +191,7 @@ function run(cmd, args, opts = {}) {
 
 /** @returns true if the Docker daemon is reachable. */
 function dockerRunning() {
-  const res = spawnSync('docker', ['info'], { stdio: 'ignore' });
+  const res = spawnSync(resolveExecutable('docker'), ['info'], { stdio: 'ignore' });
   return !res.error && res.status === 0;
 }
 
@@ -213,8 +256,17 @@ function setup() {
     console.log('');
   } else {
     console.log(`Adding host entries to ${hostsPath} (sudo required)...`);
-    const lines = missing.map(([ip, host]) => `${ip} ${host}`).join('\n') + '\n';
-    const res = spawnSync('sudo', ['tee', '-a', hostsPath], {
+    // Lead with a newline when the file does not already end in one. macOS ships
+    // /etc/hosts with no trailing newline, so a bare `tee -a` concatenates the
+    // first entry onto the final `::1 localhost` line — which both breaks IPv6
+    // localhost resolution and defeats missingHostEntries() (its `^\s*<ip>`
+    // anchor can no longer match), so every later run appends a duplicate.
+    const needsLeadingNewline = content.length > 0 && !content.endsWith('\n');
+    const lines =
+      (needsLeadingNewline ? '\n' : '') +
+      missing.map(([ip, host]) => `${ip} ${host}`).join('\n') +
+      '\n';
+    const res = spawnSync(resolveExecutable('sudo'), [resolveExecutable('tee'), '-a', hostsPath], {
       input: lines,
       stdio: ['pipe', 'ignore', 'inherit'],
     });
@@ -264,7 +316,12 @@ const ps = () => run('docker', composeArgs('ps'));
 const psql = () =>
   run('docker', composeArgs('exec', 'postgres', 'psql', '-U', 'aggregator', '-d', 'aggregator'));
 
-/** Rebuilds the web image (with NEXT_PUBLIC_* baked at compile time) and restarts it. */
+/**
+ * Rebuilds the web image and restarts it — for web CODE changes.
+ *
+ * Not needed for an env change: the image takes no `NEXT_PUBLIC_*` build args,
+ * so every setting is read at runtime and `up -d web` alone applies it.
+ */
 function rebuildWeb() {
   run('pnpm', ['--filter', '@aggregator-dpg/web', 'build']);
   run('docker', composeArgs('build', 'web'));

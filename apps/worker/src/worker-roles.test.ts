@@ -37,6 +37,13 @@ describe('parseWorkerRoles', () => {
   it('throws on an unknown role (fail fast at boot)', () => {
     expect(() => parseWorkerRoles('file,bogus')).toThrowError(/unknown worker role/i);
   });
+
+  it('defaults to ALL roles when every comma-separated token is empty', () => {
+    // Not the same branch as raw === '' — raw is non-empty ("," survives the
+    // initial trim) but every split token is blank, so the accumulator set
+    // stays empty and the size===0 fallback kicks in.
+    expect(parseWorkerRoles(',, ,')).toEqual(new Set(WORKER_ROLES));
+  });
 });
 
 describe('missingRoles', () => {
@@ -45,6 +52,6 @@ describe('missingRoles', () => {
   });
 
   it('reports the complement for a partial role set', () => {
-    expect(missingRoles(parseWorkerRoles('file,row'))).toEqual(['finalise', 'cron']);
+    expect(missingRoles(parseWorkerRoles('file,row'))).toEqual(['finalise', 'cron', 'campaign']);
   });
 });

@@ -1,10 +1,8 @@
 /**
- * BFF proxy for the active-org dropdown (spec §6 / §6.2).
+ * BFF proxy for the active-org dropdown.
  *
- * Anonymous browser; forwards `GET /v1/orgs` with a Keycloak service-account
- * token and returns the upstream `{ orgs: [...] }` shape verbatim. Cached
- * `no-store` so a newly-approved org appears without a stale-cache delay. Only
- * meaningful with `ORG_HIERARCHY_ENABLED=true` upstream.
+ * Forwards `GET /v1/orgs` with a service-account token and returns the
+ * upstream body as-is. Not cached, so newly approved orgs appear at once.
  *
  * GET /api/orgs
  */

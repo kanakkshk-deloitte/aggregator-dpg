@@ -1,0 +1,417 @@
+{
+  "rbac_vectors": [
+    {
+      "name": "coordinator views profiles in its org",
+      "input": {
+        "capability": "profiles.view",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": ["campaigns.run", "profiles.onboard", "profiles.view"]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "reasons": []
+      }
+    },
+    {
+      "name": "coordinator cannot export without Data Export",
+      "input": {
+        "capability": "profiles.export",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": ["campaigns.run", "profiles.onboard", "profiles.view"]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "reasons": ["not_held"]
+      }
+    },
+    {
+      "name": "coordinator with Data Export exports",
+      "input": {
+        "capability": "profiles.export",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": ["campaigns.run", "profiles.onboard", "profiles.view", "profiles.export"]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "reasons": []
+      }
+    },
+    {
+      "name": "coordinator without PII Access cannot see personal data",
+      "input": {
+        "capability": "profiles.view_pii",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": ["campaigns.run", "profiles.onboard", "profiles.view"]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "reasons": ["not_held"]
+      }
+    },
+    {
+      "name": "coordinator with PII Access sees personal data",
+      "input": {
+        "capability": "profiles.view_pii",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": ["campaigns.run", "profiles.onboard", "profiles.view", "profiles.view_pii"]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "reasons": []
+      }
+    },
+    {
+      "name": "personal data never through the root, even if held",
+      "input": {
+        "capability": "profiles.view_pii",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": ["profiles.view_pii"]
+        },
+        "org": {
+          "id": "NF",
+          "orgType": "network_facilitator"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "reasons": ["not_through_root"]
+      }
+    },
+    {
+      "name": "personal data through the root and not held",
+      "input": {
+        "capability": "profiles.view_pii",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": [
+            "agreement.manage",
+            "campaigns.run",
+            "contact.unmask",
+            "network.administer",
+            "org.manage",
+            "orgs.block",
+            "orgs.onboard",
+            "profiles.export",
+            "profiles.move",
+            "profiles.onboard",
+            "profiles.retire",
+            "profiles.verify",
+            "profiles.view"
+          ]
+        },
+        "org": {
+          "id": "NF",
+          "orgType": "network_facilitator"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "reasons": ["not_held", "not_through_root"]
+      }
+    },
+    {
+      "name": "inactive account holds nothing",
+      "input": {
+        "capability": "profiles.view",
+        "actor": {
+          "userId": "u-1",
+          "active": false,
+          "permissions": ["campaigns.run", "profiles.onboard", "profiles.view"]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "reasons": ["inactive"]
+      }
+    },
+    {
+      "name": "inactive account without the permission",
+      "input": {
+        "capability": "profiles.export",
+        "actor": {
+          "userId": "u-1",
+          "active": false,
+          "permissions": ["campaigns.run", "profiles.onboard", "profiles.view"]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "reasons": ["inactive", "not_held"]
+      }
+    },
+    {
+      "name": "no permissions at all",
+      "input": {
+        "capability": "profiles.view",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": []
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "reasons": ["not_held"]
+      }
+    },
+    {
+      "name": "route with no single target uses the actor's permissions",
+      "input": {
+        "capability": "profiles.view",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": ["campaigns.run", "profiles.onboard", "profiles.view"]
+        },
+        "org": null
+      },
+      "expected": {
+        "allow": true,
+        "reasons": []
+      }
+    },
+    {
+      "name": "no single target: personal data held through a coordinator org",
+      "input": {
+        "capability": "profiles.view_pii",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": ["profiles.view_pii"]
+        },
+        "org": null
+      },
+      "expected": {
+        "allow": true,
+        "reasons": []
+      }
+    },
+    {
+      "name": "org admin manages its organisation",
+      "input": {
+        "capability": "org.manage",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": [
+            "campaigns.run",
+            "contact.unmask",
+            "org.manage",
+            "profiles.export",
+            "profiles.onboard",
+            "profiles.retire",
+            "profiles.view"
+          ]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "reasons": []
+      }
+    },
+    {
+      "name": "org admin cannot see personal data",
+      "input": {
+        "capability": "profiles.view_pii",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": [
+            "campaigns.run",
+            "contact.unmask",
+            "org.manage",
+            "profiles.export",
+            "profiles.onboard",
+            "profiles.retire",
+            "profiles.view"
+          ]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "reasons": ["not_held"]
+      }
+    },
+    {
+      "name": "org admin cannot administer the network",
+      "input": {
+        "capability": "network.administer",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": [
+            "campaigns.run",
+            "contact.unmask",
+            "org.manage",
+            "profiles.export",
+            "profiles.onboard",
+            "profiles.retire",
+            "profiles.view"
+          ]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": false,
+        "reasons": ["not_held"]
+      }
+    },
+    {
+      "name": "network admin administers the network at the root",
+      "input": {
+        "capability": "network.administer",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": [
+            "agreement.manage",
+            "campaigns.run",
+            "contact.unmask",
+            "network.administer",
+            "org.manage",
+            "orgs.block",
+            "orgs.onboard",
+            "profiles.export",
+            "profiles.move",
+            "profiles.onboard",
+            "profiles.retire",
+            "profiles.verify",
+            "profiles.view"
+          ]
+        },
+        "org": {
+          "id": "NF",
+          "orgType": "network_facilitator"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "reasons": []
+      }
+    },
+    {
+      "name": "network admin blocks an organisation",
+      "input": {
+        "capability": "orgs.block",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": [
+            "agreement.manage",
+            "campaigns.run",
+            "contact.unmask",
+            "network.administer",
+            "org.manage",
+            "orgs.block",
+            "orgs.onboard",
+            "profiles.export",
+            "profiles.move",
+            "profiles.onboard",
+            "profiles.retire",
+            "profiles.verify",
+            "profiles.view"
+          ]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "reasons": []
+      }
+    },
+    {
+      "name": "org admin with Org Onboarder onboards organisations",
+      "input": {
+        "capability": "orgs.onboard",
+        "actor": {
+          "userId": "u-1",
+          "active": true,
+          "permissions": [
+            "campaigns.run",
+            "contact.unmask",
+            "org.manage",
+            "profiles.export",
+            "profiles.onboard",
+            "profiles.retire",
+            "profiles.view",
+            "orgs.onboard",
+            "profiles.move",
+            "profiles.verify"
+          ]
+        },
+        "org": {
+          "id": "A",
+          "orgType": "aggregator"
+        }
+      },
+      "expected": {
+        "allow": true,
+        "reasons": []
+      }
+    }
+  ]
+}

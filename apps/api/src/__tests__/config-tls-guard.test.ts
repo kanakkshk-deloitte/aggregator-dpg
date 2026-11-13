@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ConfigError } from '@aggregator-dpg/shared-primitives/errors';
-import { assertTlsPosture, type Config } from '../config.js';
+import { assertTlsPosture } from '@aggregator-dpg/shared-primitives/config';
+import { type Config } from '../config.js';
 
 // assertTlsPosture only reads NODE_TLS_REJECT_UNAUTHORIZED, INSTANCE_ENV, and
 // NODE_ENV — build a minimal Config for those three and cast the rest.

@@ -10,14 +10,12 @@
  *   - Schema documents must declare `$schema: https://json-schema.org/draft/2020-12/schema`.
  *
  * Caching:
- *   - Compiled validators cached by `(id, version)` for the lifetime of
- *     the loader instance. Process restart clears the cache; that is
- *     fine because schema files only change on deploy.
+ *   - Schemas and validators are cached by `(id, version)` for the loader's
+ *     lifetime. Schema files only change on deploy.
  */
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import { ok, err, type Result } from '@aggregator-dpg/shared-primitives/result';
 import { type BaseError } from '@aggregator-dpg/shared-primitives/errors';
 import {
@@ -28,22 +26,7 @@ import {
   type SchemaRef,
   type ValidateFunction,
 } from './interface.js';
-
-const require = createRequire(import.meta.url);
-type AjvOptions = {
-  allErrors?: boolean;
-  strict?: boolean | 'log';
-  coerceTypes?: boolean | 'array';
-};
-type AjvLike = {
-  compile(schema: unknown): ValidateFunction;
-};
-type AjvCtorType = new (opts?: AjvOptions) => AjvLike;
-type AddFormatsFn = (ajv: AjvLike, opts?: unknown) => AjvLike;
-
-// Use the 2020-12 Ajv build because schemas declare draft 2020-12.
-const AjvCtor: AjvCtorType = require('ajv/dist/2020').default ?? require('ajv/dist/2020');
-const addFormats: AddFormatsFn = require('ajv-formats').default ?? require('ajv-formats');
+import { createAjv, type AjvLike } from './ajv.js';
 
 export interface FileSchemaLoaderOptions {
   /**
@@ -62,12 +45,9 @@ export class FileSchemaLoader extends SchemaLoaderBase {
   constructor(opts: FileSchemaLoaderOptions) {
     super();
     this.rootDir = opts.rootDir;
-    // coerceTypes: 'array' is the CSV-friendly mode — "5" → 5, "true" → true,
-    // and a single string is wrapped into a one-element array. Worker-side
-    // preprocess still has to split comma-joined cells into multi-element
-    // arrays before validate runs.
-    this.ajv = new AjvCtor({ allErrors: true, strict: false, coerceTypes: 'array' });
-    addFormats(this.ajv);
+    // coerceTypes 'array' wraps a single string in an array; the worker still
+    // splits comma-joined cells before validation.
+    this.ajv = createAjv();
   }
 
   async getSchema(ref: SchemaRef): Promise<Result<JsonSchema, BaseError>> {
@@ -116,8 +96,7 @@ export class FileSchemaLoader extends SchemaLoaderBase {
   }
 
   private resolvePath(ref: SchemaRef): string {
-    // Schema id "participant-seeker" → actor "participant", action "seeker".
-    // Falls back to id-as-action if no hyphen present.
+    // "participant-seeker" → actor "participant", action "seeker". No hyphen: id is both.
     const dashIndex = ref.id.indexOf('-');
     const actor = dashIndex === -1 ? ref.id : ref.id.slice(0, dashIndex);
     const action = dashIndex === -1 ? ref.id : ref.id.slice(dashIndex + 1);
@@ -141,11 +120,7 @@ function isSafeRef(ref: SchemaRef): boolean {
   return SAFE_ID_RE.test(ref.id) && SAFE_VERSION_RE.test(ref.version);
 }
 
-/**
- * Ensures the resolved schema path stays inside the configured root —
- * defence in depth on top of `isSafeRef`. Belt + braces against any future
- * regex bypass or rootDir relative-path quirk.
- */
+/** Checks the resolved schema path stays inside the root. Backs up `isSafeRef`. */
 function isInsideRoot(filePath: string, rootDir: string): boolean {
   const resolvedRoot = path.resolve(rootDir);
   const resolvedTarget = path.resolve(filePath);

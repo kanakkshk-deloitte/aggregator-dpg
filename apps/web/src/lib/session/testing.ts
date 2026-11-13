@@ -1,8 +1,7 @@
 /**
  * Public testing surface for the session store.
  *
- * Per project rules, external packages must use the fake exposed here rather
- * than reaching into the in-memory implementation directly.
+ * Tests outside this module use this fake, not the in-memory store directly.
  */
 
 import { MemorySessionStore } from './memory';
@@ -16,7 +15,7 @@ export class SessionStoreFake extends MemorySessionStore {
    */
   seed(entries: Array<{ sid: string; data: SessionData }>): void {
     for (const { sid, data } of entries) {
-      // Reach into protected map via cast — only valid in tests.
+      // Test-only access to the protected store map.
       const store = (
         this as unknown as {
           store: Map<string, { data: SessionData; expiresAt: number }>;

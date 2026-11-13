@@ -7,6 +7,7 @@
  *
  * @module apps/web/src/components/forms/MarkdownContent
  */
+import type { JSX } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -23,10 +24,8 @@ export interface MarkdownContentProps {
  * @returns A div containing the rendered Markdown.
  */
 export function MarkdownContent({ content }: MarkdownContentProps): JSX.Element {
-  // The web app does not ship @tailwindcss/typography, and Tailwind's preflight
-  // strips default heading/list styling — so every element is styled explicitly
-  // via arbitrary variants (descendant selectors so nested inline elements are
-  // covered too). Mirrors the Signals-DPG consent Markdown renderer.
+  // No @tailwindcss/typography here and preflight strips default styles, so each
+  // element is styled with descendant variants. Matches the Signals-DPG renderer.
   return (
     <div
       className="text-[14px] leading-relaxed text-ink-700 space-y-3
@@ -37,10 +36,14 @@ export function MarkdownContent({ content }: MarkdownContentProps): JSX.Element 
         [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1
         [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:space-y-1
         [&_li]:text-ink-700
-        [&_a]:font-medium [&_a]:text-[var(--bd-primary)] [&_a]:underline
+        [&_a]:font-medium [&_a]:text-(--bd-primary) [&_a]:underline
         [&_strong]:font-semibold [&_strong]:text-ink-900
+        [&_table]:w-full [&_table]:border-collapse [&_table]:my-3 [&_table]:text-[13px]
+        [&_th]:border [&_th]:border-slate-200 [&_th]:p-2 [&_th]:text-left [&_th]:font-semibold [&_th]:text-ink-900 [&_th]:bg-slate-50
+        [&_td]:border [&_td]:border-slate-200 [&_td]:p-2 [&_td]:align-top
+        [&_img]:max-w-full [&_img]:rounded [&_img]:my-2
         [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 [&_blockquote]:italic
-        [&_code]:bg-slate-100 [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[13px]
+        [&_code]:bg-slate-100 [&_code]:rounded-sm [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[13px]
         [&_hr]:border-slate-200 [&_hr]:my-4"
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>

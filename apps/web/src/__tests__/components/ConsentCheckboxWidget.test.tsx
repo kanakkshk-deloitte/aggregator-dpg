@@ -46,8 +46,17 @@ const sampleContent: ConsentDocContent = {
   privacy: { version: 1, title: 'Privacy Policy', content: '# Privacy' },
 };
 
-/** Minimal RJSF WidgetProps-compatible object for direct rendering. */
-function makeProps(overrides: Record<string, unknown> = {}) {
+/**
+ * Minimal RJSF WidgetProps-compatible object for direct rendering.
+ *
+ * RJSF v6 moved `formContext` off the top-level widget props and onto
+ * `registry`, so the `formContext` argument is nested under `registry` here —
+ * where the widget now reads it — while call sites keep passing it flat.
+ */
+function makeProps({
+  formContext = {},
+  ...overrides
+}: Record<string, unknown> & { formContext?: Record<string, unknown> } = {}) {
   return {
     id: 'consent-checkbox',
     value: false,
@@ -59,8 +68,7 @@ function makeProps(overrides: Record<string, unknown> = {}) {
     schema: {},
     options: {},
     uiSchema: {},
-    formContext: {},
-    registry: {} as never,
+    registry: { formContext } as never,
     rawErrors: [],
     ...overrides,
   };

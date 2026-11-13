@@ -1,12 +1,8 @@
 /**
- * In-memory ConsentLedger — Map-backed, used by unit tests in this package.
+ * In-memory consent ledger (`@aggregator-dpg/consent-ledger`), for unit tests
+ * in this package. Other packages use the fake from `./testing`.
  *
- * Cross-package consumers should import the testing fake from `./testing`
- * instead (which extends this with a `seed()` / `buildConsentRecord()` helper).
- *
- * Every call to `recordRegistrationConsent` appends a new row with a
- * generated `id` and a deterministic `createdAt` / `acceptedAt` so assertions
- * are snapshot-stable.
+ * Each row gets a generated `id` and a fixed `createdAt` / `acceptedAt`.
  *
  * @module @aggregator-dpg/consent-ledger/memory
  */
@@ -17,14 +13,13 @@ import type { BaseError } from '@aggregator-dpg/shared-primitives/errors';
 
 import { ConsentLedgerBase, type ConsentRecord, type RecordConsentInput } from './interface.js';
 
-/** Fixed ISO timestamp used for all in-memory rows for deterministic testing. */
+/** Fixed timestamp for all in-memory rows. */
 const FIXED_NOW = new Date('2026-01-01T00:00:00.000Z');
 
 /**
  * In-memory implementation of {@link ConsentLedgerBase}.
  *
- * Rows are stored in insertion order in a `Map` keyed by generated id.
- * No deduplication is applied — the ledger is append-only by design.
+ * Rows are kept in insertion order, keyed by generated id. No deduplication.
  */
 export class InMemoryConsentLedger extends ConsentLedgerBase {
   /** Internal append-only store of consent records. */
@@ -32,9 +27,7 @@ export class InMemoryConsentLedger extends ConsentLedgerBase {
   private nextId = 1;
 
   /**
-   * Appends a consent record using in-memory state.
-   *
-   * Always returns `ok(record)`; never fails.
+   * Appends a consent record. Never fails.
    *
    * @param input - Validated registration-consent payload.
    * @returns `ok(ConsentRecord)` with the newly stored row.
@@ -53,6 +46,7 @@ export class InMemoryConsentLedger extends ConsentLedgerBase {
       brand: input.brand ?? null,
       source: input.source ?? 'registration',
       acceptedAt: FIXED_NOW,
+      validTill: input.validTill ?? null,
       createdAt: FIXED_NOW,
     };
     this.rows.set(id, record);
@@ -60,10 +54,17 @@ export class InMemoryConsentLedger extends ConsentLedgerBase {
   }
 
   /**
-   * Returns all stored consent records in insertion order.
+   * Returns this ledger: in memory there is no transaction to bind to.
    *
-   * Intended for package-internal unit tests only; external consumers
-   * should not depend on this method.
+   * @param _executor - Ignored.
+   * @returns This ledger.
+   */
+  override withExecutor(_executor: unknown): this {
+    return this;
+  }
+
+  /**
+   * Returns all stored consent records in insertion order. For this package's tests.
    *
    * @returns Array of all consent records stored so far.
    */

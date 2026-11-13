@@ -1,7 +1,7 @@
 /**
- * Drizzle Postgres client for the worker process.
+ * Drizzle Postgres client for the worker app.
  *
- * Singleton pattern. Closes on SIGTERM via the main entrypoint.
+ * Singleton; closed on shutdown by the entrypoint.
  */
 
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -28,8 +28,7 @@ export async function closeDb(): Promise<void> {
 }
 
 /**
- * Test helper — inject a fake Drizzle db so unit tests exercise DB-reading
- * code paths without a live Postgres. Pass `null` to reset.
+ * Replaces the Drizzle db, for tests. Pass `null` to reset.
  */
 export function _setDb(instance: NodePgDatabase<typeof schema> | null): void {
   db = instance;

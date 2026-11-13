@@ -1,0 +1,896 @@
+{
+  "realm": "__KEYCLOAK_REALM__",
+  "enabled": true,
+  "sslRequired": "none",
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "minimumQuickLoginWaitSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 28800,
+  "actionTokenGeneratedByUserLifespan": 300,
+  "displayName": "__BRAND_LONG_NAME__",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginTheme": "otp",
+  "emailTheme": "otp",
+  "accountTheme": "keycloak.v3",
+  "adminTheme": "keycloak.v2",
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en"],
+  "defaultLocale": "en",
+  "attributes": {
+    "phoneDefaultRegion": "IN",
+    "userProfileEnabled": "true",
+    "kc.user.profile.config": "{\"unmanagedAttributePolicy\":\"ENABLED\",\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]}},{\"name\":\"email\",\"displayName\":\"${email}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"required\":{\"roles\":[\"user\"]}},{\"name\":\"firstName\",\"displayName\":\"${firstName}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]}},{\"name\":\"lastName\",\"displayName\":\"${lastName}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]}},{\"name\":\"phoneNumber\",\"displayName\":\"Phone Number\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]}},{\"name\":\"phoneNumberVerified\",\"displayName\":\"Phone Number Verified\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]}},{\"name\":\"aggregator_id\",\"displayName\":\"Aggregator id\",\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"decision_made\",\"displayName\":\"Registration decision\",\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"aggregator_type\",\"displayName\":\"Aggregator type\",\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false},{\"name\":\"signalstack_org_id\",\"displayName\":\"Signals organisation id\",\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false}]}"
+  },
+  "smtpServer": {
+    "host": "__SMTP_HOST__",
+    "port": "__SMTP_PORT__",
+    "from": "__SMTP_FROM__",
+    "fromDisplayName": "__SMTP_FROM_DISPLAY__",
+    "ssl": "__SMTP_SSL__",
+    "starttls": "__SMTP_STARTTLS__",
+    "auth": "__SMTP_AUTH__",
+    "user": "__SMTP_USER__",
+    "password": "__SMTP_PASSWORD__"
+  },
+  "authenticationFlows": [
+    {
+      "alias": "aggregator-otp-browser",
+      "description": "Browser flow: identifier (email/phone/username) then OTP via auto-routed channel",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "authenticatorFlow": false,
+          "requirement": "ALTERNATIVE",
+          "priority": 10
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "flowAlias": "aggregator-otp-forms"
+        }
+      ]
+    },
+    {
+      "alias": "aggregator-otp-forms",
+      "description": "Identifier resolution then OTP channel choice + verify",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "otp-identifier-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10
+        },
+        {
+          "authenticator": "otp-channel-choice-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorConfig": "aggregator-otp-choice-config"
+        }
+      ]
+    },
+    {
+      "id": "9f3b1c52-7a41-4c8e-9d16-3b0f5a2e7c84",
+      "alias": "aggregator-portal-browser",
+      "description": "aggregator-portal only; bound by flow ID. Portal entitlement gate over aggregator-otp-browser: approved coordinators and org owners (org_owner role). Never the realm-wide browserFlow.",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorFlow": true,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "flowAlias": "aggregator-portal-auth"
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 20,
+          "flowAlias": "aggregator-portal-gate-sso-entitled"
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 30,
+          "flowAlias": "aggregator-portal-gate-sso-approved"
+        }
+      ]
+    },
+    {
+      "alias": "aggregator-portal-auth",
+      "description": "The ALTERNATIVE pair, nested one level down. Keycloak ignores every ALTERNATIVE at a level that also holds REQUIRED/CONDITIONAL executions, so the sibling gates below cannot share this level.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "authenticatorFlow": false,
+          "requirement": "ALTERNATIVE",
+          "priority": 10
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "flowAlias": "aggregator-portal-otp-forms"
+        }
+      ]
+    },
+    {
+      "alias": "aggregator-portal-otp-forms",
+      "description": "Portal copy of aggregator-otp-forms with the entitlement gate wedged between identifier resolution and OTP dispatch, so an ineligible user never receives a code.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "otp-identifier-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 12,
+          "flowAlias": "aggregator-portal-gate-otp-entitled"
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 14,
+          "flowAlias": "aggregator-portal-gate-otp-approved"
+        },
+        {
+          "authenticator": "otp-channel-choice-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorConfig": "aggregator-portal-otp-choice-config"
+        }
+      ]
+    },
+    {
+      "alias": "aggregator-portal-gate-otp-entitled",
+      "description": "Deny before OTP dispatch: neither a coordinator (no aggregator_id) nor an org owner (no org_owner role). Conditions are ANDed; runs after otp-identifier-form sets the user.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-user-attribute",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorConfig": "aggregator-portal-cond-no-aggregator-id"
+        },
+        {
+          "authenticator": "conditional-user-role",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorConfig": "aggregator-portal-cond-not-owner"
+        },
+        {
+          "authenticator": "deny-access-authenticator",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 30,
+          "authenticatorConfig": "aggregator-portal-deny-not-entitled"
+        }
+      ]
+    },
+    {
+      "alias": "aggregator-portal-gate-otp-approved",
+      "description": "Deny before OTP dispatch: a coordinator (aggregator_id present) whose decision_made is not approved. Mirrors requireApproved() in the API.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-user-attribute",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorConfig": "aggregator-portal-cond-has-aggregator-id"
+        },
+        {
+          "authenticator": "conditional-user-attribute",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorConfig": "aggregator-portal-cond-not-approved"
+        },
+        {
+          "authenticator": "deny-access-authenticator",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 30,
+          "authenticatorConfig": "aggregator-portal-deny-not-approved"
+        }
+      ]
+    },
+    {
+      "alias": "aggregator-portal-gate-sso-entitled",
+      "description": "Same entitlement gate on the auth-cookie path: an SSO session skips the forms sub-flow, so the pre-OTP gate never runs for it.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-user-attribute",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorConfig": "aggregator-portal-cond-no-aggregator-id-sso"
+        },
+        {
+          "authenticator": "conditional-user-role",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorConfig": "aggregator-portal-cond-not-owner-sso"
+        },
+        {
+          "authenticator": "deny-access-authenticator",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 30,
+          "authenticatorConfig": "aggregator-portal-deny-not-entitled-sso"
+        }
+      ]
+    },
+    {
+      "alias": "aggregator-portal-gate-sso-approved",
+      "description": "Same approval gate on the auth-cookie path.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-user-attribute",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorConfig": "aggregator-portal-cond-has-aggregator-id-sso"
+        },
+        {
+          "authenticator": "conditional-user-attribute",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorConfig": "aggregator-portal-cond-not-approved-sso"
+        },
+        {
+          "authenticator": "deny-access-authenticator",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 30,
+          "authenticatorConfig": "aggregator-portal-deny-not-approved-sso"
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "aggregator-otp-choice-config",
+      "config": {
+        "otpChoice.codeLength": "6",
+        "otpChoice.ttl": "300",
+        "otpChoice.maxRetries": "3",
+        "otpChoice.phoneAttribute": "phoneNumber"
+      }
+    },
+    {
+      "alias": "aggregator-portal-otp-choice-config",
+      "config": {
+        "otpChoice.codeLength": "6",
+        "otpChoice.ttl": "300",
+        "otpChoice.maxRetries": "3",
+        "otpChoice.phoneAttribute": "phoneNumber"
+      }
+    },
+    {
+      "alias": "aggregator-portal-cond-no-aggregator-id",
+      "config": {
+        "attribute_name": "aggregator_id",
+        "attribute_expected_value": ".+",
+        "regex": "true",
+        "include_group_attributes": "false",
+        "not": "true"
+      }
+    },
+    {
+      "alias": "aggregator-portal-cond-no-aggregator-id-sso",
+      "config": {
+        "attribute_name": "aggregator_id",
+        "attribute_expected_value": ".+",
+        "regex": "true",
+        "include_group_attributes": "false",
+        "not": "true"
+      }
+    },
+    {
+      "alias": "aggregator-portal-cond-not-approved",
+      "config": {
+        "attribute_name": "decision_made",
+        "attribute_expected_value": "approved",
+        "regex": "false",
+        "include_group_attributes": "false",
+        "not": "true"
+      }
+    },
+    {
+      "alias": "aggregator-portal-cond-not-approved-sso",
+      "config": {
+        "attribute_name": "decision_made",
+        "attribute_expected_value": "approved",
+        "regex": "false",
+        "include_group_attributes": "false",
+        "not": "true"
+      }
+    },
+    {
+      "alias": "aggregator-portal-deny-not-approved",
+      "config": {
+        "denyErrorMessage": "portalDenyNotApproved"
+      }
+    },
+    {
+      "alias": "aggregator-portal-deny-not-approved-sso",
+      "config": {
+        "denyErrorMessage": "portalDenyNotApproved"
+      }
+    },
+    {
+      "alias": "aggregator-portal-cond-has-aggregator-id",
+      "config": {
+        "attribute_name": "aggregator_id",
+        "attribute_expected_value": ".+",
+        "regex": "true",
+        "include_group_attributes": "false",
+        "not": "false"
+      }
+    },
+    {
+      "alias": "aggregator-portal-cond-has-aggregator-id-sso",
+      "config": {
+        "attribute_name": "aggregator_id",
+        "attribute_expected_value": ".+",
+        "regex": "true",
+        "include_group_attributes": "false",
+        "not": "false"
+      }
+    },
+    {
+      "alias": "aggregator-portal-cond-not-owner",
+      "config": {
+        "condUserRole": "org_owner",
+        "negate": "true"
+      }
+    },
+    {
+      "alias": "aggregator-portal-cond-not-owner-sso",
+      "config": {
+        "condUserRole": "org_owner",
+        "negate": "true"
+      }
+    },
+    {
+      "alias": "aggregator-portal-deny-not-entitled",
+      "config": {
+        "denyErrorMessage": "portalDenyNotEntitled"
+      }
+    },
+    {
+      "alias": "aggregator-portal-deny-not-entitled-sso",
+      "config": {
+        "denyErrorMessage": "portalDenyNotEntitled"
+      }
+    }
+  ],
+  "browserFlow": "aggregator-otp-browser",
+  "directGrantFlow": "direct grant",
+  "clients": [
+    {
+      "clientId": "aggregator-portal",
+      "name": "Aggregator Portal (BFF)",
+      "description": "Confidential OIDC client for the Aggregator portal — Authorization Code + PKCE with client secret; tokens held server-side by Next.js BFF.",
+      "enabled": true,
+      "authenticationFlowBindingOverrides": {
+        "browser": "9f3b1c52-7a41-4c8e-9d16-3b0f5a2e7c84"
+      },
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "__AGGREGATOR_PORTAL_SECRET__",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/api/auth/callback",
+        "http://localhost:3100/api/auth/callback",
+        "http://localhost/api/auth/callback",
+        "__PUBLIC_BASE_URL__/api/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://localhost:3100",
+        "http://localhost",
+        "__PUBLIC_BASE_URL__"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:3000/##http://localhost:3000/login##http://localhost:3100/##http://localhost:3100/login##http://localhost/##http://localhost/login##__PUBLIC_BASE_URL__/##__PUBLIC_BASE_URL__/login",
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "aggregator_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "aggregator_id",
+            "claim.name": "aggregator_id",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "decision_made",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "decision_made",
+            "claim.name": "decision_made",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "aggregator_type",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "aggregator_type",
+            "claim.name": "aggregator_type",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "phone_number",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "phoneNumber",
+            "claim.name": "phone_number",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "signalstack_org_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "signalstack_org_id",
+            "claim.name": "signalstack_org_id",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "roles",
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "true",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "aggregator-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "aggregator-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "aggregator-api",
+      "name": "Aggregator API (service account)",
+      "description": "Confidential client for apps/api Keycloak admin ops. Service account holds realm-management roles manage-users and manage-realm.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "__AGGREGATOR_API_SECRET__",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "attributes": {
+        "use.refresh.tokens": "false"
+      }
+    },
+    {
+      "clientId": "aggregator-bff",
+      "name": "Aggregator Portal BFF (anonymous proxy)",
+      "description": "Minimal-scope confidential client for the web BFF's client_credentials grant on anonymous-proxy routes.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "__AGGREGATOR_BFF_SECRET__",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "attributes": {
+        "use.refresh.tokens": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "aggregator-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "aggregator-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "signals-ui",
+      "name": "Signals UI",
+      "description": "Public OIDC client for the signals React UI — Authorization Code + PKCE, no client secret.",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://localhost:2742/*",
+        "__PUBLIC_BASE_URL__/*"
+      ],
+      "webOrigins": ["http://localhost:5173", "http://localhost:2742", "__PUBLIC_BASE_URL__"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/##http://localhost:5173/auth/login##__PUBLIC_BASE_URL__/##__PUBLIC_BASE_URL__/auth/login",
+        "login_theme": "signals"
+      },
+      "protocolMappers": [
+        {
+          "name": "phone_number",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "phoneNumber",
+            "claim.name": "phone_number",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "phone_number_verified",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "phoneNumberVerified",
+            "claim.name": "phone_number_verified",
+            "jsonType.label": "boolean",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "signals-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "signals-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "signals_acting_orgs",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "signalstack_org_id",
+            "claim.name": "signals_acting_orgs",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "signals-api",
+      "name": "Signals API (resource server + service account)",
+      "description": "Confidential client for signals apps/api.",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "__SIGNALS_API_SECRET__",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "attributes": {
+        "use.refresh.tokens": "false"
+      },
+      "protocolMappers": []
+    },
+    {
+      "clientId": "aggregator-dpg",
+      "name": "aggregator-dpg (service auth into signals)",
+      "description": "Client-credentials client for aggregator-dpg's service auth into signals. The x-acting-org-id header is unchanged; acting-org is orthogonal to authentication.",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "__SIGNALSTACK_CLIENT_SECRET__",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "attributes": {
+        "use.refresh.tokens": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "signals-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "signals-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "signals_acting_orgs",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "signals_acting_orgs",
+            "claim.value": "*",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "access.tokenResponse.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "voice-dpg",
+      "name": "voice-dpg (service auth into signals)",
+      "description": "Client-credentials client for voice-dpg's service auth into signals.",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "__VOICE_DPG_SIGNALS_SECRET__",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "attributes": {
+        "use.refresh.tokens": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "signals-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "signals-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "signals_acting_orgs",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "signals_acting_orgs",
+            "claim.value": "*",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "access.tokenResponse.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "campaign-manager",
+      "name": "Campaign Manager",
+      "description": "Confidential client for the external campaign manager. Direct grant lets a coordinator obtain a token for org-scoped campaign routes. Not for browser login.",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "__CAMPAIGN_MANAGER_SECRET__",
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email", "basic"],
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"],
+      "protocolMappers": [
+        {
+          "name": "aggregator_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "aggregator_id",
+            "claim.name": "aggregator_id",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "aggregator_type",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "aggregator_type",
+            "claim.name": "aggregator_type",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        },
+        {
+          "name": "signalstack_org_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "signalstack_org_id",
+            "claim.name": "signalstack_org_id",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-aggregator-api",
+      "enabled": true,
+      "serviceAccountClientId": "aggregator-api",
+      "clientRoles": {
+        "realm-management": ["view-users", "manage-users", "query-users", "manage-realm"]
+      }
+    },
+    {
+      "username": "service-account-signals-api",
+      "enabled": true,
+      "serviceAccountClientId": "signals-api",
+      "clientRoles": {
+        "realm-management": ["view-users", "manage-users", "query-users", "manage-realm"]
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "org_owner",
+        "description": "Parent-org owner (org hierarchy). Assigned to the org-owner user at org approval; gates org-scoped capabilities.",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "signals_participant",
+        "description": "A human participant of the Signals Stack. Prefixed because realm roles are a shared namespace with aggregator in the combined realm.",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "signals_admin",
+        "description": "Elevated signals operator. Merged in from signals-dpg's realm export (Phase B).",
+        "composite": false,
+        "clientRole": false
+      }
+    ]
+  }
+}

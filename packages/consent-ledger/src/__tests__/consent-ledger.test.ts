@@ -20,7 +20,7 @@ import { ValidationError } from '@aggregator-dpg/shared-primitives/errors';
 
 function makeInput(overrides: Partial<RecordConsentInput> = {}): RecordConsentInput {
   return {
-    subjectType: 'aggregator',
+    subjectType: 'user',
     subjectId: '11111111-1111-1111-1111-111111111111',
     network: 'blue_dot',
     brand: undefined,
@@ -41,7 +41,7 @@ describe('RecordConsentInputSchema', () => {
   it('parses a valid org input with brand', () => {
     const result = RecordConsentInputSchema.safeParse(
       makeInput({
-        subjectType: 'org',
+        subjectType: 'organisation',
         subjectId: '22222222-2222-2222-2222-222222222222',
         brand: 'purple_dot',
       }),
@@ -51,7 +51,7 @@ describe('RecordConsentInputSchema', () => {
 
   it('rejects an invalid subjectType', () => {
     const result = RecordConsentInputSchema.safeParse(
-      makeInput({ subjectType: 'unknown' as 'org' }),
+      makeInput({ subjectType: 'unknown' as 'organisation' }),
     );
     expect(result.success).toBe(false);
   });
@@ -113,7 +113,7 @@ describe('InMemoryConsentLedger.recordRegistrationConsent', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
 
-    expect(result.value.subjectType).toBe('aggregator');
+    expect(result.value.subjectType).toBe('user');
     expect(result.value.subjectId).toBe(input.subjectId);
     expect(result.value.termsVersion).toBe(1);
     expect(result.value.privacyVersion).toBe(1);
@@ -165,22 +165,22 @@ describe('InMemoryConsentLedger.recordRegistrationConsent', () => {
 
   it('stores the provided brand when given', async () => {
     const result = await ledger.recordRegistrationConsent(
-      makeInput({ brand: 'purple_dot', subjectType: 'org' }),
+      makeInput({ brand: 'purple_dot', subjectType: 'organisation' }),
     );
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.value.brand).toBe('purple_dot');
   });
 
-  it('handles org subjectType correctly', async () => {
+  it('handles organisation subjectType correctly', async () => {
     const input = makeInput({
-      subjectType: 'org',
+      subjectType: 'organisation',
       subjectId: '33333333-3333-3333-3333-333333333333',
     });
     const result = await ledger.recordRegistrationConsent(input);
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.value.subjectType).toBe('org');
+    expect(result.value.subjectType).toBe('organisation');
   });
 
   it('stores acceptedAt and createdAt as Date objects', async () => {
@@ -245,11 +245,11 @@ describe('buildConsentRecord', () => {
 
   it('applies overrides on top of defaults', () => {
     const record = buildConsentRecord({
-      subjectType: 'org',
+      subjectType: 'organisation',
       network: 'yellow_dot',
       termsVersion: 3,
     });
-    expect(record.subjectType).toBe('org');
+    expect(record.subjectType).toBe('organisation');
     expect(record.network).toBe('yellow_dot');
     expect(record.termsVersion).toBe(3);
     // Non-overridden defaults are still present
@@ -282,7 +282,7 @@ describe('PostgresConsentLedger.recordRegistrationConsent — input validation',
   it('returns err(ValidationError) for an invalid subjectId without calling the DB', async () => {
     const ledger = new PostgresConsentLedger(makeNeverCalledDb());
     const result = await ledger.recordRegistrationConsent({
-      subjectType: 'aggregator',
+      subjectType: 'user',
       subjectId: 'not-a-uuid', // invalid
       network: 'blue_dot',
       brand: null,
@@ -298,7 +298,7 @@ describe('PostgresConsentLedger.recordRegistrationConsent — input validation',
   it('returns err(ValidationError) for a termsVersion below 1 without calling the DB', async () => {
     const ledger = new PostgresConsentLedger(makeNeverCalledDb());
     const result = await ledger.recordRegistrationConsent({
-      subjectType: 'org',
+      subjectType: 'organisation',
       subjectId: '22222222-2222-2222-2222-222222222222',
       network: 'blue_dot',
       brand: null,
@@ -313,7 +313,7 @@ describe('PostgresConsentLedger.recordRegistrationConsent — input validation',
   it('returns err(ValidationError) for an empty network string without calling the DB', async () => {
     const ledger = new PostgresConsentLedger(makeNeverCalledDb());
     const result = await ledger.recordRegistrationConsent({
-      subjectType: 'aggregator',
+      subjectType: 'user',
       subjectId: '33333333-3333-3333-3333-333333333333',
       network: '', // invalid — must be min(1)
       brand: null,
@@ -323,5 +323,78 @@ describe('PostgresConsentLedger.recordRegistrationConsent — input validation',
     expect(result.success).toBe(false);
     if (result.success) return;
     expect(result.error).toBeInstanceOf(ValidationError);
+  });
+});
+
+describe('PostgresConsentLedger — typed links, valid_till and the caller transaction (0029)', () => {
+  /** A stub Drizzle handle recording the inserted values and echoing them back. */
+  function recordingDb(fail?: Error) {
+    const inserted: Record<string, unknown>[] = [];
+    const db = {
+      insert: () => ({
+        values: (v: Record<string, unknown>) => {
+          inserted.push(v);
+          return {
+            returning: () =>
+              fail
+                ? Promise.reject(fail)
+                : Promise.resolve([
+                    { id: '99999999-9999-9999-9999-999999999999', createdAt: new Date(), ...v },
+                  ]),
+          };
+        },
+      }),
+    } as unknown as ConstructorParameters<typeof PostgresConsentLedger>[0];
+    return { db, inserted };
+  }
+
+  it('links a user subject through user_id and stores valid_till', async () => {
+    const { db, inserted } = recordingDb();
+    const validTill = new Date('2027-01-01T00:00:00.000Z');
+    const result = await new PostgresConsentLedger(db).recordRegistrationConsent(
+      makeInput({ validTill }),
+    );
+    expect(result.success).toBe(true);
+    expect(inserted[0]).toMatchObject({
+      subjectType: 'user',
+      userId: '11111111-1111-1111-1111-111111111111',
+      orgId: null,
+      source: 'registration',
+      validTill,
+    });
+    if (result.success) expect(result.value.validTill).toEqual(validTill);
+  });
+
+  it('links an organisation subject through org_id', async () => {
+    const { db, inserted } = recordingDb();
+    await new PostgresConsentLedger(db).recordRegistrationConsent(
+      makeInput({ subjectType: 'organisation', subjectId: '22222222-2222-2222-2222-222222222222' }),
+    );
+    expect(inserted[0]).toMatchObject({
+      userId: null,
+      orgId: '22222222-2222-2222-2222-222222222222',
+      validTill: null,
+    });
+  });
+
+  it('withExecutor writes through the given transaction, not the bound handle', async () => {
+    const pool = recordingDb();
+    const tx = recordingDb();
+    const ledger = new PostgresConsentLedger(pool.db).withExecutor(tx.db);
+    await ledger.recordRegistrationConsent(makeInput({ source: 'bulk_upload:u1:v1' }));
+    expect(pool.inserted).toHaveLength(0);
+    expect(tx.inserted[0]).toMatchObject({ source: 'bulk_upload:u1:v1' });
+  });
+
+  it('maps a database failure to err(CONSENT_INSERT_FAILED) without throwing', async () => {
+    const { db } = recordingDb(new Error('connection reset'));
+    const result = await new PostgresConsentLedger(db).recordRegistrationConsent(makeInput());
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.code).toBe('CONSENT_INSERT_FAILED');
+  });
+
+  it('the in-memory ledger is its own executor-bound ledger', () => {
+    const ledger = new InMemoryConsentLedger();
+    expect(ledger.withExecutor({})).toBe(ledger);
   });
 });

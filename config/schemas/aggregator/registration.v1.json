@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.bluedots.org/aggregator/registration.v1.json",
-  "title": "Aggregator Registration",
+  "title": "Coordinator Registration",
   "description": "Signup payload for a new Aggregator account. Captures only the identity, contact, optional locations, and consent needed to create a Keycloak user and let the aggregator log in. Personas, services, verified certificates, and the contact-name label are filled in afterwards through the profile-completion flow.",
   "type": "object",
   "additionalProperties": false,
@@ -25,13 +25,12 @@
       "format": "uri",
       "maxLength": 2048,
       "examples": ["https://skillbridge.in"],
-      "x-updatable": true
+      "x-org-detail": true
     },
     "locations": {
       "type": "array",
       "title": "Location",
       "maxItems": 1,
-      "x-updatable": true,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -71,29 +70,14 @@
             "properties": {
               "streetAddress": {
                 "type": "string",
-                "title": "Street"
-              },
-              "addressLocality": {
-                "type": "string",
-                "title": "City"
-              },
-              "addressRegion": {
-                "type": "string",
-                "title": "State"
-              },
-              "postalCode": {
-                "type": "string",
-                "title": "PIN code"
-              },
-              "addressCountry": {
-                "type": "string",
-                "title": "Country",
-                "minLength": 1
+                "title": "Address",
+                "maxLength": 500
               }
             }
           }
         }
-      }
+      },
+      "x-org-detail": true
     },
     "contact": {
       "type": "object",

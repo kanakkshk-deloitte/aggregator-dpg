@@ -3,23 +3,23 @@
 .gitignore
 
 # ── Dependencies (reinstalled fresh inside image) ─────────────────────────────
-node_modules/
+**/node_modules/
 .pnpm-store/
 
 # ── Build outputs (rebuilt inside image) ──────────────────────────────────────
-dist/
+**/dist/
 build/
 out/
-.next/
+**/.next/
 .nuxt/
 .svelte-kit/
 
 # ── TypeScript ────────────────────────────────────────────────────────────────
-*.tsbuildinfo
+**/*.tsbuildinfo
 *.d.ts.map
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
-.turbo/
+**/.turbo/
 .cache/
 .eslintcache
 .prettiercache
@@ -36,8 +36,11 @@ coverage/
 **/*.spec.tsx
 
 # ── Environment ───────────────────────────────────────────────────────────────
-.env
-.env.*
+# `**/` because patterns are anchored to the context root: a bare `.env` misses
+# apps/*/.env (Track B creates them), whose secrets would be copied into the
+# image and, for apps/web, read by `next build`.
+**/.env
+**/.env.*
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 logs/

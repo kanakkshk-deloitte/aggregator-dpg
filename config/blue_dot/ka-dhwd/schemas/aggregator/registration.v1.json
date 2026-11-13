@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.bluedots.org/aggregator/blue_dot/up-gzb/registration.v1.json",
+  "title": "Coordinator Registration",
+  "description": "UP-GZB variant of the coordinator signup payload. Adds the sub-org / institution name from the Aug 2026 schema review and the `service_provider` aggregator type this network serves. A complete copy, not a partial: the validator compiles one schema with no merge layer. Other deployments keep using config/schemas/aggregator/registration.v1.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "type", "contact", "consent"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "title": "Organisation Name",
+      "minLength": 2,
+      "maxLength": 200,
+      "examples": ["SkillBridge Network", "TRRAIN", "Pankh Foundation"]
+    },
+    "type": {
+      "type": "string",
+      "title": "Aggregator Type",
+      "enum": ["seeker", "provider", "service_provider"]
+    },
+    "sub_org_name": {
+      "type": "string",
+      "title": "Sub-Org / Division / Vertical / Institution Name",
+      "description": "Any specific sub-identity needed for identification and tracking. May be the same as the organisation name.",
+      "maxLength": 200,
+      "examples": ["GarvSe Centre, Ghaziabad"],
+      "x-updatable": true
+    },
+    "url": {
+      "type": "string",
+      "title": "Website",
+      "format": "uri",
+      "maxLength": 2048,
+      "examples": ["https://skillbridge.in"],
+      "x-org-detail": true
+    },
+    "locations": {
+      "type": "array",
+      "title": "Location",
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["geo", "address"],
+        "properties": {
+          "geo": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "coordinates"],
+            "default": {
+              "type": "Point",
+              "coordinates": [0, 0]
+            },
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "Point",
+                  "LineString",
+                  "Polygon",
+                  "MultiPoint",
+                  "MultiLineString",
+                  "MultiPolygon",
+                  "GeometryCollection"
+                ],
+                "default": "Point"
+              },
+              "coordinates": {
+                "type": "array",
+                "default": [0, 0]
+              }
+            }
+          },
+          "address": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "streetAddress": {
+                "type": "string",
+                "title": "Address",
+                "maxLength": 500
+              }
+            }
+          }
+        }
+      },
+      "x-org-detail": true
+    },
+    "contact": {
+      "type": "object",
+      "title": "Primary Contact",
+      "additionalProperties": false,
+      "required": ["name", "phone", "email"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Contact Name",
+          "minLength": 2,
+          "maxLength": 200,
+          "examples": ["Rajesh Kumar"]
+        },
+        "phone": {
+          "type": "string",
+          "title": "Phone",
+          "pattern": "^(\\+?\\d{10,15}|\\d{10})$",
+          "examples": ["+919876543210", "9876543210"]
+        },
+        "email": {
+          "type": "string",
+          "title": "Email",
+          "format": "email",
+          "maxLength": 320,
+          "examples": ["admin@skillbridge.in"]
+        }
+      }
+    },
+    "consent": {
+      "type": "object",
+      "title": "Terms & Privacy Consent",
+      "additionalProperties": false,
+      "required": ["value"],
+      "properties": {
+        "value": {
+          "type": "boolean",
+          "title": "I have read and accept the terms and privacy policy"
+        },
+        "given_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "valid_till": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

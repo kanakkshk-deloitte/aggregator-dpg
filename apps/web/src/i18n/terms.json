@@ -1,0 +1,22 @@
+{
+  "en": {
+    "user": "user",
+    "users": "users",
+    "User": "User",
+    "Users": "Users",
+    "org": "organisation",
+    "orgs": "organisations",
+    "Org": "Organisation",
+    "Orgs": "Organisations"
+  },
+  "hi": {
+    "user": "उपयोगकर्ता",
+    "users_obl": "उपयोगकर्ताओं",
+    "org": "संगठन",
+    "orgs_obl": "संगठनों"
+  },
+  "kn": {
+    "user": "ಬಳಕೆದಾರ",
+    "org": "ಸಂಸ್ಥೆ"
+  }
+}

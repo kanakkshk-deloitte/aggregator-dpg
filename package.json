@@ -18,7 +18,7 @@
     "prepare": "husky",
     "new-service": "tsx scripts/new-service.ts",
     "dep-check": "depcruise packages --config .dependency-cruiser.cjs --output-type err-long",
-    "test:scripts": "node --test scripts/stack.test.mjs",
+    "test:scripts": "node --test scripts/stack.test.mjs scripts/new-service.test.mjs",
     "stack:setup": "node scripts/stack.mjs setup",
     "stack:up": "node scripts/stack.mjs up",
     "stack:down": "node scripts/stack.mjs down",
@@ -37,19 +37,20 @@
     ]
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
-    "@commitlint/cli": "^20.5.0",
-    "@commitlint/config-conventional": "^20.5.0",
-    "dependency-cruiser": "^17.3.10",
-    "eslint": "^10.2.1",
-    "eslint-plugin-import-x": "^4.16.2",
+    "@changesets/cli": "^3.0.3",
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
+    "dependency-cruiser": "^18.4.0",
+    "eslint": "^10.11.0",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-import-x": "^4.17.1",
     "eslint-plugin-jsx-a11y": "^6.10.2",
-    "globals": "^17.5.0",
+    "globals": "^17.13.0",
     "husky": "^9.1.7",
-    "lint-staged": "^16.4.0",
-    "prettier": "^3.8.3",
-    "tsx": "^4.19.4",
-    "turbo": "^2.5.3",
-    "typescript-eslint": "^8.59.0"
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.9",
+    "tsx": "^4.23.15",
+    "turbo": "^2.11.5",
+    "typescript-eslint": "^8.70.1"
   }
 }

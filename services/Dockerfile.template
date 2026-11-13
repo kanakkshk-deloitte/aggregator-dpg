@@ -8,8 +8,15 @@
 #   1. Replace <name> → actual service name
 #   2. Update EXPOSE to the port the service listens on
 #   3. Verify CMD matches the compiled entrypoint in dist/
+#
+# Note: the bases are Docker Hardened Images from dhi.io, which refuses
+# anonymous pulls — building this needs `docker login dhi.io`, and any CI
+# workflow that builds it needs a dhi.io login step.
 
-FROM node:24-alpine AS base
+# Build stages use the DHI *dev* variant: it is the only one carrying a shell,
+# corepack and pnpm. The runner below uses the hardened variant, which has none
+# of them — so no RUN is possible past that line.
+FROM dhi.io/node:24-alpine-dev AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable
@@ -20,7 +27,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml       ./
 COPY services/<name>/package.json                           services/<name>/
 COPY packages/tsconfig/package.json                         packages/tsconfig/
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # ── builder: compile TypeScript ───────────────────────────────────────────────
 FROM installer AS builder
@@ -33,10 +40,12 @@ COPY --from=builder /app/services/<name>/dist ./services/<name>/dist
 RUN pnpm deploy --filter @aggregator-dpg/<name> --prod /standalone
 
 # ── runner: minimal runtime image ─────────────────────────────────────────────
-FROM node:24-alpine AS runner
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Hardened runtime: no shell, no package manager. It already runs as the
+# unprivileged `node` user (uid 1000), so the old addgroup/adduser dance is
+# gone — a RUN would not work here anyway.
+FROM dhi.io/node:24-alpine AS runner
 WORKDIR /app
-COPY --from=deployer --chown=appuser:appgroup /standalone .
-USER appuser
+COPY --from=deployer --chown=node:node /standalone .
+USER node
 EXPOSE 3000
 CMD ["node", "dist/index.js"]

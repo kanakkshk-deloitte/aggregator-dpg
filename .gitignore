@@ -18,6 +18,10 @@ out/
 .env
 .env.*
 !.env.example
+# Purpose-specific templates, e.g. local-setup/.env.search.example. Without this
+# the `.env.*` rule above swallows them and a documented template silently never
+# lands in the repo.
+!.env.*.example
 !.env.test
 
 # ── Logs ─────────────────────────────────────────────────────────────────────

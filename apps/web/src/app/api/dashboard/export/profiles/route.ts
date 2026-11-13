@@ -1,16 +1,11 @@
 /**
- * BFF relay for the decrypted profile-data CSV export. Forwards the selected
- * item_ids to the aggregator API (which holds the signalstack admin key) and
- * streams the CSV (or JSON error envelope) back to the browser.
+ * BFF relay for the decrypted profile-data CSV export.
  *
  *   POST /api/dashboard/export/profiles
  *
- * The request body is forwarded verbatim to the aggregator API's
- * POST /v1/dashboard/export/profiles endpoint. Session cookie →
- * access token swap is handled by callApi. The CSV body is streamed
- * straight back to the browser with the upstream `Content-Type` and
- * `Content-Disposition` headers preserved so file-save dialogs receive
- * the same filename the API minted.
+ * Forwards the body to the aggregator API's POST /v1/dashboard/export/profiles
+ * and returns the CSV or JSON error. Keeps the upstream `Content-Type`,
+ * `Content-Disposition` and `X-Export-Skipped-Count` headers.
  */
 
 import { type NextRequest, NextResponse } from 'next/server';
@@ -20,8 +15,7 @@ import { unauthorizedResponse, serviceUnavailableResponse } from '../../../../..
 export const runtime = 'nodejs';
 
 /**
- * Relays a profile-data CSV export request to the aggregator API and streams
- * the result back to the browser.
+ * Relays a profile-data CSV export request to the aggregator API.
  *
  * @param req - Incoming POST request containing the JSON body with `item_ids` and `domain`.
  * @returns A NextResponse with the CSV payload or a JSON error envelope.
@@ -38,14 +32,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const upstream = await callApi('/v1/dashboard/export/profiles', {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'text/csv' },
-      // callApi JSON.stringifies opts.body itself — pass the parsed object,
-      // not a pre-stringified string, or the API receives a double-encoded
-      // JSON string and Zod rejects it ("expected object, received string").
+      // Pass the parsed object; `callApi` stringifies it.
       body,
     });
     const ct = upstream.headers.get('content-type') ?? '';
-    // Non-2xx responses come back as JSON error envelopes — surface them
-    // as JSON to the caller so the web service can render a toast.
+    // Errors come back as JSON so the client can show a toast.
     if (!upstream.ok) {
       if (ct.includes('application/json')) {
         const data = (await upstream.json()) as unknown;
@@ -57,11 +48,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         headers: { 'Content-Type': ct || 'text/plain' },
       });
     }
-    // 2xx CSV path — relay the body and preserve filename/charset.
+    // Success: relay the CSV and keep the filename and charset.
     const csv = await upstream.text();
     const headers: Record<string, string> = { 'Content-Type': ct || 'text/csv; charset=utf-8' };
     const disposition = upstream.headers.get('content-disposition');
     if (disposition) headers['Content-Disposition'] = disposition;
+    // Number of requested ids the API withheld (not this aggregator's), so the
+    // UI can tell the user the export is short.
+    const skipped = upstream.headers.get('x-export-skipped-count');
+    if (skipped) headers['X-Export-Skipped-Count'] = skipped;
     return new NextResponse(csv, { status: upstream.status, headers });
   } catch (err) {
     if (err instanceof Error && err.message === 'no active session') {

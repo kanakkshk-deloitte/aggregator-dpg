@@ -131,6 +131,72 @@ describe('FileSchemaLoader', () => {
       expect(r.success).toBe(false);
     }
   });
+
+  it('returns SCHEMA_COMPILE_ERROR when the schema document is valid JSON but Ajv cannot compile it', async () => {
+    const dir = path.join(rootDir, 'aggregator');
+    await mkdir(dir, { recursive: true });
+    // Well-formed JSON, but the regex pattern is malformed — Ajv throws
+    // during `compile()`, not during `JSON.parse()`, so this exercises the
+    // getValidator() catch block distinct from the getSchema() parse-error path.
+    const badPatternSchema = {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'string',
+      pattern: '[',
+    };
+    await writeFile(path.join(dir, 'badpattern.v1.json'), JSON.stringify(badPatternSchema), 'utf8');
+
+    const loader = new FileSchemaLoader({ rootDir });
+    const ref = { id: 'aggregator-badpattern', version: 'v1' };
+
+    const schemaResult = await loader.getSchema(ref);
+    expect(schemaResult.success).toBe(true);
+
+    const validatorResult = await loader.getValidator(ref);
+    expect(validatorResult.success).toBe(false);
+    if (!validatorResult.success) {
+      expect(validatorResult.error.code).toBe('SCHEMA_COMPILE_ERROR');
+    }
+  });
+
+  it('resetCaches() clears both schema and validator caches so the next call re-reads from disk', async () => {
+    const dir = path.join(rootDir, 'aggregator');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'registration.v1.json'), JSON.stringify(sampleSchema), 'utf8');
+
+    const loader = new FileSchemaLoader({ rootDir });
+    const ref = { id: 'aggregator-registration', version: 'v1' };
+
+    const first = await loader.getSchema(ref);
+    const firstValidator = await loader.getValidator(ref);
+    expect(first.success).toBe(true);
+    expect(firstValidator.success).toBe(true);
+
+    // Overwrite the file on disk with different content.
+    const updatedSchema = { ...sampleSchema, required: [] };
+    await writeFile(path.join(dir, 'registration.v1.json'), JSON.stringify(updatedSchema), 'utf8');
+
+    // Without a reset, the cached copy is returned unchanged.
+    const stillCached = await loader.getSchema(ref);
+    expect(stillCached.success).toBe(true);
+    if (first.success && stillCached.success) {
+      expect(stillCached.value).toBe(first.value);
+    }
+
+    loader.resetCaches();
+
+    const afterReset = await loader.getSchema(ref);
+    const afterResetValidator = await loader.getValidator(ref);
+    expect(afterReset.success).toBe(true);
+    expect(afterResetValidator.success).toBe(true);
+    if (first.success && afterReset.success) {
+      // A fresh read produces a new object, not the previously cached one.
+      expect(afterReset.value).not.toBe(first.value);
+      expect((afterReset.value as { required: unknown[] }).required).toEqual([]);
+    }
+    if (firstValidator.success && afterResetValidator.success) {
+      expect(afterResetValidator.value).not.toBe(firstValidator.value);
+    }
+  });
 });
 
 describe('SchemaLoaderFake', () => {
@@ -155,6 +221,22 @@ describe('SchemaLoaderFake', () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.code).toBe('SCHEMA_NOT_FOUND');
+    }
+  });
+
+  it('returns SCHEMA_COMPILE_ERROR when a seeded schema is well-formed but Ajv cannot compile it', async () => {
+    const fake = new SchemaLoaderFake();
+    const badPatternSchema = {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'string',
+      pattern: '[',
+    };
+    fake.seed([{ ref: { id: 'aggregator-badpattern', version: 'v1' }, schema: badPatternSchema }]);
+
+    const result = await fake.getValidator({ id: 'aggregator-badpattern', version: 'v1' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.code).toBe('SCHEMA_COMPILE_ERROR');
     }
   });
 });

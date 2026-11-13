@@ -12,6 +12,10 @@
       "import": "./dist/file-loader.js",
       "types": "./dist/file-loader.d.ts"
     },
+    "./network": {
+      "import": "./dist/network.js",
+      "types": "./dist/network.d.ts"
+    },
     "./testing": {
       "import": "./dist/testing/index.js",
       "types": "./dist/testing/index.d.ts"
@@ -25,14 +29,14 @@
   },
   "dependencies": {
     "@aggregator-dpg/shared-primitives": "workspace:*",
-    "ajv": "^8.17.1",
+    "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1"
   },
   "devDependencies": {
     "@aggregator-dpg/tsconfig": "workspace:*",
-    "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "^3.2.0",
+    "@types/node": "^26.6.3",
+    "@vitest/coverage-v8": "^4.1.12",
     "typescript": "^6.0.3",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.12"
   }
 }

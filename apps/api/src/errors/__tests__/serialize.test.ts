@@ -10,7 +10,7 @@ describe('errors/serialize', () => {
       const env = toEnvelope(err, 'req-abc');
 
       expect(env.error.code).toBe('PHONE_EXISTS');
-      expect(env.error.title).toBe('Phone already registered');
+      expect(env.error.title).toBe('Phone already in use');
       expect(env.error.detail).toContain('mobile number');
       expect(env.error.fields).toEqual({ phone: '+919876543210' });
       expect(env.error.requestId).toBe('req-abc');

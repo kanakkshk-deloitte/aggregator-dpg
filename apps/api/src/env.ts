@@ -1,10 +1,7 @@
 /**
- * Loads `apps/api/.env` into `process.env` before any other module reads
- * config. Imported with side-effects from `server.ts` and `migrate.ts` so a
- * vanilla `pnpm dev` works without shell exports.
+ * Loads the api app's `.env` into `process.env` before any module reads config.
  *
- * Production should rely on the orchestrator's environment injection — this
- * loader is a no-op when the file is absent.
+ * Imported by `server.ts` and `migrate.ts`. Does nothing when no file exists.
  */
 
 import path from 'node:path';

@@ -1,10 +1,14 @@
 # CLAUDE.md — apps/worker
 
-Guidance specific to working inside `apps/worker`. Read the root `CLAUDE.md` first for the five jobs (`bulk-file-process`, `bulk-row-process`, `bulk-finalise`, `cron-watchdog`, `link-metrics-rollup`) and the `WORKER_ROLES` split. Two things worth knowing before touching this code:
+Guidance specific to working inside `apps/worker`. Read the root `CLAUDE.md` first for the six jobs (`bulk-file-process`, `bulk-row-process`, `bulk-finalise`, `cron-watchdog`, `link-metrics-rollup`, `campaign-process`) and the `WORKER_ROLES` split. A few things worth knowing before touching this code:
 
 ## `WORKER_ROLES` coverage is a per-process self-check, not a fleet guard
 
-`worker-roles.ts`'s `parseWorkerRoles` fails fast at boot if `WORKER_ROLES` names an unknown role. But the "union across the fleet must cover all four roles or uploads strand" invariant from root `CLAUDE.md` is **only checked within one process**: `main.ts:148-152` calls `missingRoles(roles)` and `logger.warn(..., status: 'partial_roles')` if _this_ process doesn't cover a role — it has no way to know what other pods in the fleet are running, so it can't detect "nobody anywhere is running `row`." Covering the full role set across a deployment is operational discipline, not something the code enforces or can enforce from inside one process.
+`worker-roles.ts`'s `parseWorkerRoles` fails fast at boot if `WORKER_ROLES` names an unknown role — the roles are `file,row,finalise,cron,campaign` (`cron` covers both `link-metrics-rollup` and `cron-watchdog`; `campaign` covers the `campaign-process` pipeline). But the "union across the fleet must cover all five roles or work strands" invariant from root `CLAUDE.md` is **only checked within one process**: `missingRoles(roles)` logs `logger.warn(..., status: 'partial_roles')` if _this_ process doesn't cover a role — it has no way to know what other pods in the fleet are running, so it can't detect "nobody anywhere is running `row`." Covering the full role set across a deployment is operational discipline, not something the code enforces or can enforce from inside one process.
+
+## `/healthz` is liveness-only — it never fails on an unreachable Redis
+
+`health.ts` (#675) serves a `/healthz` liveness endpoint that answers the single question "would a restart help?". It **always** returns `200` when the process can respond at all — a blocked event loop simply fails to answer and the kubelet restarts on the probe timeout, which is the case a restart actually fixes. A dead Redis is deliberately **not** treated as unhealthy: restarting can't bring Redis back, so failing the probe would CrashLoopBackOff every replica through an outage. Instead the body reports `status: "degraded"`, `redis: "unreachable"` (still `200`) so alerting can see it without the kubelet acting on it. Don't wire a readiness-style hard-fail into this endpoint.
 
 ## `link-metrics-rollup.ts`: the file's own "idempotent, restart-safe" claim is incomplete
 
@@ -12,4 +16,4 @@ The header comment states: _"Idempotent. Restart-safe via `rolled_up_at IS NULL`
 
 ## Bulk `bu:{id}:*` working keys carry a TTL so PII self-expires
 
-The bulk-upload working keys (`bu:{id}:lines` = raw CSV, `bu:{id}:errors` = per-row errors including PII) carry `BULK_UPLOAD_REDIS_TTL_SECONDS` (default 24h), refreshed on each row-commit so the PII self-expires as a backstop. The stuck-job watchdog also deletes these keys on failure. Pino loggers redact `email` / `phone` (plus secrets), so PII never lands in logs.
+The bulk-upload working keys (`bu:{id}:lines` = each uploaded row's cells as a JSON array — the Finaliser rebuilds errors.csv from them without re-parsing CSV, falling back to a `,`-split for a CSV line left by the previous release, `bu:{id}:errors` = per-row errors including PII) carry `BULK_UPLOAD_REDIS_TTL_SECONDS` (default 24h), refreshed on each row-commit so the PII self-expires as a backstop. The stuck-job watchdog also deletes these keys on failure. Pino loggers redact `email` / `phone` (plus secrets), so PII never lands in logs.

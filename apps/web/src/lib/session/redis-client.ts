@@ -1,15 +1,9 @@
 /**
- * Reusable ioredis client singleton.
+ * Shared ioredis client for the process.
  *
- * ioredis multiplexes commands on a single TCP connection, so one shared
- * client across the Node.js process is the idiomatic equivalent of a
- * connection pool. Avoid creating a new Redis instance per request — that
- * defeats keep-alive and exhausts file descriptors under load.
- *
- * The singleton:
- *   - Initialises lazily on first call to `getRedisClient()`.
- *   - Reconnects automatically (ioredis handles transient failures).
- *   - Exposes `closeRedisClient()` for graceful shutdown hooks.
+ * ioredis multiplexes commands on one connection, so do not create a client
+ * per request. The client is created on first use and reconnects on its own;
+ * call `closeRedisClient()` on shutdown.
  */
 
 import Redis, { type RedisOptions } from 'ioredis';
@@ -34,7 +28,8 @@ const DEFAULT_OPTIONS: RedisOptions = {
  *
  * @param url - Optional Redis URL. Falls back to `REDIS_URL` env var,
  *   then `redis://localhost:6379`.
- * @returns Shared ioredis instance with multiplexed connection.
+ * @returns Shared ioredis instance.
+ * @throws {Error} If the client is shutting down.
  */
 export function getRedisClient(url?: string): Redis {
   if (client && !closing) return client;
@@ -48,8 +43,7 @@ export function getRedisClient(url?: string): Redis {
 /**
  * Closes the shared Redis client. Idempotent.
  *
- * Call from process shutdown handlers (SIGINT/SIGTERM) so connections drain
- * cleanly. After close, subsequent `getRedisClient()` calls open a new client.
+ * Call from shutdown handlers. A later `getRedisClient()` opens a new client.
  */
 export async function closeRedisClient(): Promise<void> {
   if (!client) return;

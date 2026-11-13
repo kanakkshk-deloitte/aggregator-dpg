@@ -1,6 +1,7 @@
 import tseslint from 'typescript-eslint';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
 import importX from 'eslint-plugin-import-x';
+import { createTypeScriptImportResolver } from 'eslint-import-resolver-typescript';
 import globals from 'globals';
 
 export default tseslint.config(
@@ -27,6 +28,19 @@ export default tseslint.config(
     },
     plugins: {
       'import-x': importX,
+    },
+    settings: {
+      // Use import-x's modern resolver (interfaceVersion 3) instead of the
+      // legacy default. Without this, import-x falls back to loading a legacy
+      // 'node' resolver, whose loader throws "node with invalid interface" in
+      // this toolchain and crashes `import-x/no-cycle`. The TypeScript resolver
+      // handles workspace path aliases (@/*) and node_modules alike.
+      'import-x/resolver-next': [
+        createTypeScriptImportResolver({
+          alwaysTryTypes: true,
+          project: ['apps/*/tsconfig.json', 'packages/*/tsconfig.json'],
+        }),
+      ],
     },
     rules: {
       // Disallow unused vars except those prefixed with _

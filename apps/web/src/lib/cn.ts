@@ -2,10 +2,9 @@ import clsx, { type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 /**
- * Tailwind-aware class merger. clsx handles conditional joins, then
- * twMerge dedupes conflicting Tailwind utilities so a later
- * `bg-red-500` wins over an earlier `bg-blue-500` instead of both
- * landing in the className string.
+ * Joins class names and resolves conflicting Tailwind utilities.
+ *
+ * Later utilities win, so `bg-red-500` overrides an earlier `bg-blue-500`.
  */
 export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));

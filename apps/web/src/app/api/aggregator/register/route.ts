@@ -1,10 +1,9 @@
 /**
  * BFF proxy for aggregator (coordinator) registration submissions.
  *
- * Anonymous browser; the API requires a Bearer token, so this attaches a
- * Keycloak service-account token and forwards to `/v1/aggregator-registrations/create`.
- * The body is forwarded verbatim (including `org_id` when the org hierarchy is
- * on). Upstream errors pass through in the canonical envelope.
+ * The caller has no session, so this attaches a service-account token and
+ * forwards the body as-is to `/v1/aggregator-registrations/create`. Upstream
+ * errors pass through.
  *
  * POST /api/aggregator/register
  */

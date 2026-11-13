@@ -1,0 +1,122 @@
+{
+  "ui:layout": "stack",
+  "ui:order": [
+    "display_name",
+    "website",
+    "gst_number",
+    "aggregator_type",
+    "organisation_type",
+    "organisation_sub_type_educational",
+    "organisation_sub_type_non_educational",
+    "management_type",
+    "address",
+    "owner",
+    "consent"
+  ],
+  "display_name": {
+    "ui:placeholder": "e.g. Enable India",
+    "ui:autofocus": true
+  },
+  "website": {
+    "ui:placeholder": "https://yourorg.org",
+    "ui:options": {
+      "inputType": "url"
+    }
+  },
+  "gst_number": {
+    "ui:placeholder": "e.g. 29ABCDE1234F1ZW"
+  },
+  "aggregator_type": {
+    "ui:widget": "checkboxes",
+    "ui:enumNames": ["Seekers", "Job Providers", "Service Providers"],
+    "ui:options": {
+      "inline": true
+    }
+  },
+  "organisation_type": {
+    "ui:widget": "select",
+    "ui:placeholder": "Select organisation type",
+    "ui:enumNames": ["Educational", "Non-Educational"]
+  },
+  "organisation_sub_type_educational": {
+    "ui:widget": "select",
+    "ui:placeholder": "Select sub-type",
+    "ui:enumNames": [
+      "School",
+      "PU College",
+      "College",
+      "ITI",
+      "Other Vocational Training",
+      "Polytechnic",
+      "Diploma",
+      "Other"
+    ]
+  },
+  "organisation_sub_type_non_educational": {
+    "ui:widget": "select",
+    "ui:placeholder": "Select sub-type",
+    "ui:enumNames": [
+      "Employment Exchange",
+      "Placement Agency",
+      "Community Group",
+      "Individual Trainer / Counsellor",
+      "MSME Association",
+      "Industries and Commerce Department",
+      "Other"
+    ]
+  },
+  "management_type": {
+    "ui:widget": "select",
+    "ui:placeholder": "Select management type",
+    "ui:enumNames": ["Private", "Government", "NGO", "Other"]
+  },
+  "address": {
+    "ui:title": "",
+    "streetAddress": {
+      "ui:widget": "location-autocomplete",
+      "ui:placeholder": "Start typing and pick your address",
+      "ui:options": {
+        "isPrimaryLocation": true
+      }
+    },
+    "ui:layout": "stack"
+  },
+  "owner": {
+    "ui:layout": "grid",
+    "ui:order": ["name", "phone", "email"],
+    "name": {
+      "ui:placeholder": "Full name of the organisation owner"
+    },
+    "phone": {
+      "ui:placeholder": "+91 98765 43210",
+      "ui:options": {
+        "inputType": "tel"
+      }
+    },
+    "email": {
+      "ui:placeholder": "owner@yourorg.org",
+      "ui:options": {
+        "inputType": "email"
+      }
+    }
+  },
+  "consent": {
+    "ui:layout": "stack",
+    "ui:order": ["value", "given_at", "valid_till"],
+    "value": {
+      "ui:widget": "ConsentCheckbox"
+    },
+    "given_at": {
+      "ui:widget": "hidden",
+      "ui:options": {
+        "label": false
+      }
+    },
+    "valid_till": {
+      "ui:widget": "hidden",
+      "ui:options": {
+        "label": false
+      }
+    }
+  }
+}

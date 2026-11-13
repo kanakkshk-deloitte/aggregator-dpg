@@ -9,12 +9,12 @@ describe('global error handler envelope', () => {
   beforeEach(async () => {
     app = await buildApp();
     // Register a synthetic route that throws each kind of error.
-    app.post('/__test/throw', async (req) => {
+    app.post('/__test/throw', { config: { rbac: { access: 'public' } } }, async (req) => {
       const code = (req.body as { code?: string })?.code ?? 'INTERNAL';
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       throw httpError(code as any);
     });
-    app.post('/__test/native-throw', async () => {
+    app.post('/__test/native-throw', { config: { rbac: { access: 'public' } } }, async () => {
       throw new Error('boom from inside');
     });
   });
@@ -40,7 +40,7 @@ describe('global error handler envelope', () => {
       };
     };
     expect(body.error.code).toBe('PHONE_EXISTS');
-    expect(body.error.title).toBe('Phone already registered');
+    expect(body.error.title).toBe('Phone already in use');
     expect(body.error.detail).toBeTruthy();
     expect(body.error.requestId).toMatch(/^req-/);
     expect(body.error.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);

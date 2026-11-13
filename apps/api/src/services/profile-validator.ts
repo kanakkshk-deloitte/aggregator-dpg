@@ -1,6 +1,7 @@
 /**
- * Loads `profile.v1.json` from `config/` and returns a compiled Ajv
- * validator. Cached on first use.
+ * Compiled Ajv validator for `profile.v1.json`, in `@aggregator-dpg/api`.
+ *
+ * Loads the schema from `config/` and caches it on first use.
  */
 
 import { readFileSync } from 'node:fs';

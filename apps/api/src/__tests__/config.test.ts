@@ -1,20 +1,22 @@
-import { describe, it, expect } from 'vitest';
-import { z } from 'zod';
+import { describe, it, expect, afterEach } from 'vitest';
+import { defaultOrgOwnerEmail } from '../config.js';
 
-// Mirror the boolean-flag schema fragment the config uses so we can assert
-// the parse semantics without re-importing the whole module (which reads
-// process.env at import time).
-const flag = z
-  .enum(['true', 'false'])
-  .default('false')
-  .transform((v) => v === 'true');
-
-describe('ORG_HIERARCHY_ENABLED flag semantics', () => {
-  it('defaults to false when unset', () => {
-    expect(flag.parse(undefined)).toBe(false);
+describe('defaultOrgOwnerEmail', () => {
+  const original = process.env.DEFAULT_ORG_OWNER_EMAIL;
+  afterEach(() => {
+    if (original === undefined) delete process.env.DEFAULT_ORG_OWNER_EMAIL;
+    else process.env.DEFAULT_ORG_OWNER_EMAIL = original;
   });
-  it('is true only for the literal string "true"', () => {
-    expect(flag.parse('true')).toBe(true);
-    expect(flag.parse('false')).toBe(false);
+
+  it('is null when unset or blank', () => {
+    delete process.env.DEFAULT_ORG_OWNER_EMAIL;
+    expect(defaultOrgOwnerEmail()).toBeNull();
+    process.env.DEFAULT_ORG_OWNER_EMAIL = '   ';
+    expect(defaultOrgOwnerEmail()).toBeNull();
+  });
+
+  it('trims and lowercases a configured address', () => {
+    process.env.DEFAULT_ORG_OWNER_EMAIL = '  Owner@Example.ORG ';
+    expect(defaultOrgOwnerEmail()).toBe('owner@example.org');
   });
 });

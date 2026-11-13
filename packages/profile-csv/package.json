@@ -1,0 +1,28 @@
+{
+  "name": "@aggregator-dpg/profile-csv",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@aggregator-dpg/signalstack-writer": "workspace:*"
+  },
+  "devDependencies": {
+    "@aggregator-dpg/tsconfig": "workspace:*",
+    "@types/node": "^26.6.3",
+    "@vitest/coverage-v8": "^4.1.12",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.12"
+  }
+}

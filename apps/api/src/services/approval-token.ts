@@ -1,17 +1,12 @@
 /**
- * Approval-token mint and verify.
+ * Approval-token mint and verify, in the aggregator API (`@aggregator-dpg/api`).
  *
- * Each registration submission produces a signed JWT carrying the
- * `aggregator_id` (sub) and an `intent` claim. The token is delivered to the
- * admin via email link; the API verifies the signature and required claims.
+ * Each registration gets a signed JWT with the `aggregator_id` (sub) and an
+ * `intent` claim, mailed to the reviewer as a link. The API verifies the
+ * signature and required claims. A decision already made is detected from
+ * stored state, so a reused link shows "already decided".
  *
- * Single-use is enforced at the application layer by re-checking the
- * Keycloak user state (`enabled` flag) before applying a decision: an
- * already-enabled user yields an "already decided" page instead of
- * re-triggering the action. No DB hash storage required.
- *
- * HS256 with a ≥32-byte secret is sufficient — the issuer and verifier are
- * the same service.
+ * HS256 with a secret of at least 32 bytes; the same service signs and verifies.
  */
 
 import { SignJWT, jwtVerify, decodeJwt, errors as joseErrors } from 'jose';
@@ -39,10 +34,9 @@ export interface MintInput {
   /** Lifetime in seconds. Default 1h. */
   ttlSec?: number;
   /**
-   * Parent org id this token is minted for (spec §9 / A1). When set, the
-   * coordinator decision handler binds the decision to a matching
-   * `aggregators.parent_org_id`, so an owner's link can only decide their own
-   * org's coordinators. Omitted for flat coordinators and org tokens.
+   * Org id the token is minted for. The decision handler requires it to match
+   * the coordinator's org, so an owner's link decides only its own org's
+   * coordinators. Omitted for org tokens.
    */
   org?: string;
 }
@@ -55,7 +49,7 @@ export interface MintResult {
 /**
  * Issues a signed approval token bound to an aggregator + intent.
  *
- * @param input - Aggregator id, intent, optional TTL.
+ * @param input - Coordinator id, intent, optional TTL.
  * @returns Token string and absolute expiry timestamp.
  */
 export async function mintApprovalToken(input: MintInput): Promise<MintResult> {
@@ -76,13 +70,9 @@ export async function mintApprovalToken(input: MintInput): Promise<MintResult> {
 }
 
 /**
- * Renders a token lifetime as a human phrase for the admin email and
- * confirmation page (e.g. `604800` → "7 days", `3600` → "1 hour",
- * `172800` → "2 days"). Both surfaces call this with the same configured
- * TTL so the wording is always consistent with the real expiry.
- *
- * Picks the largest whole unit that divides the lifetime: `604800` → "7 days",
- * `5400` → "90 minutes", `3661` → "3661 seconds" (no whole-minute fit).
+ * Renders a token lifetime as a phrase for the reviewer email and page, using
+ * the largest whole unit: `604800` → "7 days", `5400` → "90 minutes",
+ * `3661` → "3661 seconds".
  *
  * @param ttlSec - Lifetime in seconds (typically `APPROVAL_TOKEN_TTL_SECONDS`).
  * @returns A pluralised "N unit" phrase; "a limited time" for sub-second,
@@ -103,8 +93,7 @@ export function formatApprovalTtl(ttlSec: number): string {
       return `${n} ${n === 1 ? u.one : u.many}`;
     }
   }
-  // Unreachable: the 1-second unit divides every integer ≥ 1. Mirrors that
-  // branch so the function is total for the type-checker.
+  // Unreachable: 1 second divides every integer; keeps the function total.
   return `${whole} seconds`;
 }
 
@@ -112,7 +101,7 @@ export interface VerifyOk {
   ok: true;
   aggregatorId: string;
   intent: 'approve' | 'reject';
-  /** Parent org id claim, when the token was minted with one (spec §9 / A1). */
+  /** Org id claim, when the token was minted with one. */
   org?: string;
 }
 
@@ -126,14 +115,12 @@ export type VerifyResult = VerifyOk | VerifyErr;
 /**
  * Verifies a token's signature and required claims.
  *
- * When `opts.allowExpired` is true, an expired-but-signature-valid token is
- * accepted and its claims are returned. This is used exclusively by the resend
- * path to recover the aggregator id from a stale link without re-issuing a
- * new token until the admin explicitly requests one. Signature, issuer, and
- * audience failures still produce an error regardless of this option.
+ * With `opts.allowExpired`, an expired token with a valid signature is
+ * accepted and its claims returned; the resend path uses this. Signature,
+ * issuer and audience failures are always errors.
  *
- * @param token - Raw JWT string from the admin email link.
- * @param opts - Optional settings; set `allowExpired: true` for the resend path.
+ * @param token - Raw JWT string from the email link.
+ * @param opts - Set `allowExpired: true` for the resend path.
  * @returns Parsed aggregator id + intent on success; structured error on failure.
  */
 export async function verifyApprovalToken(
@@ -161,10 +148,8 @@ export async function verifyApprovalToken(
   } catch (err) {
     if (err instanceof joseErrors.JWTExpired) {
       if (opts.allowExpired) {
-        // jose validates the JWS signature BEFORE the `exp` claim, so a
-        // JWTExpired throw guarantees the signature was genuine. Decoding the
-        // (unverified) payload here is therefore safe — used only by the
-        // resend path to recover the aggregator id from a stale link.
+        // jose checks the signature before `exp`, so a JWTExpired error means the
+        // signature is valid and the payload can be decoded.
         const payload = decodeJwt(token);
         const intent = payload.intent;
         if (!payload.sub || (intent !== 'approve' && intent !== 'reject')) {

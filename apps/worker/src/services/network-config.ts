@@ -1,13 +1,8 @@
 /**
- * Worker-side singleton for the resolved aggregator + signalstack
- * network config. Mirrors `apps/api/src/services/network-config.ts`
- * because the worker process boots independently and cannot share the
- * api's in-memory cache.
+ * Resolved network config singleton for the worker app.
  *
- * Loaded once on first access from `AGGREGATOR_CONFIG_PATH` (default
- * `/app/config/aggregator.config.yaml`). Bulk-row processor reads it
- * to pick the right identity field, item_type, and array delimiter for
- * the active signalstack network.
+ * Loaded once on first use from `AGGREGATOR_CONFIG_PATH`. The bulk row
+ * processor uses it for identity fields, item_type and the array delimiter.
  *
  * @module apps/worker/services/network-config
  */

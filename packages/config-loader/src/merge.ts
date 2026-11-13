@@ -1,15 +1,24 @@
 /**
  * Deep merge utility for config tree assembly.
  *
- * Extracted as a standalone module so it can be tested in isolation and
- * reused by any layer that needs to combine config sources.
+ * Used by any layer that combines config sources.
  *
  * @module @aggregator-dpg/config-loader/merge
  */
 
 /**
+ * Keys that reach Object.prototype if assigned through bracket notation.
+ *
+ * `JSON.parse` and YAML loaders can produce `__proto__` as an own key, and
+ * config is built from parsed documents.
+ */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
  * Recursively merges source into target. Arrays are replaced, not concatenated.
  * Mutates and returns target.
+ *
+ * Keys that would reach `Object.prototype` are skipped.
  *
  * @param target - Object to merge into (mutated in place).
  * @param source - Object providing override values.
@@ -20,6 +29,7 @@ export function deepMerge(
   source: Record<string, unknown>,
 ): Record<string, unknown> {
   for (const key of Object.keys(source)) {
+    if (FORBIDDEN_KEYS.has(key)) continue;
     const src = source[key];
     const tgt = target[key];
     if (

@@ -82,9 +82,8 @@ export abstract class BulkUploadsStoreBase {
    * Transition `pending` → `uploaded` and record the S3 ETag captured by
    * the API after the browser confirms the PUT completed.
    *
-   * Idempotent: calling on a row already in `uploaded` (or later) is a
-   * no-op and returns the current row. Calling on a terminal status
-   * (completed | failed) returns INVALID_TRANSITION.
+   * Idempotent: a row already `uploaded` with the same ETag is returned as is.
+   * Any status other than `pending` or `uploaded` returns INVALID_TRANSITION.
    */
   abstract markUploaded(
     id: string,
@@ -92,11 +91,10 @@ export abstract class BulkUploadsStoreBase {
     s3Etag: string,
   ): Promise<StoreResult<BulkUpload>>;
   /**
-   * Delete a row that is still `pending`. Used to clean up orphan rows
-   * created when a re-upload of identical CSV bytes hits the
-   * (aggregator_id, s3_etag) UNIQUE conflict — we keep the original row
-   * (which already holds the etag) and drop the pending duplicate so the
-   * user does not see a stale entry in their list.
+   * Delete a row that is still `pending`.
+   *
+   * Used when a re-upload of identical bytes hits the (aggregator_id, s3_etag)
+   * unique index: the original row is kept and the pending duplicate dropped.
    */
   abstract deletePending(id: string, aggregatorId: string): Promise<StoreResult<void>>;
 }

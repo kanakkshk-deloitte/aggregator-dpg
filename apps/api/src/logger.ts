@@ -1,10 +1,8 @@
 /**
- * Shared pino logger.
+ * Shared pino logger for the api app.
  *
- * Pretty multi-line output in dev; single-line JSON in production. Common
- * `service`/`env` fields are bound at the root so every line carries them.
- * Sensitive headers and body fields are redacted at serialisation time so
- * they never leak into the log stream.
+ * Pretty output in dev, JSON elsewhere. Every line carries `service` and `env`.
+ * Secrets and PII fields are redacted.
  */
 
 import pino from 'pino';
@@ -21,9 +19,7 @@ export const REDACT_PATHS = [
   '*.refresh_token',
   'body.password',
   'body.token',
-  // Participant PII — email/phone must never reach the log stream. Registration
-  // error paths attach them under `fields`/`body`, participant payloads under
-  // `payload`/`data`; cover the common one- and two-level nestings pino allows.
+  // Participant PII: email and phone must never be logged, at any of these nesting levels.
   'email',
   'phone',
   '*.email',
@@ -33,10 +29,7 @@ export const REDACT_PATHS = [
 ];
 
 /**
- * Shared pino options. Exported so the Fastify request logger (`app.ts`) is
- * built from the *same* config — most importantly the same `redact` paths —
- * rather than a hand-maintained copy that can (and did) drift and drop the
- * PII redactions on the request-scoped `req.log`.
+ * Shared pino options, also used by the Fastify request logger so both apply the same redaction.
  */
 export const loggerOptions: pino.LoggerOptions = {
   level: config.LOG_LEVEL,

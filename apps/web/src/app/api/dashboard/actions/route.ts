@@ -4,12 +4,9 @@
  *   POST /api/dashboard/actions
  *   { "action": "trigger_callback", "domain": "seeker", "ids": ["..."] }
  *
- * Stub implementation: validates the request (session, allowlisted action,
- * bounded id list), logs it, and acknowledges with 202. No upstream call is
- * made yet — the contract is fixed here so the UI and future callback
- * service integrate without churn. Extending the action surface means
- * adding the new name to {@link ALLOWED_ACTIONS} and forwarding it
- * upstream once the service exists.
+ * Stub: validates the request (session, allowed action, bounded id list),
+ * logs it and returns 202. No upstream call is made. New actions go in
+ * {@link ALLOWED_ACTIONS}.
  */
 
 import { type NextRequest, NextResponse } from 'next/server';
@@ -22,7 +19,7 @@ export const runtime = 'nodejs';
 /** Server-side allowlist of bulk actions the BFF accepts. */
 const ALLOWED_ACTIONS = new Set(['trigger_callback']);
 
-/** Upper bound on ids per request — keeps the stub (and future upstream calls) bounded. */
+/** Maximum ids per request. */
 const MAX_IDS = 500;
 
 interface BulkActionBody {
@@ -32,8 +29,10 @@ interface BulkActionBody {
 }
 
 /**
- * Validates the request body shape without zod (the web app has no zod
- * dependency). Returns the parsed body or an error message.
+ * Validates the request body shape.
+ *
+ * @param raw - Parsed JSON body.
+ * @returns The typed body, or an error message.
  */
 function parseBody(raw: unknown): BulkActionBody | string {
   if (typeof raw !== 'object' || raw === null) return 'body must be a JSON object';
@@ -68,9 +67,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: { message: parsed, code: 'BAD_REQUEST' } }, { status: 400 });
   }
 
-  // Stub: acknowledge only. Swap this log for the upstream call when the
-  // callback service lands. Ids are intentionally NOT logged (PII discipline)
-  // — only the count.
+  // Acknowledge only. Log the id count, never the ids.
   logger.info({
     operation: 'dashboard.bulkAction',
     status: 'skipped',

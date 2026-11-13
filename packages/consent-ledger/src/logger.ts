@@ -1,9 +1,8 @@
 /**
  * Package-local pino logger for the consent-ledger service.
  *
- * Emits structured JSON. Log level is read from the `LOG_LEVEL` environment
- * variable at startup; defaults to `'info'`. All entries carry `service` and
- * `package` bindings so log aggregators can filter by source.
+ * Level comes from `LOG_LEVEL` (default `'info'`). Entries carry `service`
+ * and `package` fields.
  *
  * @module @aggregator-dpg/consent-ledger
  */

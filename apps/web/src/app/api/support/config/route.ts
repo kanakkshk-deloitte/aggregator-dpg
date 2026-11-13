@@ -3,10 +3,8 @@
  *
  *   GET /api/support/config
  *
- * Forwards verbatim to the aggregator API's `GET /v1/support/config`,
- * which reports whether `SUPPORT_EMAIL` is configured. The web app hides
- * the "Contact support" entry point when `enabled` is `false`. Session
- * cookie → access token swap is handled by `callApi`.
+ * Forwards to the aggregator API's `GET /v1/support/config`. The web app
+ * hides "Contact support" when `enabled` is `false`.
  */
 
 import { NextResponse } from 'next/server';

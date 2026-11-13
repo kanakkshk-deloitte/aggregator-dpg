@@ -1,46 +1,50 @@
 /**
  * Maintenance endpoints for the aggregator registration lifecycle.
  *
- * `@aggregator-dpg/api`. Houses the stale-pending-registration cleanup that
- * frees the email/phone namespace (Postgres row + Keycloak user) once an
- * approval link is well past its TTL and was never acted on. Invoked by an
- * out-of-band scheduler (cron/worker) using a service-account Bearer token.
+ * `@aggregator-dpg/api`. Deletes pending registrations (database row and
+ * Keycloak user) whose approval link expired unused, so the email and phone
+ * can register again. Called by a scheduler with a service-account token.
  */
 
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { config, orgHierarchyEnabled } from '../config.js';
-import { getAggregatorStore } from '../services/aggregator-store/index.js';
-import { getAggregatorOrgStore } from '../services/aggregator-org-store/index.js';
+import { config } from '../config.js';
+import { getUserStore } from '../services/user-store/index.js';
+import { getOrganisationStore } from '../services/organisation-store/index.js';
 import { getIdpAdmin, KC_ATTR } from '../services/idp-admin/index.js';
 import type { IdpAdminAdapter } from '../services/idp-admin/index.js';
 import { authenticateAny } from '../services/auth/access-token.js';
 import { httpError } from '../errors/http-error.js';
 import { errorResponses } from '../errors/openapi.js';
+import { callerFromAny, recordRouteCaller, isServiceAccount } from '../services/authz/index.js';
 
-/** Minimal Result shape the prune helper needs from a store/idp delete. */
+/** Minimal Result shape the prune helper needs from an idp delete. */
 type DeleteResult = { ok: true } | { ok: false; error: { code: string } };
 /** Minimal Result shape for resolving the KC user (id or null) to delete. */
 type UserLookupResult =
-  | { ok: true; value: { id: string } | null }
+  { ok: true; value: { id: string } | null } | { ok: false; error: { code: string } };
+/** Minimal Result shape of a store's `deleteIfPending`. */
+type DeleteIfPendingResult =
+  | { ok: true; value: 'deleted' | 'not_pending' | 'aborted' }
   | { ok: false; error: { code: string } };
 
-/** Describes one entity's stale-prune: how to read it + how to delete its parts. */
+/** Describes how to prune one kind of stale row. */
 interface PruneSpec<T> {
-  /** Stale rows to prune (already filtered by cutoff). */
+  /** Stale rows to prune, already filtered by the cutoff. */
   rows: T[];
   /**
-   * Resolves the KC user to delete from the row's *stored* linkage (coordinator
-   * `aggregator_id` attribute / org `ownerKcSub`) — not by email, which can
-   * drift or be shared across the two tables and hit the wrong user.
+   * Finds the Keycloak user to delete from the row's stored link, never by email.
    */
   resolveUser: (row: T) => Promise<UserLookupResult>;
-  /** Row id (for logs + the DB delete). */
+  /** Row id (for logs). */
   idOf: (row: T) => string;
-  /** Optional KC cleanup after the user delete (e.g. the org's mirrored group). */
+  /** Optional Keycloak cleanup after the user delete, such as the org's group. */
   afterUserDelete?: (row: T) => Promise<DeleteResult> | null;
-  /** Deletes the DB row. */
-  deleteRow: (row: T) => Promise<DeleteResult>;
+  /**
+   * Deletes the row only while it is still pending and stale, running
+   * `beforeCommit` (the Keycloak cleanup) with the row locked.
+   */
+  deleteIfPending: (row: T, beforeCommit: () => Promise<boolean>) => Promise<DeleteIfPendingResult>;
   /** Log id field name (`aggregator_id` | `org_id`). */
   logIdField: 'aggregator_id' | 'org_id';
   /** Log message kind (`stale-pending` | `stale-org`). */
@@ -48,10 +52,12 @@ interface PruneSpec<T> {
 }
 
 /**
- * Deletes each stale row's KC user (+ any extra KC objects) then its DB row,
- * skipping (with a warning) any row whose KC/DB call fails so the next pass
- * retries it rather than orphaning objects. Shared by the coordinator and org
- * cleanup loops.
+ * Deletes each stale row and its Keycloak user, skipping with a warning any row whose call fails.
+ *
+ * Skipped rows are retried on the next pass. The row is deleted in a
+ * transaction that only matches pending, stale rows; the Keycloak delete runs
+ * inside it, and a Keycloak failure rolls the row back. A row already decided
+ * is left alone (`not_pending`).
  *
  * @returns The ids that were fully pruned.
  */
@@ -69,37 +75,43 @@ async function pruneStale<T>(
         `skipped ${spec.kind} prune — ${step}`,
       );
 
-    // Delete the KC user first so a partial failure leaves the DB row for the
-    // next pass rather than an orphaned KC user. Resolved from the stored
-    // linkage (not email) so drift/shared-email can't hit the wrong user.
     const kc = await spec.resolveUser(row);
     if (!kc.ok) {
       warn(kc.error.code, 'KC user lookup failed');
       continue;
     }
-    if (kc.value) {
-      const del = await idp.deleteUser(kc.value.id);
-      if (!del.ok) {
-        warn(del.error.code, 'KC user delete failed');
-        continue;
-      }
-    }
 
-    const extra = spec.afterUserDelete?.(row);
-    if (extra) {
-      const extraRes = await extra;
-      if (!extraRes.ok) {
-        warn(extraRes.error.code, 'KC group delete failed');
-        continue;
+    const deleted = await spec.deleteIfPending(row, async () => {
+      // NOSONAR typescript:S9382 — sequential by design
+      if (kc.value) {
+        const del = await idp.deleteUser(kc.value.id);
+        if (!del.ok) {
+          warn(del.error.code, 'KC user delete failed');
+          return false;
+        }
       }
-    }
-
-    const deleted = await spec.deleteRow(row);
+      const extra = spec.afterUserDelete?.(row);
+      if (extra) {
+        const extraRes = await extra;
+        if (!extraRes.ok) {
+          warn(extraRes.error.code, 'KC group delete failed');
+          return false;
+        }
+      }
+      return true;
+    });
     if (!deleted.ok) {
       warn(deleted.error.code, 'DB delete failed');
       continue;
     }
-    prunedIds.push(id);
+    if (deleted.value === 'not_pending') {
+      log.info(
+        { status: 'skipped', [spec.logIdField]: id },
+        `skipped ${spec.kind} prune — decided or touched meanwhile`,
+      );
+      continue;
+    }
+    if (deleted.value === 'deleted') prunedIds.push(id);
   }
   return prunedIds;
 }
@@ -116,10 +128,9 @@ const CleanupResponseSchema = z
   .passthrough();
 
 /**
- * Registers the stale-pending cleanup route. The cutoff is
- * `now - (APPROVAL_TOKEN_TTL_SECONDS*1000 + REGISTRATION_PENDING_GRACE_MS)`;
- * any `pending` registration last touched before the cutoff is deleted along
- * with its disabled Keycloak user.
+ * Registers the route that deletes stale pending registrations and orgs.
+ *
+ * The cutoff is `now - (APPROVAL_TOKEN_TTL_SECONDS*1000 + REGISTRATION_PENDING_GRACE_MS)`.
  *
  * @param app - Fastify instance to attach the route to.
  */
@@ -127,6 +138,7 @@ export async function registerAggregatorMaintenanceRoutes(app: FastifyInstance):
   app.post(
     '/admin/v1/aggregator-registrations/cleanup-stale',
     {
+      config: { rbac: { access: 'service' } },
       schema: {
         tags: ['aggregator-registrations'],
         summary: 'Prune registrations stuck pending past token expiry + grace',
@@ -139,25 +151,23 @@ export async function registerAggregatorMaintenanceRoutes(app: FastifyInstance):
       if (!auth.ok) {
         throw httpError('UNAUTHORIZED', { detail: auth.error.message });
       }
-      // Destructive op — restrict to a service-account token (the scheduler),
-      // not any authenticated end user. Keycloak service accounts have a
-      // `service-account-<client>` subject; human tokens carry a UUID subject.
-      if (!auth.context.subject.startsWith('service-account-')) {
+      // Service-account tokens only. `preferred_username` identifies them; `sub` does not.
+      if (!isServiceAccount(auth.context.preferredUsername)) {
         throw httpError('FORBIDDEN', {
           detail: 'cleanup-stale requires a service-account token',
           fields: { subject: auth.context.subject },
         });
       }
+      await recordRouteCaller(req, callerFromAny(auth.context));
 
-      const store = getAggregatorStore();
+      const store = getUserStore();
       const idp = getIdpAdmin();
       const cutoffMs =
         Date.now() -
         (config.APPROVAL_TOKEN_TTL_SECONDS * 1000 + config.REGISTRATION_PENDING_GRACE_MS);
       const cutoff = new Date(cutoffMs);
 
-      // Filter by age in SQL so the row cap counts genuinely-stale rows (a page
-      // of fresh pending rows can't mask real stale ones).
+      // Filter by age in SQL so the row cap counts only stale rows.
       const page = await store.list({
         status: 'pending',
         updatedBefore: cutoff,
@@ -167,7 +177,7 @@ export async function registerAggregatorMaintenanceRoutes(app: FastifyInstance):
       if (!page.ok) {
         throw httpError('DB_UNAVAILABLE', {
           cause: new Error(page.error.message),
-          fields: { sub_operation: 'aggregatorStore.list' },
+          fields: { sub_operation: 'userStore.list' },
         });
       }
 
@@ -181,10 +191,9 @@ export async function registerAggregatorMaintenanceRoutes(app: FastifyInstance):
       const prunedIds = await pruneStale(
         {
           rows: page.value.rows,
-          // Key the KC user on the stored `aggregator_id` attribute, not email.
           resolveUser: (r) => idp.findByAttribute(KC_ATTR.AGGREGATOR_ID, r.id),
           idOf: (r) => r.id,
-          deleteRow: (r) => store.deleteById(r.id),
+          deleteIfPending: (r, beforeCommit) => store.deleteIfPending(r.id, cutoff, beforeCommit),
           logIdField: 'aggregator_id',
           kind: 'stale-pending',
         },
@@ -192,13 +201,12 @@ export async function registerAggregatorMaintenanceRoutes(app: FastifyInstance):
         log,
       );
 
-      // Prune stale pending orgs too (§7). Same cutoff + row/KC-user/DB-row
-      // sequence, plus the mirrored KC group. Only runs when the hierarchy is
-      // on (the table is empty otherwise).
-      const orgStore = getAggregatorOrgStore();
+      // Prune stale pending orgs with the same cutoff, plus their Keycloak group.
+      // The root and Default orgs are never pending.
+      const orgStore = getOrganisationStore();
       let orgsScanned = 0;
       let orgsPrunedIds: string[] = [];
-      if (orgHierarchyEnabled()) {
+      {
         const orgPage = await orgStore.listPending(cutoff);
         if (!orgPage.ok) {
           throw httpError('DB_UNAVAILABLE', {
@@ -210,14 +218,24 @@ export async function registerAggregatorMaintenanceRoutes(app: FastifyInstance):
         orgsPrunedIds = await pruneStale(
           {
             rows: orgPage.value,
-            // Key the KC owner user on the stored `ownerKcSub`, not email.
-            resolveUser: (o) =>
-              o.ownerKcSub
-                ? idp.findById(o.ownerKcSub)
-                : Promise.resolve({ ok: true as const, value: null }),
+            // Find the owner by recorded login, not email. An owner of another
+            // org keeps their Keycloak user; only this org's group and row go.
+            resolveUser: async (o) => {
+              if (!o.ownerKcSub) return { ok: true as const, value: null };
+              const shared = await orgStore.ownerIsShared(o.id);
+              if (!shared.ok) {
+                return {
+                  ok: false as const,
+                  error: { code: 'IDP_UNAVAILABLE' as const, message: shared.error.message },
+                };
+              }
+              if (shared.value) return { ok: true as const, value: null };
+              return idp.findById(o.ownerKcSub);
+            },
             idOf: (o) => o.id,
             afterUserDelete: (o) => (o.kcGroupId ? idp.deleteGroup(o.kcGroupId) : null),
-            deleteRow: (o) => orgStore.deleteById(o.id),
+            deleteIfPending: (o, beforeCommit) =>
+              orgStore.deleteIfPending(o.id, cutoff, beforeCommit),
             logIdField: 'org_id',
             kind: 'stale-org',
           },

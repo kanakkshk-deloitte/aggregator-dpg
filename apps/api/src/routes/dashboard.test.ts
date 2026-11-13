@@ -5,13 +5,11 @@ import { _setAccessTokenVerifier, _resetJwks } from '../services/auth/access-tok
 import { _setSignalStackWriter } from '../services/signalstack.js';
 import { _setNetworkConfig } from '../services/network-config.js';
 import { buildBlueDotConfig } from '@aggregator-dpg/network-config/testing';
-import {
-  AggregatorStoreFake,
-  _setAggregatorStore,
-  buildAggregator,
-} from '../services/aggregator-store/index.js';
+import { UserStoreFake, _setUserStore, buildCoordinator } from '../services/user-store/index.js';
 import { IdpAdminFake, _setIdpAdmin } from '../services/idp-admin/index.js';
 import { SignalStackWriterFake } from '@aggregator-dpg/signalstack-writer/testing';
+import { err } from '@aggregator-dpg/shared-primitives/result';
+import { UpstreamError } from '@aggregator-dpg/shared-primitives/errors';
 
 const AGG_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const AGG_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -51,186 +49,16 @@ function makeRollup(
   };
 }
 
-describe('blue-dots routes', () => {
-  let app: FastifyInstance;
-  let writer: SignalStackWriterFake;
-
-  beforeEach(async () => {
-    _resetJwks();
-    process.env.KEYCLOAK_URL = 'http://kc.local';
-    process.env.KEYCLOAK_REALM = 'aggregator';
-    // Treat signalstack as enabled so getSignalStackWriter returns our fake.
-    process.env.SIGNALSTACK_BASE_URL = 'http://stub-signalstack';
-    process.env.SIGNALSTACK_ADMIN_KEY = 'stub-key';
-    process.env.SIGNALSTACK_ITEM_NETWORK = 'blue_dot';
-    _setNetworkConfig(buildBlueDotConfig());
-
-    writer = new SignalStackWriterFake();
-    writer.seed({
-      users: [
-        { id: 'u1', name: 'Ravi', phoneNumber: '+919876543210' },
-        { id: 'u2', name: 'Sita', phoneNumber: '+919876543211' },
-      ],
-      profiles: [
-        // Two seekers under AGG_A
-        {
-          item_id: 'p1',
-          created_by: 'u1',
-          item_network: 'blue_dot',
-          item_domain: 'seeker',
-          item_type: 'profile_1.0',
-          item_state: {
-            name: 'Ravi',
-            gender: 'male',
-            location: 'BLR',
-            age: 28,
-            phone: '+919876543210',
-          },
-          aggregator_id: AGG_A,
-        },
-        {
-          item_id: 'p2',
-          created_by: 'u2',
-          item_network: 'blue_dot',
-          item_domain: 'seeker',
-          item_type: 'profile_1.0',
-          item_state: {
-            name: 'Sita',
-            gender: 'female',
-            location: 'Mumbai',
-            age: 26,
-            phone: '+919876543211',
-          },
-          aggregator_id: AGG_A,
-        },
-        // One seeker under AGG_B (must NOT be visible to AGG_A)
-        {
-          item_id: 'p3',
-          created_by: 'u1',
-          item_network: 'blue_dot',
-          item_domain: 'seeker',
-          item_type: 'profile_1.0',
-          item_state: {
-            name: 'Other',
-            gender: 'male',
-            location: 'Delhi',
-            age: 30,
-            phone: '+919800000000',
-          },
-          aggregator_id: AGG_B,
-        },
-        // Provider row under AGG_A — must NOT show up under domain=seeker
-        {
-          item_id: 'p4',
-          created_by: 'u1',
-          item_network: 'blue_dot',
-          item_domain: 'provider',
-          item_type: 'job_posting_1.0',
-          item_state: { jobProviderName: 'ACME', role: 'Welder', jobProviderLocation: 'Pune' },
-          aggregator_id: AGG_A,
-        },
-      ],
-    });
-
-    _setSignalStackWriter(writer);
-    _setAccessTokenVerifier(async (token) => {
-      if (token === 'agg-a-token') {
-        return { sub: 'kc-1', email: 'a@x.com', aggregator_id: AGG_A };
-      }
-      if (token === 'agg-b-token') {
-        return { sub: 'kc-2', email: 'b@x.com', aggregator_id: AGG_B };
-      }
-      if (token === 'no-agg') {
-        return { sub: 'kc-3', email: 'c@x.com' };
-      }
-      throw new Error('invalid token');
-    });
-
-    app = await buildApp();
-  });
-
-  afterAll(async () => {
-    await app?.close();
-    _setSignalStackWriter(null);
-    _setAccessTokenVerifier(null);
-    _setNetworkConfig(null);
-  });
-
-  it('401 without token', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/dashboard/items?domain=seeker' });
-    expect(res.statusCode).toBe(401);
-  });
-
-  it('403 when token has no aggregator_id', async () => {
-    const res = await app.inject({
-      method: 'GET',
-      url: '/v1/dashboard/items?domain=seeker',
-      headers: { authorization: 'Bearer no-agg' },
-    });
-    expect(res.statusCode).toBe(403);
-  });
-
-  it('returns only AGG_A seekers when AGG_A asks', async () => {
-    const res = await app.inject({
-      method: 'GET',
-      url: '/v1/dashboard/items?domain=seeker',
-      headers: { authorization: 'Bearer agg-a-token' },
-    });
-    expect(res.statusCode).toBe(200);
-    const body = res.json();
-    expect(body.meta.total).toBe(2);
-    const ids = (body.items as Array<{ item_id: string }>).map((i) => i.item_id).sort();
-    expect(ids).toEqual(['p1', 'p2']);
-    for (const item of body.items as Array<{ aggregator_id: string }>) {
-      expect(item.aggregator_id).toBe(AGG_A);
-    }
-  });
-
-  it('returns only AGG_B seeker when AGG_B asks', async () => {
-    const res = await app.inject({
-      method: 'GET',
-      url: '/v1/dashboard/items?domain=seeker',
-      headers: { authorization: 'Bearer agg-b-token' },
-    });
-    expect(res.statusCode).toBe(200);
-    const body = res.json();
-    expect(body.meta.total).toBe(1);
-    expect(body.items[0].item_id).toBe('p3');
-  });
-
-  it('returns only provider items when domain=provider', async () => {
-    const res = await app.inject({
-      method: 'GET',
-      url: '/v1/dashboard/items?domain=provider',
-      headers: { authorization: 'Bearer agg-a-token' },
-    });
-    expect(res.statusCode).toBe(200);
-    const body = res.json();
-    expect(body.meta.total).toBe(1);
-    expect(body.items[0].item_id).toBe('p4');
-    expect(body.items[0].item_type).toBe('job_posting_1.0');
-  });
-
-  it('400 on invalid domain', async () => {
-    const res = await app.inject({
-      method: 'GET',
-      url: '/v1/dashboard/items?domain=invalid',
-      headers: { authorization: 'Bearer agg-a-token' },
-    });
-    expect(res.statusCode).toBe(400);
-  });
-});
-
 describe('GET /v1/dashboard', () => {
   let app: FastifyInstance;
   let writer: SignalStackWriterFake;
-  let aggregatorStore: AggregatorStoreFake;
+  let userStore: UserStoreFake;
   let idp: IdpAdminFake;
 
   beforeEach(async () => {
     _resetJwks();
     process.env.KEYCLOAK_URL = 'http://kc.local';
-    process.env.KEYCLOAK_REALM = 'aggregator';
+    process.env.KEYCLOAK_REALM = 'bluedots';
     process.env.SIGNALSTACK_BASE_URL = 'http://stub-signalstack';
     process.env.SIGNALSTACK_ADMIN_KEY = 'stub-key';
     process.env.SIGNALSTACK_ACTING_ORG_ID = 'org_platform';
@@ -249,16 +77,16 @@ describe('GET /v1/dashboard', () => {
     });
     _setIdpAdmin(idp);
 
-    aggregatorStore = new AggregatorStoreFake();
-    aggregatorStore.seed([
-      buildAggregator({
+    userStore = new UserStoreFake();
+    userStore.seed([
+      buildCoordinator({
         id: AGG_A,
         orgSlug: 'agg-a',
         name: 'Agg A',
         status: 'active',
         signalstackOrgId: ORG_A,
       }),
-      buildAggregator({
+      buildCoordinator({
         id: AGG_B,
         orgSlug: 'agg-b',
         name: 'Agg B',
@@ -267,7 +95,7 @@ describe('GET /v1/dashboard', () => {
         signalstackOrgId: null,
       }),
     ]);
-    _setAggregatorStore(aggregatorStore);
+    _setUserStore(userStore);
 
     writer = new SignalStackWriterFake();
     writer.seed({
@@ -350,7 +178,7 @@ describe('GET /v1/dashboard', () => {
   afterAll(async () => {
     await app?.close();
     _setSignalStackWriter(null);
-    _setAggregatorStore(null);
+    _setUserStore(null);
     _setIdpAdmin(null);
     _setAccessTokenVerifier(null);
     _setNetworkConfig(null);
@@ -383,6 +211,37 @@ describe('GET /v1/dashboard', () => {
     expect(body.by_domain.seeker.items).toHaveLength(2);
     expect(body.by_domain.seeker.total_matching).toBe(2);
     expect(body.metadata.refreshed).toBe(true);
+  });
+
+  it('forwards ?lifecycle=draft to signalstack as a single-lifecycle filter', async () => {
+    const spy = vi.spyOn(writer, 'fetchDashboard');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard?domain=seeker&lifecycle=draft',
+      headers: { authorization: 'Bearer agg-a-approved-with-org' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ lifecycle: ['draft'] }));
+  });
+
+  it('defaults to draft+live when no ?lifecycle= is supplied', async () => {
+    const spy = vi.spyOn(writer, 'fetchDashboard');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard?domain=seeker',
+      headers: { authorization: 'Bearer agg-a-approved-with-org' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ lifecycle: ['draft', 'live'] }));
+  });
+
+  it('rejects an unknown ?lifecycle= value with 400', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard?domain=seeker&lifecycle=bogus',
+      headers: { authorization: 'Bearer agg-a-approved-with-org' },
+    });
+    expect(res.statusCode).toBe(400);
   });
 
   it('falls back to aggregators.signalstack_org_id when claim missing', async () => {
@@ -532,18 +391,122 @@ describe('GET /v1/dashboard', () => {
     });
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ refresh: false }));
   });
+
+  it('403 FORBIDDEN when the token has no aggregator_id claim', async () => {
+    _setAccessTokenVerifier(async (token) => {
+      if (token === 'no-agg') return { sub: 'kc-x', decision_made: 'approved' };
+      throw new Error('invalid token');
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard',
+      headers: { authorization: 'Bearer no-agg' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect((res.json() as { error: { code: string } }).error.code).toBe('FORBIDDEN');
+  });
+
+  it('400 SCHEMA_VALIDATION on an unknown domain', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard?domain=bogus',
+      headers: { authorization: 'Bearer agg-a-approved-with-org' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('500 INTERNAL when signalstack is not configured', async () => {
+    _setSignalStackWriter(null);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard',
+      headers: { authorization: 'Bearer agg-a-approved-with-org' },
+    });
+    expect(res.statusCode).toBe(500);
+    expect((res.json() as { error: { code: string } }).error.code).toBe('INTERNAL');
+  });
+
+  it('500 INTERNAL when fetchDashboard fails', async () => {
+    writer.fetchDashboard = async () =>
+      err(new UpstreamError('signalstack down', { code: 'SIGNALSTACK_SERVER_ERROR' }));
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard',
+      headers: { authorization: 'Bearer agg-a-approved-with-org' },
+    });
+    expect(res.statusCode).toBe(500);
+    const body = res.json() as { error: { code: string; detail: string } };
+    expect(body.error.code).toBe('INTERNAL');
+    expect(body.error.detail).toContain('Signalstack dashboard fetch failed');
+  });
+
+  it('503 DB_UNAVAILABLE when resolving the acting org id via the DB fallback fails', async () => {
+    userStore.findById = async () => ({
+      ok: false,
+      error: { code: 'DB_UNAVAILABLE', message: 'db down' },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard',
+      // No signalstack_org_id claim — forces the DB fallback lookup.
+      headers: { authorization: 'Bearer agg-a-approved-no-claim' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect((res.json() as { error: { code: string } }).error.code).toBe('DB_UNAVAILABLE');
+  });
+
+  it('503 SIGNALSTACK_ORG_NOT_REGISTERED when neither the claim nor the DB row carry an org id', async () => {
+    // requireApproved() auto-backfills a missing signalstack_org_id via
+    // upsertAggregator on every approved request — fail it here so AGG_B's
+    // row stays without an org id and the route's own fallback also misses.
+    writer.upsertAggregator = async () =>
+      err(new UpstreamError('signalstack down', { code: 'SIGNALSTACK_SERVER_ERROR' }));
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard',
+      // AGG_B has signalstackOrgId: null and the token carries no claim either.
+      headers: { authorization: 'Bearer agg-b-approved-null-store' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect((res.json() as { error: { code: string } }).error.code).toBe(
+      'SIGNALSTACK_ORG_NOT_REGISTERED',
+    );
+  });
+
+  it('400 SCHEMA_VALIDATION on an unknown domain for /v1/dashboard/export', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard/export?domain=bogus',
+      headers: { authorization: 'Bearer agg-a-approved-with-org' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('500 INTERNAL when exportDashboardCsv fails', async () => {
+    writer.exportDashboardCsv = async () =>
+      err(new UpstreamError('signalstack down', { code: 'SIGNALSTACK_SERVER_ERROR' }));
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/dashboard/export',
+      headers: { authorization: 'Bearer agg-a-approved-with-org' },
+    });
+    expect(res.statusCode).toBe(500);
+    const body = res.json() as { error: { code: string; detail: string } };
+    expect(body.error.code).toBe('INTERNAL');
+    expect(body.error.detail).toContain('Signalstack dashboard export failed');
+  });
 });
 
 describe('POST /v1/dashboard/export/profiles', () => {
   let app: FastifyInstance;
   let writer: SignalStackWriterFake;
-  let aggregatorStore: AggregatorStoreFake;
+  let userStore: UserStoreFake;
   let idp: IdpAdminFake;
 
   beforeEach(async () => {
     _resetJwks();
     process.env.KEYCLOAK_URL = 'http://kc.local';
-    process.env.KEYCLOAK_REALM = 'aggregator';
+    process.env.KEYCLOAK_REALM = 'bluedots';
     process.env.SIGNALSTACK_BASE_URL = 'http://stub-signalstack';
     process.env.SIGNALSTACK_ADMIN_KEY = 'stub-key';
     process.env.SIGNALSTACK_ACTING_ORG_ID = 'org_platform';
@@ -557,9 +520,9 @@ describe('POST /v1/dashboard/export/profiles', () => {
     });
     _setIdpAdmin(idp);
 
-    aggregatorStore = new AggregatorStoreFake();
-    aggregatorStore.seed([
-      buildAggregator({
+    userStore = new UserStoreFake();
+    userStore.seed([
+      buildCoordinator({
         id: AGG_A,
         orgSlug: 'agg-a',
         name: 'Agg A',
@@ -567,7 +530,7 @@ describe('POST /v1/dashboard/export/profiles', () => {
         signalstackOrgId: ORG_A,
       }),
     ]);
-    _setAggregatorStore(aggregatorStore);
+    _setUserStore(userStore);
 
     writer = new SignalStackWriterFake();
     _setSignalStackWriter(writer);
@@ -599,7 +562,7 @@ describe('POST /v1/dashboard/export/profiles', () => {
   afterAll(async () => {
     await app?.close();
     _setSignalStackWriter(null);
-    _setAggregatorStore(null);
+    _setUserStore(null);
     _setIdpAdmin(null);
     _setAccessTokenVerifier(null);
     _setNetworkConfig(null);
@@ -653,5 +616,182 @@ describe('POST /v1/dashboard/export/profiles', () => {
       payload: { item_ids: [], domain: 'seeker' },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('accepts exactly 1000 item_ids', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/dashboard/export/profiles',
+      headers: {
+        authorization: 'Bearer agg-a-approved-with-org',
+        'content-type': 'application/json',
+      },
+      payload: {
+        item_ids: Array.from({ length: 1000 }, (_, i) => `id-${i}`),
+        domain: 'seeker',
+      },
+    });
+    // None are owned, so the CSV is empty — the point is that 1000 is not a 400.
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('rejects 1001 copies of one id — the cap applies before dedup', async () => {
+    // Pins the ordering. Moving dedup ahead of validation would make this pass
+    // as a 1-id request and quietly widen the cap back to unbounded.
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/dashboard/export/profiles',
+      headers: {
+        authorization: 'Bearer agg-a-approved-with-org',
+        'content-type': 'application/json',
+      },
+      payload: { item_ids: Array.from({ length: 1001 }, () => 'same-id'), domain: 'seeker' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects more than 1000 item_ids with 400', async () => {
+    // The array was previously unbounded, so one call could ask signalstack to
+    // decrypt arbitrarily many profiles.
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/dashboard/export/profiles',
+      headers: {
+        authorization: 'Bearer agg-a-approved-with-org',
+        'content-type': 'application/json',
+      },
+      payload: {
+        item_ids: Array.from({ length: 1001 }, (_, i) => `id-${i}`),
+        domain: 'seeker',
+      },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('400 SCHEMA_VALIDATION on an unknown domain', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/dashboard/export/profiles',
+      headers: {
+        authorization: 'Bearer agg-a-approved-with-org',
+        'content-type': 'application/json',
+      },
+      payload: { item_ids: ['x'], domain: 'bogus' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('500 INTERNAL when signalstack is not configured', async () => {
+    _setSignalStackWriter(null);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/dashboard/export/profiles',
+      headers: {
+        authorization: 'Bearer agg-a-approved-with-org',
+        'content-type': 'application/json',
+      },
+      payload: { item_ids: ['x'], domain: 'seeker' },
+    });
+    expect(res.statusCode).toBe(500);
+    expect((res.json() as { error: { code: string } }).error.code).toBe('INTERNAL');
+  });
+
+  it('500 INTERNAL when fetchDecryptedProfiles fails', async () => {
+    writer.fetchDecryptedProfiles = async () =>
+      err(new UpstreamError('signalstack down', { code: 'SIGNALSTACK_SERVER_ERROR' }));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/dashboard/export/profiles',
+      headers: {
+        authorization: 'Bearer agg-a-approved-with-org',
+        'content-type': 'application/json',
+      },
+      payload: { item_ids: ['x'], domain: 'seeker' },
+    });
+    expect(res.statusCode).toBe(500);
+    const body = res.json() as { error: { code: string; detail: string } };
+    expect(body.error.code).toBe('INTERNAL');
+    expect(body.error.detail).toContain('Signalstack profile decrypt failed');
+  });
+
+  it('drops ids the caller does not own and reports the count, without erroring', async () => {
+    // Signals scopes the decrypt to the acting org and returns unowned ids in
+    // `skipped`. The route must NOT turn that into a 4xx — a status keyed to ids
+    // that exist under another aggregator would confirm they exist.
+    const ownedId = await seedOwnedProfile('Velu Murugan', '+919876801011');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/dashboard/export/profiles',
+      headers: {
+        authorization: 'Bearer agg-a-approved-with-org',
+        'content-type': 'application/json',
+      },
+      payload: { item_ids: [ownedId, 'someone-elses-item', 'nonexistent'], domain: 'seeker' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['x-export-skipped-count']).toBe('2');
+    // Only the owned row is in the CSV; the other two leave no trace.
+    expect(res.body).toContain('Velu Murugan');
+    expect(res.body).not.toContain('someone-elses-item');
+    expect(res.body).not.toContain('nonexistent');
+  });
+
+  async function seedOwnedProfile(name: string, phone: string): Promise<string> {
+    const onboarded = await writer.onboard({
+      actingOrgId: ORG_A,
+      name,
+      phoneNumber: phone,
+      terms_accepted: true,
+      privacy_accepted: true,
+      channel: 'link',
+      source_id: 'link-1',
+      network: 'blue_dot',
+      domain: 'seeker',
+      item_type: 'profile_1.0',
+      profile: { name, phone },
+    });
+    if (!onboarded.success) throw new Error('seed failed');
+    return onboarded.value.profile_item_id;
+  }
+
+  it('reports a zero skipped count when every requested id is owned', async () => {
+    const ownedId = await seedOwnedProfile('Asha Rao', '+919876801012');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/dashboard/export/profiles',
+      headers: {
+        authorization: 'Bearer agg-a-approved-with-org',
+        'content-type': 'application/json',
+      },
+      payload: { item_ids: [ownedId], domain: 'seeker' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['x-export-skipped-count']).toBe('0');
+  });
+
+  it('deduplicates item_ids before forwarding them to signalstack', async () => {
+    // Duplicates never changed the CSV (signals dedupes its own requested set)
+    // but they did consume the EXPORT_MAX_ITEM_IDS budget.
+    const id = await seedOwnedProfile('Dup Once', '+919876801013');
+    const spy = vi.spyOn(writer, 'fetchDecryptedProfiles');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/dashboard/export/profiles',
+      headers: {
+        authorization: 'Bearer agg-a-approved-with-org',
+        'content-type': 'application/json',
+      },
+      payload: { item_ids: [id, id, id], domain: 'seeker' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ itemIds: [id] }));
+    // A deduped request is fully owned, so nothing is reported as withheld.
+    expect(res.headers['x-export-skipped-count']).toBe('0');
   });
 });

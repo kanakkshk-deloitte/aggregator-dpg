@@ -108,4 +108,65 @@ describe('sniffIdentitySelectors', () => {
       email: 'email_address',
     });
   });
+
+  it('falls through to name-based detection when a phone pattern does not match a known phone shape', () => {
+    // `pattern` is present but matches none of the PHONE_PATTERNS (10-digit,
+    // leading `+`, e.164) — detection must fall back to the field-name check.
+    const schema = {
+      properties: {
+        mobile: { type: 'string', pattern: '^[a-zA-Z]+$' },
+        name: { type: 'string' },
+        email: { type: 'string', format: 'email' },
+      },
+    };
+    expect(sniffIdentitySelectors(schema)).toEqual({
+      name: 'name',
+      phone: 'mobile',
+      email: 'email',
+    });
+  });
+
+  it('returns null when phone and email are found but no name-like field exists', () => {
+    const schema = {
+      properties: {
+        phone: { type: 'string', format: 'tel' },
+        email: { type: 'string', format: 'email' },
+        age: { type: 'integer' },
+      },
+    };
+    expect(sniffIdentitySelectors(schema)).toBeNull();
+  });
+
+  it('resolves an array-typed `type` field (e.g. ["string", "null"]) as a name candidate', () => {
+    const schema = {
+      properties: {
+        name: { type: ['string', 'null'] },
+        phone: { type: 'string', format: 'tel' },
+        email: { type: 'string', format: 'email' },
+      },
+    };
+    expect(sniffIdentitySelectors(schema)).toEqual({
+      name: 'name',
+      phone: 'phone',
+      email: 'email',
+    });
+  });
+
+  it('does not pick a name-pattern field whose type is neither string nor undefined', () => {
+    const schema = {
+      properties: {
+        // Matches the `_name_` naming heuristic but is typed as an integer —
+        // must be rejected in favour of the genuinely string-typed candidate.
+        name_count: { type: 'integer' },
+        full_name: { type: 'string', minLength: 1 },
+        phone: { type: 'string', format: 'tel' },
+        email: { type: 'string', format: 'email' },
+      },
+    };
+    expect(sniffIdentitySelectors(schema)).toEqual({
+      name: 'full_name',
+      phone: 'phone',
+      email: 'email',
+    });
+  });
 });

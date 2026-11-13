@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   onboardingService,
   type ApiRegistrationLink,
-  type BulkUploadStatus,
   type CreateLinkInput,
   type OnboardingBySource,
   type OnboardingSummary,
@@ -72,8 +71,9 @@ export function useOnboardingSummary() {
 }
 
 /**
- * Aggregator-wide onboarding counters grouped by entry source
- * (`bulk` / `link`). Drives the dashboard's "joins by entry mode" card.
+ * Fetches onboarding counters grouped by entry source (`bulk` / `link`).
+ *
+ * @returns The React Query result for the by-source counters.
  */
 export function useOnboardingBySource() {
   return useQuery<OnboardingBySource>({
@@ -97,22 +97,6 @@ export function useBulkUpload() {
     }) => onboardingService.uploadCsv(file, participantType, attestation),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['onboarding', 'summary'] });
-    },
-  });
-}
-
-export function useBulkUploadStatus(uploadId: string | null) {
-  return useQuery<BulkUploadStatus>({
-    queryKey: ['onboarding', 'bulk-upload', uploadId],
-    queryFn: () => {
-      if (!uploadId) throw new Error('uploadId required');
-      return onboardingService.readBulkUpload(uploadId);
-    },
-    enabled: Boolean(uploadId),
-    refetchInterval: (q) => {
-      const status = q.state.data?.status;
-      if (!status) return 2000;
-      return ['completed', 'failed', 'file_failed'].includes(status) ? false : 2000;
     },
   });
 }

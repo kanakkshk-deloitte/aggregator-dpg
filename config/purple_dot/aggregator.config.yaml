@@ -10,7 +10,12 @@ aggregator:
 
   network:
     # Pin to a tag in production; develop is fine for local iteration.
-    source: https://raw.githubusercontent.com/kanakkshk-deloitte/uploadable-files/refs/heads/main/network.json
+    source: https://raw.githubusercontent.com/Blue-Dots-Economy/bluedots-schemas/refs/heads/main/purple_dot/network.json
+    # Participant registration-link consent (Terms/Privacy/profile-creation),
+    # fetched the same cache-backed way as network.json (sibling in the schemas
+    # repo). Env AGGREGATOR_PARTICIPANT_CONSENT_SOURCE overrides; absent ⇒ web app uses the
+    # on-disk schemas/participant/consent.json copy.
+    consent_source: https://raw.githubusercontent.com/Blue-Dots-Economy/bluedots-schemas/refs/heads/main/purple_dot/consent.json
     # Purple_dot schemas have array-typed fields (disability_type,
     # looking_for, documents_available) — bulk CSV cells use `|` as the
     # delimiter.
@@ -47,6 +52,18 @@ aggregator:
     primary_color: '#4c29c3'
     accent_color: '#a176e4'
 
+  # Realm roles that mark a Signals participant. One Keycloak realm serves this
+  # portal and the Signals app, so signing into either creates an SSO session the
+  # other silently reuses; this portal then correctly refuses the token (no
+  # aggregator_id) and uses this list to tell the visitor WHICH account they are
+  # signed in as rather than showing everyone the org-owner message (#753).
+  #
+  # Must name the roles Signals actually stamps — its KEYCLOAK_REQUIRED_REALM_ROLES.
+  # Unset ⇒ the classifier reports "unknown" and the login screen falls back to
+  # generic copy. Overridable per-deployment with SIGNALS_REALM_ROLES.
+  signals:
+    realm_roles: [signals_participant, signals_admin]
+
   domain_labels:
     person_with_disability:
       singular: Person with Disability
@@ -55,22 +72,16 @@ aggregator:
     service_provider:
       singular: Service Provider
       plural: Service Providers
-      tab_label: Providers
-    employer:
-      singular: Employer
-      plural: Employers
-      tab_label: Employers
-    ngo:
-      singular: NGO
-      plural: NGOs
-      tab_label: NGOs
-    government:
-      singular: Government
-      plural: Government Profiles
-      tab_label: Government
+      tab_label: Service Providers
 
   onboarding:
-    presume_consent: true
+    # Bulk-upload only: when true, an adult bulk row is pushed to Signals with
+    # user_terms / user_privacy / profile_creation asserted on the participant's
+    # behalf, satisfying the consent_required go-live gate and publishing the
+    # profile immediately. false => compliance omitted, rows stay draft until the
+    # participant accepts. Minors are never presumed either way. The interactive
+    # registration-link flow always captures real consent.
+    presume_consent: false
     bulk_max_rows: 10000
 
   # Per-link registration modes. Each key names an admin-facing channel.
@@ -84,10 +95,22 @@ aggregator:
       label_i18n_key: registration_mode.voice.label
       submission_shape: account_only
       public_hint_i18n_key: registration_mode.voice.hint
+      signals_cta: false
     form:
       label_i18n_key: registration_mode.form.label
       submission_shape: account_and_profile
       public_hint_i18n_key: null
+      signals_cta: true
 
   admin_emails:
     - abhishekg@sanketika.in
+
+  # ── Organisation tree ──────────────────────────────────────────────────────
+  # Omit the block for a flat tree: every organisation sits directly under the
+  # network and at most 50 organisations. Every organisation is "Aggregator"
+  # until its parent's owner defines "known as" values in the console.
+  organisation:
+    hierarchy:
+      max_depth: 10 # Deepest allowed aggregator org; 1 is directly under the network.
+      max_children: 100 # Direct children of any org, the network included.
+      max_total_orgs: 200 # Aggregator orgs in the instance (root and Default org not counted).

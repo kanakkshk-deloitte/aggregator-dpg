@@ -1,10 +1,8 @@
 /**
- * BFF proxy for parent-org registration submissions (spec §6.1).
+ * BFF proxy for organisation registration submissions.
  *
- * Anonymous browser; the API still needs a Bearer token, so this attaches a
- * Keycloak service-account token and forwards to `/v1/orgs/create`. Upstream
- * errors (`ORG_SLUG_TAKEN`, `OWNER_ALREADY_REGISTERED`, …) pass through verbatim.
- * Only meaningful when the API runs with `ORG_HIERARCHY_ENABLED=true`.
+ * The caller has no session, so this attaches a service-account token and
+ * forwards to `/v1/orgs/create`. Upstream errors pass through as-is.
  *
  * POST /api/org/register
  */

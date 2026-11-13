@@ -1,16 +1,13 @@
 /**
- * Network-config contract.
+ * Network-config contract for the aggregator.
  *
- * The aggregator is a generic platform that runs against ANY signalstack
- * network (blue_dot, purple_dot, yellow_dot, ...). A single
- * `aggregator.config.yaml` per deployment plus a reference to the
- * upstream signalstack `network.json` is everything the operator needs
- * to spin up a new aggregator. No hardcoded domain ids, item types, or
- * schema field names anywhere in business logic.
+ * The aggregator runs against any signalstack network. Each deployment
+ * provides one `aggregator.config.yaml` that points at the upstream
+ * signalstack `network.json`. Business logic has no hardcoded domain ids,
+ * item types, or schema field names.
  *
- * This module owns the shape; concrete loading happens in {@link
- * NetworkConfigLoader} implementations (file + http for production,
- * static-injection for tests).
+ * This module defines the shapes. {@link NetworkConfigLoader}
+ * implementations do the loading.
  *
  * @module @aggregator-dpg/network-config/interface
  */
@@ -19,19 +16,19 @@ import { z } from 'zod';
 import type { BaseError } from '@aggregator-dpg/shared-primitives/errors';
 import type { Result } from '@aggregator-dpg/shared-primitives/result';
 
-// ─── Aggregator YAML schema ──────────────────────────────────────────────────
+// ─── Coordinator YAML schema ──────────────────────────────────────────────────
 
 /**
- * Per-domain identity selectors. Bridge the schema's field names to the
- * canonical `name / phone / email` the aggregator uses for dedup, KC
- * linking, signalstack user payload. Optional — the sniffer derives
- * sensible defaults from the schema when this section is absent.
+ * Per-domain identity selectors.
+ *
+ * Maps the schema's field names to the `name`, `phone` and `email` the
+ * aggregator uses for dedup, Keycloak linking and the signalstack user
+ * payload. When absent, the sniffer derives defaults from the schema.
  */
 export const IdentitySelectorsSchema = z.object({
   name: z.string().min(1),
   phone: z.string().min(1),
-  // Email is optional — some domain schemas (e.g. orange_dot tourist)
-  // have no email field. Dedup falls back to phone-only when absent.
+  // Some domain schemas have no email field. Dedup then uses phone only.
   email: z.string().min(1).optional(),
 });
 export type IdentitySelectors = z.infer<typeof IdentitySelectorsSchema>;
@@ -72,9 +69,9 @@ export const GradientSchema = z.object({
 export type Gradient = z.infer<typeof GradientSchema>;
 
 /**
- * Full design-token palette loaded from a sibling `brand.json`.
- * All groups are optional so the loader degrades cleanly when the
- * file is absent.
+ * Design-token palette loaded from a sibling `brand.json`.
+ *
+ * All groups are optional, so a missing file is valid.
  */
 export const BrandPaletteSchema = z.object({
   primary: z.array(PaletteSwatchSchema).optional(),
@@ -85,8 +82,7 @@ export const BrandPaletteSchema = z.object({
 export type BrandPalette = z.infer<typeof BrandPaletteSchema>;
 
 /**
- * Single typography face (heading or body) — family + weight + an
- * optional sample copy block lifted directly from `brand.json`.
+ * One typography face (heading or body) from `brand.json`.
  */
 export const BrandTypographyFaceSchema = z.object({
   family: z.string().min(1),
@@ -96,9 +92,10 @@ export const BrandTypographyFaceSchema = z.object({
 export type BrandTypographyFace = z.infer<typeof BrandTypographyFaceSchema>;
 
 /**
- * Typography tokens loaded from `brand.json`. `primaryFont` drives the
- * default CSS font stack; `headings` / `body` override per face when
- * the design system differentiates them.
+ * Typography tokens loaded from `brand.json`.
+ *
+ * `primaryFont` sets the default font stack. `headings` and `body`
+ * override it per face.
  */
 export const BrandTypographySchema = z.object({
   primaryFont: z.string().min(1),
@@ -108,9 +105,10 @@ export const BrandTypographySchema = z.object({
 export type BrandTypography = z.infer<typeof BrandTypographySchema>;
 
 /**
- * Logo variant paths. Values are absolute web paths under
- * `apps/web/public/` (e.g. `/brand/blue-dot/logo.png`) or fully
- * qualified URLs.
+ * Logo variant paths.
+ *
+ * Values are absolute web paths under `apps/web/public/`
+ * (e.g. `/brand/blue-dot/logo.png`) or full URLs.
  */
 export const BrandLogoSchema = z.object({
   default: z.string().min(1).optional(),
@@ -122,13 +120,36 @@ export const BrandLogoSchema = z.object({
 export type BrandLogo = z.infer<typeof BrandLogoSchema>;
 
 /**
- * Brand / UI surface — sidebar/topbar/email templates read from here.
+ * One labelled organisation in the login page attribution block, e.g. "Owned by X".
  *
- * The flat fields (`short_name`, `primary_color`, ...) are the
- * authoritative deploy-state values from `aggregator.config.yaml`.
- * `palette`, `typography` and `logo` come from the sibling
- * `brand.json` design-system file when present, and are merged in by
- * the loader before validation.
+ * Separate from `BrandLogoSchema`, which holds variants of one mark. Only
+ * brands that declare it render anything. `logo` paths resolve like
+ * `BrandLogoSchema` paths.
+ */
+export const BrandAttributionSchema = z.object({
+  /** Caption above the mark, e.g. `Owned by`. */
+  label: z.string().min(1),
+  /** Organisation name. Used as the image's accessible name. */
+  name: z.string().min(1),
+  /** Mark to render. Omit to fall back to the name as text. */
+  logo: z.string().min(1).optional(),
+  /**
+   * Dark-mode variant of {@link logo}.
+   *
+   * Use it when the mark lacks contrast on a dark background. Falls back to
+   * `logo` when absent.
+   */
+  logoLight: z.string().min(1).optional(),
+});
+export type BrandAttribution = z.infer<typeof BrandAttributionSchema>;
+
+/**
+ * Brand settings read by the sidebar, top bar and email templates.
+ *
+ * The flat fields (`short_name`, `primary_color`, ...) come from
+ * `aggregator.config.yaml`. `palette`, `typography` and `logo` come from the
+ * sibling `brand.json` when present; the loader merges them in before
+ * validation.
  */
 export const BrandConfigSchema = z.object({
   short_name: z.string().min(1),
@@ -146,6 +167,8 @@ export const BrandConfigSchema = z.object({
   typography: BrandTypographySchema.optional(),
   logo: BrandLogoSchema.optional(),
   strapline: z.string().optional(),
+  /** Ordered "Owned by" / "Managed by" rows for the login page. Optional. */
+  attribution: z.array(BrandAttributionSchema).optional(),
 });
 export type BrandConfig = z.infer<typeof BrandConfigSchema>;
 
@@ -155,22 +178,91 @@ export type BrandConfig = z.infer<typeof BrandConfigSchema>;
  */
 export const NetworkBindingSchema = z.object({
   /**
-   * URL of the upstream signalstack `network.json`. Optional in the YAML
-   * because a deployment may provide it via the `AGGREGATOR_NETWORK_SOURCE`
-   * env override instead (#512); the loader fails `load()` when neither is
-   * set.
+   * URL of the upstream signalstack `network.json`.
+   *
+   * Can be set by `AGGREGATOR_NETWORK_SOURCE` instead. `load()` fails when
+   * neither is set.
    */
   source: z.string().url().optional(),
+  /**
+   * URL of the upstream participant `consent.json` (Terms, Privacy, profile creation).
+   *
+   * Fetched like {@link source}, with the same timeout and cache. Can be set
+   * by `AGGREGATOR_PARTICIPANT_CONSENT_SOURCE` instead. When unset, the web
+   * app uses the on-disk participant `consent.json`.
+   */
+  consent_source: z.string().url().optional(),
   field_overrides: z.record(z.string(), IdentitySelectorsSchema).optional(),
   csv_array_delimiter: z.string().min(1).default('|'),
 });
 export type NetworkBinding = z.infer<typeof NetworkBindingSchema>;
 
+/** One title+content version entry of a participant consent document. */
+export const ConsentDocVersionSchema = z
+  .object({
+    version: z.number(),
+    title: z.string(),
+    content: z.string(),
+    effective_from: z.string().optional(),
+  })
+  .passthrough();
+
+/** One statement-only version entry (profile-creation consent). */
+export const ConsentStatementVersionSchema = z
+  .object({
+    version: z.number(),
+    statement: z.string(),
+    effective_from: z.string().optional(),
+  })
+  .passthrough();
+
 /**
- * Onboarding behaviour toggles.
+ * Participant `consent.json` fetched from {@link NetworkBindingSchema.consent_source}.
+ *
+ * The schema is lenient. It rejects a non-JSON or wrong-shape body, such as
+ * an HTML 404 page, but does not fully model the Signals schema.
+ */
+export const ParticipantConsentDocSchema = z
+  .object({
+    documents: z
+      .object({
+        terms: z
+          .object({
+            current_version: z.number(),
+            versions: z.array(ConsentDocVersionSchema),
+          })
+          .passthrough()
+          .optional(),
+        privacy: z
+          .object({
+            current_version: z.number(),
+            versions: z.array(ConsentDocVersionSchema),
+          })
+          .passthrough()
+          .optional(),
+        profile_creation: z
+          .object({
+            current_version: z.number(),
+            versions: z.array(ConsentStatementVersionSchema),
+          })
+          .passthrough()
+          .optional(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+export type ParticipantConsentDoc = z.infer<typeof ParticipantConsentDocSchema>;
+
+/**
+ * Onboarding settings.
+ *
+ * `presume_consent` applies to bulk upload only. When true, adult rows are
+ * sent to Signals with all consents asserted, so the profile goes live at
+ * once. Minors are never presumed. When false, rows stay `draft` until the
+ * participant accepts. Defaults to false; each network must opt in.
  */
 export const OnboardingConfigSchema = z.object({
-  presume_consent: z.boolean().default(true),
+  presume_consent: z.boolean().default(false),
   bulk_max_rows: z.coerce.number().int().positive().default(10000),
 });
 export type OnboardingConfig = z.infer<typeof OnboardingConfigSchema>;
@@ -190,8 +282,45 @@ export const RegistrationModeSchema = z.object({
   label_i18n_key: z.string().min(1),
   submission_shape: z.enum(['account_only', 'account_and_profile']),
   public_hint_i18n_key: z.string().min(1).nullable(),
+  /**
+   * Whether links in this mode show the "Already Registered — Sign In" link to Signals.
+   *
+   * When omitted, it is true only for `submission_shape === 'account_and_profile'`.
+   */
+  signals_cta: z.boolean().optional(),
 });
 export type RegistrationMode = z.infer<typeof RegistrationModeSchema>;
+
+/** Tree limits. Pending and active orgs count; the root and the Default org do not. */
+export const HierarchyConfigSchema = z.object({
+  /** The deepest an aggregator org can be; 1 keeps every org directly under the network. */
+  max_depth: z.number().int().min(1).max(10).default(1),
+  /** The most direct children of any org, the network included. Unset means no limit. */
+  max_children: z.number().int().min(1).optional(),
+  /** The most aggregator orgs in the instance. */
+  max_total_orgs: z.number().int().min(1).default(50),
+});
+export type HierarchyConfig = z.infer<typeof HierarchyConfigSchema>;
+
+/**
+ * Organisation settings: tree limits.
+ *
+ * The schema is not strict, so unknown keys in the block are ignored.
+ */
+export const OrganisationConfigSchema = z.object({
+  hierarchy: HierarchyConfigSchema.default({}),
+  /**
+   * Not used. Kept so the API can warn at boot that the block is ignored;
+   * "known as" values are set in the console.
+   */
+  known_as: z.unknown().optional(),
+});
+export type OrganisationConfig = z.infer<typeof OrganisationConfigSchema>;
+
+/** The organisation settings used when an instance declares none. */
+export const DEFAULT_ORGANISATION: OrganisationConfig = {
+  hierarchy: { max_depth: 1, max_total_orgs: 50 },
+};
 
 /**
  * Root aggregator config — the YAML the operator edits per deployment.
@@ -213,24 +342,24 @@ export const AggregatorYamlSchema = z.object({
         public_hint_i18n_key: null,
       },
     }),
+    organisation: OrganisationConfigSchema.default({}),
   }),
 });
 export type AggregatorYaml = z.infer<typeof AggregatorYamlSchema>;
 
 /**
- * Alias for `AggregatorYamlSchema`. Exported under both names so tests
- * and future refactors can reference the schema by its logical concept
- * ("config") rather than the serialisation format ("yaml").
+ * Alias for `AggregatorYamlSchema`.
  */
 export const AggregatorConfigSchema = AggregatorYamlSchema;
 
 // ─── Signalstack network.json (the subset the aggregator cares about) ────────
 
 /**
- * One dashboard tile: which rollup key to read and what to call it. `field`
- * is a key on the signalstack rollup (e.g. `total_users`, `complete_profiles`).
- * The aggregator reads the precomputed value — it never aggregates. Unknown
- * `field` → tile skipped (logged `warn`).
+ * One dashboard tile: the rollup key to read and its label.
+ *
+ * `field` is a key on the signalstack rollup (e.g. `total_users`). The
+ * aggregator reads the precomputed value. An unknown `field` skips the tile
+ * and logs a warning.
  */
 export interface DashboardTileDef {
   field: string;
@@ -238,11 +367,10 @@ export interface DashboardTileDef {
 }
 
 /**
- * Per-domain dashboard tiles, split into profile-level and user-level groups.
- * Both optional — UI falls back to default English tiles when a group is
- * absent. `profile_title` / `user_title` override the group headings
- * ("Profiles" / "Users" eyebrows); the UI falls back to localised
- * defaults when unset. Carried verbatim from `network.json`.
+ * Per-domain dashboard tiles, split into profile and user groups.
+ *
+ * Copied from `network.json`. All fields are optional; the UI uses defaults
+ * for missing groups and titles.
  */
 export interface DashboardTiles {
   profile?: DashboardTileDef[];
@@ -252,10 +380,11 @@ export interface DashboardTiles {
 }
 
 /**
- * Network-wide canonical-bucket label overrides. Keys are the fixed Signals
- * vocab; values are the network's preferred copy ("Applied" vs "Requested",
- * etc.). Action labels are split by direction (initiated vs received).
- * Optional throughout — UI defaults to English labels when missing.
+ * Network-wide label overrides for the dashboard status and action buckets.
+ *
+ * Keys are fixed Signals values; values are the network's labels. Action
+ * labels are split into initiated and received. All optional; the UI uses
+ * English defaults.
  */
 export interface DashboardBuckets {
   by_status?: Partial<Record<'new' | 'active' | 'at_risk' | 'inactive', string>>;
@@ -264,10 +393,10 @@ export interface DashboardBuckets {
 }
 
 /**
- * One entry of a domain's `status_rules` array from network.json. `when`
- * is the condition DSL the metrics service evaluates — passed through
- * verbatim. `label`/`description` are optional UI copy the dashboard
- * renders on the status cards (e.g. "New" / "Last 7 days").
+ * One entry of a domain's `status_rules` array from `network.json`.
+ *
+ * `when` is the metrics-service condition, passed through unchanged.
+ * `label` and `description` are shown on the dashboard status cards.
  */
 export interface StatusRule {
   status: string;
@@ -278,32 +407,43 @@ export interface StatusRule {
 }
 
 /**
- * One domain inside a signalstack network. Carries the JSON Schemas
- * keyed by `item_type` — the aggregator looks up the active schema by
- * `(domain_id, item_type)`.
+ * One domain inside a signalstack network.
+ *
+ * Holds the JSON Schemas keyed by `item_type`.
  */
 export interface NetworkDomain {
   id: string;
   description?: string;
-  /** Per-domain dashboard tile groups (profile + user). Optional passthrough from network.json. */
+  /** Dashboard tile groups. Optional, copied from `network.json`. */
   dashboard_tiles?: DashboardTiles;
-  /** Per-domain status taxonomy + UI copy. Optional passthrough from network.json. */
+  /** Status rules and their UI labels. Optional, copied from `network.json`. */
   status_rules?: StatusRule[];
+  /**
+   * When true, minors need guardian consent, so the form collects a birth year.
+   *
+   * Absent means `false`.
+   */
+  guardian_consent_required?: boolean;
+  /**
+   * Go-live gate tokens, e.g. `schema_required`, `consent_required`.
+   *
+   * Decides whether the form shows the profile-creation consent step. Absent means `[]`.
+   */
+  go_live_required?: string[];
   item_schemas: Record<string, Record<string, unknown>>;
 }
 
 /**
- * Parsed signalstack `network.json`. Captured verbatim — the aggregator
- * only reads `id`, `domains`, and `display_name`; the rest passes
- * through unchanged so future surfaces (the `actions` workflow) can
- * consume the same singleton.
+ * Parsed signalstack `network.json`.
+ *
+ * Unknown keys are kept unchanged.
  */
 export interface SignalstackNetwork {
   id: string;
   display_name?: string;
   description?: string;
   domains: NetworkDomain[];
-  /** Shared bucket labels for the dashboard. Optional passthrough from network.json. */
+  /** Shared dashboard bucket labels. Optional, copied from `network.json`. */
   dashboard_buckets?: DashboardBuckets;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [extra: string]: any;
@@ -312,14 +452,13 @@ export interface SignalstackNetwork {
 // ─── Resolved config (what callers read) ─────────────────────────────────────
 
 /**
- * One domain after merging signalstack's network.json with the
- * aggregator's overlay. Used everywhere a route or worker needs to
- * decide "what item_type, what schema, what name field?" for a given
- * participant kind.
+ * One domain after merging `network.json` with the aggregator config.
+ *
+ * Gives callers the item type, schema and identity fields for a domain.
  */
 export interface ResolvedDomain {
   id: string;
-  /** Display label — falls back to a title-cased id when unset. */
+  /** Display label. Defaults to the title-cased id. */
   label: string;
   /** Plural label for tab + sidebar text. */
   pluralLabel: string;
@@ -329,36 +468,45 @@ export interface ResolvedDomain {
   schema: Record<string, unknown>;
   /** Identity selectors (sniffer-derived, overridden by config). */
   identity: IdentitySelectors;
-  /**
-   * Resolved per-domain dashboard tile groups — copy-through from
-   * `network.dashboard_tiles` on this domain. UI falls back to generic
-   * defaults when undefined.
-   */
+  /** Dashboard tile groups from the domain's `dashboard_tiles`. */
   dashboardTiles?: DashboardTiles;
-  /**
-   * Per-domain status rules (copy-through from `network.status_rules` on
-   * this domain). Drives the dashboard status-card labels + descriptions.
-   */
+  /** Status rules from the domain's `status_rules`. */
   statusRules?: StatusRule[];
+  /**
+   * From `guardian_consent_required`. Defaults to `false`.
+   *
+   * When true, the form collects a birth year.
+   */
+  guardianConsentRequired: boolean;
+  /**
+   * From `go_live_required`. Defaults to `[]`.
+   *
+   * The form shows the profile-creation consent step only if this includes `consent_required`.
+   */
+  goLiveRequired: string[];
 }
 
 /**
- * Fully-resolved configuration the aggregator runs against. Built once
- * at boot; treated as immutable thereafter. Tests inject a stub via
- * the {@link NetworkConfigStore}.
+ * Resolved configuration the aggregator runs against.
+ *
+ * Built once at boot and not changed after. Tests inject a stub via the
+ * {@link NetworkConfigStore}.
  */
 export interface ResolvedNetworkConfig {
   aggregator: AggregatorYaml['aggregator'];
   network: SignalstackNetwork;
   domains: Record<string, ResolvedDomain>;
-  /** Domain ids in declaration order — preserves UI tab ordering. */
+  /** Domain ids in declaration order. Sets the UI tab order. */
   domainIds: string[];
-  /**
-   * Convenience extract of `network.dashboard_buckets` so callers don't
-   * have to dive into the raw network object. Undefined when the loaded
-   * network.json doesn't declare the block.
-   */
+  /** Copy of `network.dashboard_buckets`. Undefined when `network.json` has none. */
   dashboardBuckets?: DashboardBuckets;
+  /**
+   * Participant consent document fetched from {@link NetworkBindingSchema.consent_source}.
+   *
+   * Undefined when no source is set, or the fetch failed with no cached copy.
+   * The web app then uses its on-disk participant `consent.json`.
+   */
+  participantConsent?: ParticipantConsentDoc;
 }
 
 // ─── Loader port ─────────────────────────────────────────────────────────────
@@ -371,21 +519,53 @@ export type NetworkConfigError =
   | { code: 'DOMAIN_RESOLUTION_FAILED'; message: string };
 
 /**
- * Persistence port for the aggregator config loader.
+ * Port for loading the aggregator network config.
  *
- * Concrete impls:
- *   - {@link FileNetworkConfigLoader} reads YAML from disk + fetches
- *     signalstack network.json over HTTPS with a last-known-good cache.
- *   - {@link InMemoryNetworkConfigLoader} returns a pinned config —
- *     tests use this to bypass the file/HTTP layer entirely.
- *
- * Returns `Result<T, NetworkConfigError>` — never throws.
+ * {@link FileNetworkConfigLoader} reads YAML from disk and fetches
+ * `network.json` over HTTPS with a last-known-good cache.
+ * {@link InMemoryNetworkConfigLoader} returns a fixed config for tests.
+ * Never throws.
  */
 export abstract class NetworkConfigLoaderBase {
   /**
-   * Loads + resolves the active config. Idempotent across calls in the
-   * same process: the second call returns the cached singleton without
-   * re-fetching signalstack.
+   * Loads and resolves the active config.
+   *
+   * Later calls in the same process return the cached result.
+   *
+   * @returns The resolved config, or a config error.
    */
   abstract load(): Promise<Result<ResolvedNetworkConfig, BaseError | NetworkConfigError>>;
+}
+
+// ─── Registration-form gate predicates (reusable) ────────────────────────────
+
+/**
+ * Go-live gate token meaning a profile needs profile-creation consent to go live.
+ *
+ * Shared by the api and web.
+ */
+export const CONSENT_REQUIRED_GATE = 'consent_required';
+
+/**
+ * Returns whether the registration form shows the profile-creation consent step.
+ *
+ * True only if the gates include {@link CONSENT_REQUIRED_GATE}.
+ *
+ * @param goLiveRequired - The domain's resolved `goLiveRequired` tokens.
+ * @returns True when a consent step is required.
+ */
+export function domainRequiresConsent(goLiveRequired: readonly string[] | undefined): boolean {
+  return (goLiveRequired ?? []).includes(CONSENT_REQUIRED_GATE);
+}
+
+/**
+ * Returns whether the registration form collects a birth year.
+ *
+ * True only if the domain requires guardian consent for minors.
+ *
+ * @param guardianConsentRequired - The domain's resolved flag.
+ * @returns True when a birth year must be collected.
+ */
+export function domainRequiresBirthYear(guardianConsentRequired: boolean | undefined): boolean {
+  return guardianConsentRequired === true;
 }

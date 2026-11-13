@@ -1,20 +1,14 @@
 /**
- * Bulk Finaliser — run-summary worker.
+ * Bulk finaliser: writes the run summary for a bulk upload in the worker app.
  *
- * Per onboarding-implementation.md §3.4:
- *   1. HSCAN bu:{id}:errors → stream into errors.csv on S3
- *      (key: bulk-uploads/{upload_id}/errors.csv).
- *   2. CSV format: original CSV header columns + error_category + error_reason.
- *   3. UPDATE bulk_uploads → status='completed', counters from Redis,
- *      errors_csv_s3_key, completed_at.
- *   4. INSERT onboarding (source='bulk', batch_id=upload_id, totals).
- *   5. DEL bu:{upload_id}:* — only after persistence succeeds.
+ * Steps:
+ *   1. Read row errors from `bu:{id}:errors` and write errors.csv to S3
+ *      (original header columns + error_category + error_reason).
+ *   2. Mark the upload completed and insert the onboarding rollup row.
+ *   3. Delete the `bu:{id}:*` Redis keys after the DB writes succeed.
  *
- * Idempotency:
- *   - BullMQ jobId `${uploadId}:finalise` ensures exactly-one trigger.
- *   - On retry: errors.csv key is deterministic (overwrites identical bytes);
- *     onboarding insert is guarded by a pre-check on (source='bulk', batch_id);
- *     UPDATE is overwrite-safe; DEL is no-op on second run.
+ * Idempotent: the jobId `${uploadId}__finalise` dedups triggers, the S3 key is
+ * fixed, and the onboarding insert is skipped if the row already exists.
  */
 
 import { and, eq } from 'drizzle-orm';
@@ -24,6 +18,7 @@ import { schema, getDb } from '../db.js';
 import { getRedis } from '../services/redis.js';
 import { putObject } from '../object-storage.js';
 import { logger } from '../logger.js';
+import { CSV_FIELD_DELIMITER } from './bulk-file-stream.js';
 
 interface ErrorRecord {
   row_index: number;
@@ -51,10 +46,10 @@ export async function finaliseBulk(job: BulkFinaliseJob): Promise<FinaliseOutcom
   const found = await getDb()
     .select({
       upload: schema.bulkUploads,
-      orgSlug: schema.aggregators.orgSlug,
+      orgSlug: schema.users.signalstackOrgSlug,
     })
     .from(schema.bulkUploads)
-    .innerJoin(schema.aggregators, eq(schema.bulkUploads.aggregatorId, schema.aggregators.id))
+    .innerJoin(schema.users, eq(schema.bulkUploads.userId, schema.users.id))
     .where(eq(schema.bulkUploads.id, job.uploadId))
     .limit(1);
   const row = found[0];
@@ -78,8 +73,7 @@ export async function finaliseBulk(job: BulkFinaliseJob): Promise<FinaliseOutcom
     return { status: 'skipped', reason: 'unexpected_status' };
   }
 
-  // Mark finalising — observability beacon for status reads while we're
-  // streaming errors and writing onboarding.
+  // Mark finalising so status reads show progress.
   await getDb()
     .update(schema.bulkUploads)
     .set({ status: 'finalising', lastProgressAt: new Date(), updatedAt: new Date() })
@@ -88,36 +82,34 @@ export async function finaliseBulk(job: BulkFinaliseJob): Promise<FinaliseOutcom
   const redis = getRedis();
   const ns = `bu:${job.uploadId}`;
 
-  // 3. Cursor-scan errors HSET; deterministic ordering by row_index.
+  // 3. Read errors, ordered by row_index.
   const errors = await readErrors(redis, `${ns}:errors`);
   errors.sort((a, b) => a.row_index - b.row_index);
 
-  // 4. Authoritative counters first — drives the "do we need errors.csv?"
-  // decision. Pulled directly from Redis (the Lua commit script is the
-  // source of truth; periodic DB flushes lag).
+  // 4. Counters come from Redis, which the Lua commit script keeps current.
   const counters = await redis.hgetall(`${ns}:counters`);
-  const passed = parseInt(counters['passed'] ?? '0', 10) || 0;
-  const failed = parseInt(counters['failed'] ?? '0', 10) || 0;
-  const skipped = parseInt(counters['skipped'] ?? '0', 10) || 0;
+  const passed = Number.parseInt(counters['passed'] ?? '0', 10) || 0;
+  const failed = Number.parseInt(counters['failed'] ?? '0', 10) || 0;
+  const skipped = Number.parseInt(counters['skipped'] ?? '0', 10) || 0;
   const total = passed + failed + skipped;
 
-  // 5. Build + upload errors.csv only when there's at least one failure.
-  // Empty CSV on a clean run wasted S3 storage and surfaced a misleading
-  // "Download errors" button in the UI for runs that had nothing to report.
+  // 5. Write errors.csv only when at least one row failed.
   let errorsKey: string | null = null;
   if (failed > 0) {
     const headerCols = await readHeaderCols(redis, `${ns}:meta`);
     const csvHeader = [...headerCols, 'error_category', 'error_reason'];
-    // Fetch raw CSV lines for only the failed row indices in one round-trip.
+    // Fetch stored cells for the failed rows only.
     const indices = errors.map((e) => String(e.row_index));
     const rawRows =
       indices.length > 0 ? await redis.hmget(`${ns}:lines`, ...indices) : ([] as (string | null)[]);
     const csvRows: string[][] = errors.map((e, i) => {
-      const cells = parseRawRow(rawRows[i] ?? '', headerCols.length).map(sanitiseCsvCell);
+      const { cells, surplus } = fitToHeader(readStoredRow(rawRows[i] ?? ''), headerCols.length);
+      const reasons = [...(e.reasons ?? [])];
+      if (surplus > 0) reasons.push(surplusNote(headerCols.length + surplus, headerCols.length));
       return [
-        ...cells,
+        ...cells.map(sanitiseCsvCell),
         sanitiseCsvCell(e.error_category ?? ''),
-        sanitiseCsvCell((e.reasons ?? []).join('; ')),
+        sanitiseCsvCell(reasons.join('; ')),
       ];
     });
     const csvBody = Papa.unparse({ fields: csvHeader, data: csvRows });
@@ -130,10 +122,8 @@ export async function finaliseBulk(job: BulkFinaliseJob): Promise<FinaliseOutcom
     }
   }
 
-  // 6 + 7. Mark `bulk_uploads` completed AND insert the onboarding rollup
-  // row atomically. If we update first and the onboarding INSERT then fails,
-  // BullMQ retries hit the `already_completed` short-circuit (line above)
-  // and the rollup is permanently lost. Single transaction prevents that.
+  // 6. Mark completed and insert the rollup in one transaction. Otherwise a
+  // failed insert would be skipped on retry by the `already_completed` guard.
   const completedAt = new Date();
   await getDb().transaction(async (tx) => {
     await tx
@@ -147,10 +137,9 @@ export async function finaliseBulk(job: BulkFinaliseJob): Promise<FinaliseOutcom
       })
       .where(eq(schema.bulkUploads.id, job.uploadId));
 
-    // Pre-check for idempotency on replay — the partial UNIQUE on
-    // (batch_id WHERE source='bulk') can't be a Drizzle ON CONFLICT target
-    // directly. Inside the same transaction so a parallel finaliser can't
-    // sneak between the SELECT and INSERT.
+    // Check first: the partial unique index on batch_id cannot be a Drizzle
+    // ON CONFLICT target. The check runs inside the transaction so a parallel
+    // finaliser cannot insert between the check and the insert.
     const existing = await tx
       .select({ id: schema.onboarding.id })
       .from(schema.onboarding)
@@ -158,8 +147,8 @@ export async function finaliseBulk(job: BulkFinaliseJob): Promise<FinaliseOutcom
       .limit(1);
     if (existing.length === 0) {
       await tx.insert(schema.onboarding).values({
-        aggregatorId: upload.aggregatorId,
-        orgSlug,
+        userId: upload.userId,
+        signalstackOrgSlug: orgSlug,
         source: 'bulk',
         batchId: job.uploadId,
         linkId: null,
@@ -173,7 +162,7 @@ export async function finaliseBulk(job: BulkFinaliseJob): Promise<FinaliseOutcom
     }
   });
 
-  // 8. Cleanup Redis keys — only after all persistence succeeded.
+  // 7. Delete Redis keys after the DB writes succeed.
   await redis.del(...bulkRedisKeys(job.uploadId));
 
   log.info({
@@ -191,14 +180,14 @@ export async function finaliseBulk(job: BulkFinaliseJob): Promise<FinaliseOutcom
 }
 
 /**
- * Memory-bounded HSCAN over the errors HASH. Parses each JSON value and
- * silently skips malformed entries — a corrupt error record must not block
- * finalisation of the rest of the run.
+ * Reads all error records from the errors hash, page by page.
+ *
+ * Malformed entries are skipped so one bad record does not block the run.
  */
 async function readErrors(redis: ReturnType<typeof getRedis>, key: string): Promise<ErrorRecord[]> {
   const errors: ErrorRecord[] = [];
-  let cursor = '0';
-  do {
+  // Recurse on the cursor until it returns to '0'.
+  const scanFrom = async (cursor: string): Promise<void> => {
     const [next, fields] = (await redis.hscan(key, cursor, 'COUNT', 200)) as [string, string[]];
     for (let i = 1; i < fields.length; i += 2) {
       const raw = fields[i];
@@ -207,18 +196,19 @@ async function readErrors(redis: ReturnType<typeof getRedis>, key: string): Prom
         const parsed = JSON.parse(raw) as ErrorRecord;
         errors.push(parsed);
       } catch {
-        // skip malformed entry — counter on bulk_uploads still reflects it
+        // Skip malformed entry; the Redis counters still include it.
       }
     }
-    cursor = next;
-  } while (cursor !== '0');
+    if (next !== '0') await scanFrom(next);
+  };
+  await scanFrom('0');
   return errors;
 }
 
 /**
- * Reads the CSV header column list stashed by the File Processor on the
- * meta HASH. Returns [] on miss — Finaliser still emits a header with just
- * error_category + error_reason in that case.
+ * Reads the CSV header columns saved by the file processor.
+ *
+ * Returns [] when missing; errors.csv then has only the two error columns.
  */
 async function readHeaderCols(
   redis: ReturnType<typeof getRedis>,
@@ -236,25 +226,73 @@ async function readHeaderCols(
 }
 
 /**
- * Reconstructs cells from a raw CSV line. With header=false Papaparse
- * returns a positional array; we pad to the expected width if the line is
- * shorter (defensive — File Processor already validates header coverage).
+ * Reads a row stored under `bu:{id}:lines` back into its cells.
+ *
+ * Rows are stored as a JSON array of strings. Any other value is treated as a
+ * CSV line and split on {@link CSV_FIELD_DELIMITER}.
+ *
+ * @param stored - The `:lines` value, or `''` when the row is missing.
+ * @returns The row's cells, possibly ragged.
  */
-function parseRawRow(rawRow: string, expectedCols: number): string[] {
-  if (!rawRow) return Array(expectedCols).fill('');
-  const result = Papa.parse<string[]>(rawRow, { header: false, skipEmptyLines: 'greedy' });
-  const cells = (result.data[0] ?? []) as string[];
-  if (cells.length < expectedCols) {
-    return [...cells, ...Array(expectedCols - cells.length).fill('')];
+function readStoredRow(stored: string): string[] {
+  if (!stored) return [];
+  if (stored.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.every((c) => typeof c === 'string')) return parsed;
+    } catch {
+      // Not JSON: a CSV line that starts with `[`.
+    }
   }
-  return cells;
+  const result = Papa.parse<string[]>(stored, {
+    header: false,
+    skipEmptyLines: 'greedy',
+    delimiter: CSV_FIELD_DELIMITER,
+  });
+  return (result.data[0] ?? []) as string[];
 }
 
 /**
- * Defuses spreadsheet formula injection. Cells starting with `=`, `+`, `-`,
- * `@`, tab, or CR are interpreted as formulas by Excel/LibreOffice when the
- * downloaded errors.csv is opened. Prefixing with a single quote keeps the
- * value visible but inert.
+ * Fits a row's cells to the header width for errors.csv.
+ *
+ * Pads short rows and truncates wide ones so the error columns line up.
+ * With no header (`expectedCols` 0) no data cells are returned.
+ *
+ * @param cells - The row's cells as stored.
+ * @param expectedCols - Number of header columns.
+ * @returns The fitted cells, and how many surplus cells were dropped.
+ */
+function fitToHeader(cells: string[], expectedCols: number): { cells: string[]; surplus: number } {
+  if (cells.length < expectedCols) {
+    return {
+      cells: [...cells, ...new Array<string>(expectedCols - cells.length).fill('')],
+      surplus: 0,
+    };
+  }
+  return {
+    cells: cells.slice(0, expectedCols),
+    surplus: expectedCols > 0 ? cells.length - expectedCols : 0,
+  };
+}
+
+/**
+ * Builds the errors.csv note for a row with more cells than the header.
+ *
+ * @param actual - Cells found in the row.
+ * @param expected - Columns in the header.
+ * @returns A one-line, user-facing note.
+ */
+function surplusNote(actual: number, expected: number): string {
+  return (
+    `row has ${actual} cells but the header has ${expected} columns; the extra cells are ` +
+    'not shown (join multiple values with the list separator, not a comma)'
+  );
+}
+
+/**
+ * Prefixes formula-like cells with a single quote to block spreadsheet formula injection.
+ *
+ * Applies to cells starting with `=`, `+`, `-`, `@`, tab, or CR.
  */
 function sanitiseCsvCell(value: string): string {
   if (!value) return value;

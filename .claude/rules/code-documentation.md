@@ -17,7 +17,18 @@ assemblePrompt(request: PromptRequest): Promise<PromptResponse> {
 ```
 
 **Rules:**
+
 - The first line is a single-sentence summary ending with a period.
-- Document all parameters (`@param`), return values (`@returns`), and thrown exceptions (`@throws`).
-- Do not restate the function name or describe *how* it works — describe *what* it does and *why* the caller needs it.
+- Add `@param` / `@returns` only when they say more than the name and type. Always document thrown exceptions (`@throws`).
+- Do not restate the function name or describe _how_ it works — describe _what_ it does and _why_ the caller needs it.
 - Module-level file comments must state the module's role within the DPG framework and which package it belongs to.
+
+**Style (doc blocks and inline comments):**
+
+- State facts about the current code in short, simple sentences.
+- No dramatic wording, metaphors, or emphasis (ALL-CAPS words, "deliberately", "NOTE:").
+- No history: no "used to", "was renamed", "since #123", PR, issue, review or plan-phase references. Git and PRs hold history.
+- Keep each `@param` / `@returns` / `@throws` to one short line.
+- Do not add inline comments that restate the code.
+- Keep real constraints, stated plainly (e.g. "Never log this value.", "Must run in the caller's transaction.").
+- Keep a one-sentence reason for any non-obvious choice.

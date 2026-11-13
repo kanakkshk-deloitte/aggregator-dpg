@@ -1,23 +1,12 @@
 /**
- * Streaming CSV parse core for the Bulk File Processor.
+ * Streaming CSV parser for the bulk file processor in the worker app.
  *
- * This module is the pure, I/O-free heart of file processing. It consumes a
- * byte or string stream, decodes it as strict UTF-8, validates the header
- * against the active schema, enforces the row-count and per-row-byte caps, and
- * returns the validated rows for the caller to enqueue.
+ * Decodes the stream as strict UTF-8, checks the header against the schema,
+ * enforces the row-count and row-size limits, and returns the validated rows.
+ * Parsing is incremental, so the event loop is not blocked on large files.
  *
- * Why streaming: the previous implementation buffered the whole object into a
- * single string and ran a synchronous `Papa.parse` over it (plus a
- * `body.split('\n')` copy), blocking the worker event loop for the parse
- * duration and spiking heap to a multiple of the file size. Parsing the S3
- * body stream incrementally removes both: the parser yields to the event loop
- * between network chunks and only a bounded window of rows is resident.
- *
- * Atomicity: validation can fail late (e.g. a row past `maxRows`). To preserve
- * the invariant that a rejected file onboards **zero** rows, this function does
- * not enqueue as it parses — it accumulates validated rows and returns them so
- * the caller enqueues only after a fully successful parse. Memory stays bounded
- * by `maxRows`, well under the old whole-file blow-up.
+ * Rows are returned only after the whole file parses, so a rejected file
+ * enqueues no rows. Memory is bounded by `maxRows`.
  *
  * @module @aggregator-dpg/worker
  */
@@ -25,6 +14,13 @@
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import Papa from 'papaparse';
+
+/**
+ * The bulk CSV field delimiter, used for every parse of an upload.
+ *
+ * Set explicitly because auto-detect can pick the array delimiter (`|`) instead.
+ */
+export const CSV_FIELD_DELIMITER = ',';
 
 /** Reasons the File Processor can reject a file before per-row work begins. */
 export type FileFailureReason =
@@ -43,19 +39,20 @@ export interface StreamedRow {
   /** Parsed cell values keyed by trimmed header name. */
   payload: Record<string, string>;
   /**
-   * The original record re-serialised verbatim as one CSV line — a ragged row
-   * keeps its own cell count (shorter or wider than the header). The Finaliser
-   * stores this under `bu:{id}:lines` and re-parses it positionally to rebuild
-   * errors.csv, so it must round-trip through `Papa.parse(header:false)`.
+   * The record's cells as parsed, which may be shorter or wider than the header.
+   * Stored under `bu:{id}:lines` so the finaliser can rebuild errors.csv.
    */
-  rawLine: string;
+  cells: string[];
 }
 
 /** Validation inputs and caps for {@link streamCsvParse}. */
 export interface StreamCsvOptions {
   /** Required header columns (from the schema `required` array). */
   required: string[];
-  /** Permitted header columns (the schema `properties` keys). */
+  /**
+   * Permitted header columns: schema properties plus `WELL_KNOWN_COLUMNS`.
+   * Any other column fails the file.
+   */
   allowed: ReadonlySet<string>;
   /** Maximum number of data rows; exceeding it fails `row_cap_exceeded`. */
   maxRows: number;
@@ -88,16 +85,15 @@ class ParseFailure extends Error {
 }
 
 /**
- * Returns a Transform that decodes a byte stream to UTF-8 strings, rejecting
- * any non-UTF-8 input instead of emitting U+FFFD replacement characters. A
- * leading BOM is stripped (the default `TextDecoder` behaviour).
+ * Returns a Transform that decodes bytes to UTF-8 strings and rejects invalid UTF-8.
+ *
+ * A leading BOM is stripped.
  *
  * @returns A Transform suitable for piping an S3 object body through.
  */
 export function createUtf8DecodeStream(): Transform {
-  // fatal:true → decode() throws on malformed sequences. The decoder keeps
-  // state across chunks (stream:true) so a multi-byte char split across two
-  // network chunks is not mistaken for invalid input.
+  // `fatal` throws on malformed input. `stream: true` keeps state so a
+  // character split across chunks decodes correctly.
   const decoder = new TextDecoder('utf-8', { fatal: true });
   return new Transform({
     decodeStrings: true,
@@ -110,7 +106,7 @@ export function createUtf8DecodeStream(): Transform {
     },
     flush(cb) {
       try {
-        // Final decode with stream:false surfaces a dangling partial sequence.
+        // Final decode fails on a trailing partial sequence.
         cb(null, decoder.decode());
       } catch {
         cb(new EncodingError());
@@ -122,9 +118,8 @@ export function createUtf8DecodeStream(): Transform {
 /**
  * Streams and validates a CSV, returning its data rows for enqueueing.
  *
- * Validation precedence matches the previous whole-file implementation:
- * encoding → header (missing/unknown columns) → empty → per-row caps. On any
- * failure no rows are returned, so the caller onboards nothing.
+ * Checks run in order: encoding, header, empty file, per-row limits.
+ * On any failure no rows are returned.
  *
  * @param input - The CSV as a Node byte stream (e.g. an S3 body) or a string.
  * @param options - Required/allowed columns and the row-count / row-byte caps.
@@ -134,18 +129,13 @@ export async function streamCsvParse(
   input: Readable | string,
   options: StreamCsvOptions,
 ): Promise<StreamCsvResult> {
-  // Parse as raw arrays (`header: false`), NOT PapaParse's header mode. In
-  // `NODE_STREAM_INPUT` + `header: true`, PapaParse re-invokes its header
-  // logic on later internal chunk cycles (once input crosses its ~1 KB
-  // boundary), passing *data-row* cells — which clobbered the derived header
-  // list and produced false `header_mismatch` on big files (#500). Building
-  // row objects through that machinery leaves the payload hostage to the same
-  // re-derivation. Raw arrays sidestep it entirely: the first record is the
-  // header (validated once), every later record maps to it strictly by column
-  // index, regardless of chunking, blank cells, or file size.
+  // Parse as raw arrays. PapaParse's header mode in stream input can re-read
+  // the header from data rows on later chunks. The first record is the header;
+  // later records map to it by column index.
   const parseStream = Papa.parse(Papa.NODE_STREAM_INPUT, {
     header: false,
     skipEmptyLines: 'greedy',
+    delimiter: CSV_FIELD_DELIMITER,
   });
 
   const byteSrc = typeof input === 'string' ? Readable.from([Buffer.from(input, 'utf8')]) : input;
@@ -175,31 +165,29 @@ export async function streamCsvParse(
       parseStream,
       async (parsed: AsyncIterable<string[]>) => {
         for await (const record of parsed) {
-          // First non-empty record is the header row. Validate it and move on —
-          // it is not a data row.
+          // The first non-empty record is the header.
           if (headers === null) {
             headers = record.map((h) => String(h ?? '').trim());
             const headerFailure = validateHeaders(headers);
             if (headerFailure) throw new ParseFailure(headerFailure.reason, headerFailure.detail);
             continue;
           }
-          // rawLine (for errors.csv) is the original record verbatim, incl. any
-          // surplus cells — it must round-trip through `Papa.parse(header:false)`.
-          const rawLine = Papa.unparse([record], { header: false });
-          if (Buffer.byteLength(rawLine, 'utf8') > options.maxRowBytes) {
+          // `cells` keeps the record as-is, including surplus cells. The size
+          // limit is measured on the stored form.
+          const cells = record.map((c) => String(c ?? ''));
+          if (Buffer.byteLength(JSON.stringify(cells), 'utf8') > options.maxRowBytes) {
             throw new ParseFailure('row_size_exceeded');
           }
           if (rows.length + 1 > options.maxRows) {
             throw new ParseFailure('row_cap_exceeded', String(rows.length + 1));
           }
-          // Map cells to columns by position. Cells beyond the header width are
-          // surplus (kept only in rawLine); payload carries schema-keyed fields.
+          // Map cells to columns by position. Surplus cells stay only in `cells`.
           const payload: Record<string, string> = {};
           for (let i = 0; i < headers.length; i += 1) {
             const value = record[i];
             if (typeof value === 'string') payload[headers[i]!] = value;
           }
-          rows.push({ rowIndex: rows.length, payload, rawLine });
+          rows.push({ rowIndex: rows.length, payload, cells });
         }
       },
     );
@@ -217,8 +205,7 @@ export async function streamCsvParse(
     return { status: 'failed', reason: 'system_error', detail: (err as Error).message };
   }
 
-  // No records at all → empty file. (A header-only file has `headers` set but
-  // zero data rows; a bad header already failed above with header_mismatch.)
+  // No header or no data rows means an empty file.
   if (headers === null || rows.length === 0) {
     return { status: 'failed', reason: 'empty_csv' };
   }

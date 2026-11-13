@@ -2,9 +2,7 @@
 // `config` (config.ts parses env once, at first import). The unset-flag
 // scenarios live in the sibling `support.disabled.test.ts` file instead of
 // toggling this env var mid-file, since the parsed `config` singleton can't
-// be swapped once app.js has been imported. Mirrors the
-// `aggregator-org-approvals.test.ts` / `.org.test.ts` split for
-// ORG_HIERARCHY_ENABLED.
+// be swapped once app.js has been imported.
 //
 // Multiple TO addresses + a CC address exercise the comma-separated
 // normalisation in `supportEmail()` / `supportCc()` (both read live env).
@@ -14,8 +12,9 @@ process.env.SUPPORT_CC_EMAIL = 'cc@org.com';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../app.js';
-import { FakeMailer, _setMailer } from '../services/mailer/index.js';
+import { FakeMailer, _setMailer } from '@aggregator-dpg/mailer';
 import { _setAccessTokenVerifier, _resetJwks } from '../services/auth/access-token.js';
+import { _setSupportRateChecker } from '../services/support-rate.js';
 
 /** A complete, valid submission body; override per-test. */
 function validBody(overrides: Record<string, unknown> = {}) {
@@ -37,7 +36,7 @@ describe('support routes (SUPPORT_EMAIL configured)', () => {
   beforeEach(async () => {
     _resetJwks();
     process.env.KEYCLOAK_URL = 'http://kc.local';
-    process.env.KEYCLOAK_REALM = 'aggregator';
+    process.env.KEYCLOAK_REALM = 'bluedots';
     _setAccessTokenVerifier(async (token) => {
       if (token === 'good-token') {
         return {
@@ -54,6 +53,12 @@ describe('support routes (SUPPORT_EMAIL configured)', () => {
     mailer = new FakeMailer();
     _setMailer(mailer);
 
+    // Every case here submits as the same user, and the per-user rate limit
+    // (#551) is real when Redis is reachable — without this override the later
+    // cases in this file would 429 instead of exercising what they assert. The
+    // limit itself is covered in `support.attachments.test.ts`.
+    _setSupportRateChecker(async () => ({ allowed: true, retryAfterSeconds: 0 }));
+
     app = await buildApp();
   });
 
@@ -61,6 +66,7 @@ describe('support routes (SUPPORT_EMAIL configured)', () => {
     await app?.close();
     _setMailer(null);
     _setAccessTokenVerifier(null);
+    _setSupportRateChecker(null);
   });
 
   it('sends the support email to all TO + CC recipients and returns 201, with Reply-To + reference', async () => {
@@ -197,7 +203,13 @@ describe('support routes (SUPPORT_EMAIL configured)', () => {
       headers: { authorization: 'Bearer good-token' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ enabled: true });
+    // The response also carries the attachment limits + allowlist (#551).
+    expect(res.json()).toMatchObject({
+      enabled: true,
+      maxTotalBytes: 5 * 1024 * 1024,
+      maxFiles: 3,
+    });
+    expect((res.json() as { allowedTypes: string[] }).allowedTypes).toContain('image/png');
   });
 
   it('GET /v1/support/config requires auth', async () => {

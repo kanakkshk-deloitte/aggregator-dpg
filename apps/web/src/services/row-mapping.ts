@@ -1,9 +1,9 @@
 import type { DirectionalStats } from '../types';
 
 /**
- * Coerces a signalstack directional action map (`initiated` / `received` on a
- * dashboard item) into a complete {@link DirectionalStats}, defaulting every
- * missing bucket to 0.
+ * Converts a dashboard item's `initiated` or `received` map into {@link DirectionalStats}.
+ *
+ * Missing buckets become 0.
  *
  * @param raw - The directional map from a dashboard item, or undefined.
  * @returns A fully-populated directional stats object.

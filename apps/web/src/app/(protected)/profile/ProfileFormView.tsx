@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type JSX } from 'react';
 import type { RJSFSchema, UiSchema } from '@rjsf/utils';
 import { useTranslations } from 'next-intl';
 import { Topbar } from '../../../components/shell/Topbar';
@@ -11,17 +11,12 @@ import { I } from '../../../icons';
 import type { ProfileApiResponse } from '../../../services/profile.service';
 
 /**
- * Read-only aggregator profile view (issue #470).
+ * Read-only aggregator profile view.
  *
- * Renders the *same* form the public registration page renders — the schema is
- * loaded server-side and passed in — populated with the signed-in aggregator's
- * stored profile, with every field disabled. The registration-only consent
- * block is hidden (a signup-time legal artifact, not editable profile data) and
- * the form's submit button is suppressed, so the fields can never be edited in
- * place. Changes are instead raised via the "Request an update" panel, which
- * lists each schema-flagged (`x-updatable`) field as a Field / Current / New
- * row. The admin-approval email flow behind it is not wired up yet, so
- * submitting only shows a "coming soon" acknowledgement.
+ * Renders the registration form filled with the stored profile, with every
+ * field disabled, the consent block hidden, and no submit button. The
+ * "Request an update" panel lists each `x-updatable` field; submitting it
+ * only shows a "coming soon" message.
  */
 
 export interface ProfileFormViewProps {
@@ -32,10 +27,9 @@ export interface ProfileFormViewProps {
 }
 
 /**
- * Maps the merged profile API response into the registration schema's form
- * shape. Only the fields the registration schema declares are carried across;
- * post-login extras (personas, services) are intentionally omitted so the two
- * surfaces render identically.
+ * Maps the merged profile API response into the registration form shape.
+ *
+ * Only fields declared in the registration schema are kept.
  *
  * @param api - The merged `GET /v1/aggregators/profile/me` response.
  * @returns Form data keyed to the registration schema properties.
@@ -65,10 +59,9 @@ interface UpdatableField {
 }
 
 /**
- * Reads the registration schema for top-level properties flagged
- * `x-updatable: true` and returns them (with their human labels) in declared
- * order. The editable set is therefore config-driven — flip the flag in
- * `registration.v1.json` to add or remove a field, no code change here.
+ * Returns the top-level schema properties flagged `x-updatable: true`.
+ *
+ * Each comes with its label, in declared order.
  *
  * @param schema - The registration JSON Schema.
  * @returns The updatable fields, in property order.
@@ -81,9 +74,9 @@ function collectUpdatableFields(schema: RJSFSchema): UpdatableField[] {
 }
 
 /**
- * Renders the aggregator's current value for an updatable field as one display
- * line. `locations` flattens to a single-line postal address; other fields
- * stringify their scalar value.
+ * Formats the current value of an updatable field as one display line.
+ *
+ * `locations` becomes a single-line postal address.
  *
  * @param key - Schema property key.
  * @param api - The merged profile response (may be undefined while loading).
@@ -112,10 +105,7 @@ export function ProfileFormView({ schema, uiSchema }: ProfileFormViewProps): JSX
   const t = useTranslations('profile.view');
   const { data, isLoading, isError } = useProfileRaw();
 
-  // Update-request panel (issue #470 part 3). The UI is present — one
-  // Field/Current/New row per schema-flagged field plus a submit CTA — but the
-  // admin-approval email flow is not wired up yet, so submitting only surfaces
-  // a "coming soon" acknowledgement. No API call.
+  // Update-request panel. Submitting shows a "coming soon" message; no API call.
   const [requesting, setRequesting] = useState(false);
   const [newValues, setNewValues] = useState<Record<string, string>>({});
   const [requestSent, setRequestSent] = useState(false);
@@ -129,8 +119,7 @@ export function ProfileFormView({ schema, uiSchema }: ProfileFormViewProps): JSX
     setRequestSent(false);
   };
 
-  // Reuse the registration UI schema, but hide the consent block and suppress
-  // the submit button — the profile is display-only.
+  // Registration UI schema without the consent block or submit button.
   const readonlyUiSchema = useMemo<Record<string, unknown>>(
     () => ({
       ...uiSchema,
@@ -143,8 +132,7 @@ export function ProfileFormView({ schema, uiSchema }: ProfileFormViewProps): JSX
     [uiSchema],
   );
 
-  // Strip the schema's title + API-contract description — the page owns its
-  // heading (Topbar + read-only note), matching how /register renders.
+  // Drop the schema title and description; the page renders its own heading.
   const displaySchema = useMemo<RJSFSchema>(() => {
     const clone = { ...schema } as RJSFSchema;
     delete (clone as { title?: string }).title;
@@ -160,7 +148,7 @@ export function ProfileFormView({ schema, uiSchema }: ProfileFormViewProps): JSX
 
       <div className="bd-card bd-shadow overflow-hidden">
         {!requesting && (
-          <div className="px-7 py-4 bg-gradient-to-r from-[var(--bd-tint-primary)] to-[var(--bd-card)] border-b border-[var(--bd-border)] flex items-center justify-between gap-4">
+          <div className="px-4 sm:px-7 py-4 bg-linear-to-r from-(--bd-tint-primary) to-(--bd-card) border-b border-(--bd-border) flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <h2 className="font-display font-bold text-[15px] text-ink-900">
               {t('section_details')}
             </h2>
@@ -176,8 +164,8 @@ export function ProfileFormView({ schema, uiSchema }: ProfileFormViewProps): JSX
         )}
 
         {requesting && (
-          <div className="px-7 pt-6">
-            <div className="rounded-[12px] border border-[var(--bd-border)] bg-[var(--bd-tint-primary)] p-5">
+          <div className="px-4 sm:px-7 pt-6">
+            <div className="rounded-[12px] border border-(--bd-border) bg-(--bd-tint-primary) p-5">
               <h3 className="font-display font-bold text-[15px] text-ink-900">
                 {t('update_request_heading')}
               </h3>
@@ -187,7 +175,7 @@ export function ProfileFormView({ schema, uiSchema }: ProfileFormViewProps): JSX
                 <p className="mt-4 text-[13px] text-ink-400">{t('update_request_empty')}</p>
               ) : (
                 <div className="mt-4 space-y-3">
-                  <div className="hidden md:grid grid-cols-[1fr_1.3fr_1.3fr] gap-3 px-1 text-[10.5px] uppercase tracking-[0.1em] font-semibold text-ink-400">
+                  <div className="hidden md:grid grid-cols-[1fr_1.3fr_1.3fr] gap-3 px-1 text-[10.5px] uppercase tracking-widest font-semibold text-ink-400">
                     <span>{t('col_field')}</span>
                     <span>{t('col_current')}</span>
                     <span>{t('col_requested')}</span>
@@ -198,7 +186,7 @@ export function ProfileFormView({ schema, uiSchema }: ProfileFormViewProps): JSX
                       className="grid grid-cols-1 md:grid-cols-[1fr_1.3fr_1.3fr] gap-1.5 md:gap-3 md:items-center"
                     >
                       <div className="text-[13.5px] font-medium text-ink-900">{f.label}</div>
-                      <div className="text-[13px] text-ink-500 break-words">
+                      <div className="text-[13px] text-ink-500 wrap-break-word">
                         {currentValueFor(f.key, data) || <span className="text-ink-300">—</span>}
                       </div>
                       <input
@@ -222,7 +210,7 @@ export function ProfileFormView({ schema, uiSchema }: ProfileFormViewProps): JSX
                   <span>{t('update_request_pending')}</span>
                 </div>
               )}
-              <div className="mt-4 flex items-center justify-end gap-2">
+              <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
                 <Button kind="ghost" onClick={closeRequest}>
                   {t('btn_cancel')}
                 </Button>
@@ -238,7 +226,7 @@ export function ProfileFormView({ schema, uiSchema }: ProfileFormViewProps): JSX
           </div>
         )}
 
-        <div className="px-7 py-7">
+        <div className="px-4 py-5 sm:px-7 sm:py-7">
           {isLoading ? (
             <div className="text-center text-ink-400 text-[13.5px] py-6">{t('loading')}</div>
           ) : isError ? (

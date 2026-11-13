@@ -1,11 +1,8 @@
 /**
- * Shared helpers for the admin approval routes (coordinator + org flows).
+ * Shared helpers for the coordinator and org approval routes.
  *
- * Both `aggregator-approvals.ts` and `aggregator-org-approvals.ts` render the
- * same HTML result/confirm pages, map the same signed-token error codes to user
- * copy, and run the same token-verify → id-match guard. This module holds the
- * pieces that are identical across the two flows so they cannot drift. Belongs
- * to `@aggregator-dpg/api`.
+ * HTML result pages, token error messages and the token-to-id check used by
+ * both flows. Belongs to `@aggregator-dpg/api`.
  *
  * @module apps/api/src/routes/approval-shared
  */
@@ -47,8 +44,7 @@ export function sendPage(reply: FastifyReply, page: HtmlPage): FastifyReply {
 }
 
 /**
- * Maps a token verification error code to user-facing copy for the result page.
- * The expired case points at the resend affordance both flows now render.
+ * Maps a token verification error code to the message shown on the result page.
  *
  * @param code - The verification failure code.
  * @returns A single-sentence, reviewer-facing message.
@@ -78,8 +74,9 @@ export function missingTokenPage(): HtmlPage {
 }
 
 /**
- * The 400 page for an invalid/expired token. When expired and a resend URL is
- * supplied, renders the "Resend approval link" action (§7).
+ * Builds the 400 page for an invalid or expired token.
+ *
+ * An expired token with a resend URL also gets a "Resend approval link" button.
  *
  * @param code - The verify failure code.
  * @param opts - Optional resend affordance (url + the expired-but-signed token).
@@ -129,15 +126,14 @@ export interface VerifiedToken {
   ok: true;
   intent: 'approve' | 'reject';
   aggregatorId: string;
-  /** Parent org id claim, when the token was minted with one (spec §9 / A1). */
+  /** Org id claim, when the token carries one. */
   org?: string;
 }
 
 /**
  * Verifies a signed approval token and confirms it is bound to the given id.
- * Returns either the verified claims, or an {@link HtmlPage} the caller should
- * send (invalid/expired/mismatch) — collapsing the guard both approval flows
- * repeat before every decision/read/resend.
+ *
+ * On failure returns the {@link HtmlPage} the caller should send.
  *
  * @param token - The raw JWT from the query/body.
  * @param id - The path id the token must be bound to.

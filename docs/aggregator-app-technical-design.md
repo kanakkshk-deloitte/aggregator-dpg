@@ -136,7 +136,7 @@ The constraints below are load-bearing for the design — they shape the technol
 - **Two login paths** — OTP (email/phone) and password — both required at MVP.
 - **External approval flow** — admin actions happen in email, not in-app. The system must hold a registration in `under_review` and accept a side-channel approval signal.
 - **Self-registration via shareable link / QR** — public, unauthenticated entry point that resolves to a context-bound form (state, district, domain, source/sub-source, campaign).
-- **Bulk CSV upload, asynchronous, partial-success** — up to 50 rows per file, valid rows register, invalid rows surface in an error report; duplicates are skipped.
+- **Bulk CSV upload, asynchronous, partial-success** — up to 50 rows per file, valid rows register, invalid rows surface in an error report. Nothing is deduplicated locally — each row's outcome is Signals' verdict, and a Signals rejection such as `DOMAIN_LOCKED` or `USER_ALREADY_EXISTS` is reported in the error report under the `duplicate` category.
 - **System-derived participant status** — New / Active / At Risk / Inactive / Satisfied — computed from time-window rules expressed as configuration.
 - **Recommended actions** — system-generated suggestions (e.g. "Update Location") derived from missing fields on a participant's profile.
 - **Telemetry on every action** — every meaningful UX or backend event emits a structured telemetry event conformant to the **Sunbird Telemetry Spec v3** (https://telemetry.sunbird.org/learn/specification), carrying the originating context (link metadata, actor, action) so reporting metrics can be computed downstream.
@@ -523,13 +523,6 @@ aggregator
   registration_status CHECK IN ('pending','approved','rejected')
   created_at, updated_at
 
-aggregator_profile
-  aggregator_id FK
-  schema_version
-  data JSONB  -- validated against profile.<version>.json
-  consent JSONB
-  updated_at
-
 registration_link
   id PK
   aggregator_id FK
@@ -539,7 +532,9 @@ registration_link
   status CHECK IN ('live','inactive')
   created_at, deactivated_at
 
-participant
+participant   -- NOTE: never built as specified; the local participants table
+              -- that did exist was removed (migration 0024). Signals is the
+              -- store of record for participant profiles.
   id PK
   aggregator_id FK
   registration_link_id FK NULL
@@ -849,7 +844,7 @@ Everything below is required before the first product story can be built and run
 **Container images**
 
 - Three images: `aggregator-web` (Next.js standalone build), `aggregator-service` (NestJS), `aggregator-worker` (NestJS, different process entry).
-- Multi-stage Dockerfiles; non-root user; minimal Alpine / Distroless runtime; image scan via Trivy in `ci.yml`.
+- Multi-stage Dockerfiles; non-root user; minimal Alpine / Distroless runtime; image scan via Trivy in `build-images.yml`.
 
 **Infrastructure**
 
@@ -895,7 +890,7 @@ This is the build order, expressed as engineering stories. Each story is sized t
 8. **Keycloak realm bring-up** — `signal-stack` realm, `aggregator-web` and `aggregator-api` clients, baseline session policy. Provisioned via the Keycloak admin REST API on first deploy.
 9. **Custom OTP authenticator** — Keycloak SPI plug-in that delegates code delivery to the Aggregator Service's Notification adapter. Unit tests + integration test against the local Keycloak.
 10. **Schema & Rules module** — `GET /v1/schemas/{actor}/{action}` and rule loader. Schemas and rule files committed under `config/`.
-11. **Database migrations** — initial schema for `aggregator`, `aggregator_profile`, `registration_link`, `participant`, `participant_activity`, `bulk_upload_job`. Migration runner wired into `deploy-dev.yml`. Migrations run identically against Postgres (local/dev) and YugabyteDB YSQL (staging/prod).
+11. **Database migrations** — initial schema for `aggregator`, `registration_link`, `participant`, `participant_activity`, `bulk_upload_job`. Migration runner wired into `deploy-dev.yml`. Migrations run identically against Postgres (local/dev) and YugabyteDB YSQL (staging/prod).
 
 **Phase 2 — Registration, Approval, Login**
 

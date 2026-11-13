@@ -2,8 +2,7 @@
  * Filesystem watcher for config hot-reload.
  *
  * Watches a directory recursively and calls the reload callback after a
- * debounce window — coalesces rapid successive file-change events into a
- * single reload to avoid partial reads.
+ * debounce, so a burst of changes triggers one reload.
  *
  * @module @aggregator-dpg/config-loader/fs/watcher (internal)
  */

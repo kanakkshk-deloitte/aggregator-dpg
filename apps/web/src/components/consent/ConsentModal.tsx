@@ -3,14 +3,12 @@
  * Read-only modal dialog showing the versioned Terms of Service or Privacy
  * Policy for a given audience.
  *
- * Opened via the clickable links in {@link ConsentCheckboxWidget}. Renders a
- * fixed full-screen overlay with two tabs (Terms / Privacy) and an accessible
- * close button. The modal traps ESC-key dismissal and is fully keyboard
- * accessible.
+ * Opened from the links in {@link ConsentCheckboxWidget}. Shows a full-screen
+ * overlay with Terms and Privacy tabs. ESC and the close button dismiss it.
  *
  * @module apps/web/src/components/consent/ConsentModal
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type JSX } from 'react';
 import { useTranslations } from 'next-intl';
 import { X } from 'lucide-react';
 import { MarkdownContent } from '../forms/MarkdownContent';
@@ -35,8 +33,7 @@ export interface ConsentModalProps {
  * Displays a full-screen read-only modal containing the Terms of Service and
  * Privacy Policy, with tab navigation between them.
  *
- * Returns null when `open` is false to avoid mounting the heavy Markdown
- * renderer when the modal is not visible.
+ * Returns null when `open` is false, so the Markdown renderer is not mounted.
  *
  * @param props - Open state, change handler, initial tab, and document content.
  * @returns The modal overlay element, or null when closed.
@@ -55,7 +52,7 @@ export function ConsentModal({
   useEffect(() => {
     if (open) {
       setActiveTab(initialTab);
-      // Move focus to the close button when the modal becomes visible.
+      // Focus the close button when the modal opens.
       requestAnimationFrame(() => closeButtonRef.current?.focus());
     }
   }, [open, initialTab]);
@@ -75,10 +72,7 @@ export function ConsentModal({
   const activeDoc = activeTab === 'terms' ? content.terms : content.privacy;
 
   return (
-    /* Fixed full-screen overlay — the outer div is the backdrop; the inner div
-       is the accessible dialog. Keyboard dismissal is handled via the ESC
-       useEffect above; backdrop click is handled on the panel container using
-       a button element. */
+    /* Outer div is the backdrop; the inner div is the dialog. */
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       {/* Invisible backdrop button captures click-outside-to-close. */}
       <button
@@ -88,20 +82,17 @@ export function ConsentModal({
         onClick={() => onOpenChange(false)}
         tabIndex={-1}
       />
-      {/* Dialog panel — sizing/layout mirrors the Signals-DPG consent modal
-          (max-w-2xl, max-h-[90vh], flex column, no inner padding on the shell). */}
+      {/* Dialog panel. */}
       <div
         className="relative z-10 w-full max-w-lg max-h-[90vh] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden"
         role="dialog"
         aria-modal="true"
         aria-label={activeDoc.title}
       >
-        {/* Header — generic eyebrow + title + description; the doc-specific
-            heading comes from the Markdown content's own `##` heading, so it is
-            not echoed here (matches the Signals-DPG consent modal). */}
+        {/* Header. The document heading comes from the Markdown content. */}
         <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-4 shrink-0">
           <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--bd-primary)]">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-(--bd-primary)">
               {t('consent.modal_eyebrow')}
             </p>
             <h2 className="font-display font-bold text-xl text-ink-900 leading-tight mt-0.5">
@@ -122,7 +113,7 @@ export function ConsentModal({
 
         {/* Tabs + scrollable content region */}
         <div className="flex flex-col flex-1 overflow-hidden px-6 pb-6 gap-4">
-          {/* Pill tab bar — gray track, white active pill (shadcn-style). */}
+          {/* Pill tab bar. */}
           <div className="flex w-full shrink-0 h-11 p-1 gap-1 rounded-lg bg-slate-100">
             {(['privacy', 'terms'] as const).map((tab) => {
               const label = tab === 'terms' ? content.terms.title : content.privacy.title;
@@ -136,7 +127,7 @@ export function ConsentModal({
                   onClick={() => setActiveTab(tab)}
                   className={`flex-1 flex items-center justify-center rounded-md text-[13.5px] font-semibold transition-colors cursor-pointer ${
                     isActive
-                      ? 'bg-white text-[var(--bd-primary)] shadow-sm'
+                      ? 'bg-white text-(--bd-primary) shadow-xs'
                       : 'text-ink-500 hover:text-ink-800'
                   }`}
                 >
@@ -146,7 +137,7 @@ export function ConsentModal({
             })}
           </div>
 
-          {/* Content — scrollable */}
+          {/* Scrollable content. */}
           <div className="flex-1 overflow-y-auto pr-1">
             <MarkdownContent content={activeDoc.content} />
           </div>

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Node.js** ≥ 20 (use [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schickling/fnm))
+- **Node.js** ≥ 24 (use [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schickling/fnm))
 - **pnpm** ≥ 10 — install via `npm i -g pnpm` or `corepack enable pnpm`
 
 ## Setup

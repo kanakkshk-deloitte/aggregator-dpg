@@ -1,12 +1,11 @@
 /**
  * Cookie names, options, and helpers for the BFF auth flow.
  *
- * Two cookies are used:
- *   - `sid`         opaque session ID (12h sliding, set after callback succeeds)
- *   - `oidc_flow`   short-lived signed JSON holding state/nonce/verifier/returnTo
- *                   while the user is bouncing through Keycloak (5 min TTL)
+ * - `sid`: opaque session ID, set after a successful callback.
+ * - `oidc_flow`: signed JSON with state, nonce, verifier and returnTo during
+ *   the Keycloak login (5 min TTL).
  *
- * Tokens are never written to cookies. They live in Redis only.
+ * Tokens are never written to cookies; they are stored in Redis only.
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -62,7 +61,7 @@ export function oidcFlowCookieOptions(): {
 }
 
 /**
- * Cookie attributes for clearing — `maxAge: 0` deletes the cookie.
+ * Returns cookie attributes that delete the cookie (`maxAge: 0`).
  */
 export function clearCookieOptions(): {
   httpOnly: true;
@@ -99,6 +98,10 @@ function getSigningKey(): string {
  * Encodes flow state as a signed JSON cookie value.
  *
  * Format: `<base64url(JSON)>.<hex(HMAC-SHA256)>`
+ *
+ * @param state - The flow state to sign.
+ * @returns The cookie value.
+ * @throws {Error} If `SESSION_KEY` is unset or shorter than 32 chars.
  */
 export function signFlowState(state: OidcFlowState): string {
   const payload = Buffer.from(JSON.stringify(state), 'utf8').toString('base64url');

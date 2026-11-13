@@ -1,5 +1,5 @@
 /**
- * Public interface for the schema loader.
+ * Public interface for the schema loader (`@aggregator-dpg/schema-loader`).
  *
  * Schemas are JSON Schema 2020-12 documents stored under
  * `config/schemas/{actor}/{action}.v{N}.json`. The loader resolves a schema

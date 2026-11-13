@@ -1,5 +1,5 @@
 /**
- * IdP admin adapter factory. Returns a process-wide singleton.
+ * IdP admin adapter factory (`@aggregator-dpg/api`). Returns a process-wide singleton.
  *
  * Required env (when not overridden by `_setIdpAdmin` in tests):
  *   - KEYCLOAK_URL                  base URL, e.g. http://keycloak:8080
@@ -10,6 +10,8 @@
 
 import { KeycloakIdpAdmin } from './keycloak.js';
 import type { IdpAdminAdapter } from './interface.js';
+
+export { IDP_PROVIDER } from './provider.js';
 
 let instance: IdpAdminAdapter | null = null;
 
@@ -39,5 +41,5 @@ export function _setIdpAdmin(a: IdpAdminAdapter | null): void {
 export { IdpAdminAdapter } from './interface.js';
 export type { CreateUserInput, IdpUser, IdpResult, IdpError } from './interface.js';
 export { IdpAdminFake } from './testing.js';
-export { KC_ATTR } from './attributes.js';
+export { KC_ATTR, OWNER_CREATED_BY, OWNER_REALM_ROLE } from './attributes.js';
 export type { KcAttrName } from './attributes.js';

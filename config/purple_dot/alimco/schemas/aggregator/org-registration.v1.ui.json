@@ -1,0 +1,87 @@
+{
+  "ui:layout": "stack",
+  "ui:order": [
+    "display_name",
+    "website",
+    "gst_number",
+    "aggregator_type",
+    "organisation_type",
+    "address",
+    "owner",
+    "consent"
+  ],
+  "display_name": {
+    "ui:placeholder": "e.g. ABC Limited",
+    "ui:autofocus": true
+  },
+  "owner": {
+    "ui:layout": "grid",
+    "ui:order": ["name", "phone", "email"],
+    "name": {
+      "ui:placeholder": "Full name of the organisation owner"
+    },
+    "phone": {
+      "ui:placeholder": "+91 98765 43210",
+      "ui:options": {
+        "inputType": "tel"
+      }
+    },
+    "email": {
+      "ui:placeholder": "owner@yourorg.org",
+      "ui:options": {
+        "inputType": "email"
+      }
+    }
+  },
+  "consent": {
+    "ui:layout": "stack",
+    "ui:order": ["value", "given_at", "valid_till"],
+    "value": {
+      "ui:widget": "ConsentCheckbox"
+    },
+    "given_at": {
+      "ui:widget": "hidden",
+      "ui:options": {
+        "label": false
+      }
+    },
+    "valid_till": {
+      "ui:widget": "hidden",
+      "ui:options": {
+        "label": false
+      }
+    }
+  },
+  "website": {
+    "ui:placeholder": "https://yourorg.org",
+    "ui:options": {
+      "inputType": "url"
+    }
+  },
+  "gst_number": {
+    "ui:placeholder": "e.g. 29ABCDE1234F1ZW"
+  },
+  "aggregator_type": {
+    "ui:widget": "checkboxes",
+    "ui:enumNames": ["Seekers", "Service Providers"],
+    "ui:options": {
+      "inline": true
+    }
+  },
+  "address": {
+    "ui:title": "",
+    "streetAddress": {
+      "ui:widget": "location-autocomplete",
+      "ui:placeholder": "Start typing and pick your address",
+      "ui:options": {
+        "isPrimaryLocation": true
+      }
+    },
+    "ui:layout": "stack"
+  },
+  "organisation_type": {
+    "ui:widget": "select",
+    "ui:placeholder": "Select organisation type",
+    "ui:enumNames": ["NGO", "Government Entity", "Private Company", "Community Group", "Others"]
+  }
+}

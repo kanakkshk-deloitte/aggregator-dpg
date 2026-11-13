@@ -1,10 +1,11 @@
+import type { JSX } from 'react';
 import { loadBulkAttestation } from '../../../../lib/bulk-attestation.server';
 import { BulkUploadsClient } from '../_components/BulkUploadsClient';
 
 /**
- * Bulk-uploads page (server component). Loads the operator attestation copy
- * server-side (no API round-trip, matching the registration consent flow) and
- * hands it to the client body for rendering in the upload form.
+ * Bulk-uploads page (Server Component).
+ *
+ * Loads the operator attestation text on the server and passes it to the client body.
  */
 export default async function BulkUploadsPage(): Promise<JSX.Element> {
   const attestation = await loadBulkAttestation();

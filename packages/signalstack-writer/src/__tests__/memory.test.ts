@@ -174,6 +174,62 @@ describe('InMemorySignalStackWriter.onboard', () => {
     expect(result.error.code).toBe('SIGNALSTACK_CONFLICT');
   });
 
+  it('returns SIGNALSTACK_INPUT_INVALID when name is missing', async () => {
+    const result = await writer.onboard({
+      actingOrgId: 'org-1',
+      name: '',
+      email: 'asha@example.com',
+      channel: 'link',
+      source_id: 'link-1',
+      network: 'blue_dot',
+      domain: 'seeker',
+      item_type: 'profile_1.0',
+      profile: {},
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('SIGNALSTACK_INPUT_INVALID');
+  });
+
+  it('returns SIGNALSTACK_INPUT_INVALID when channel/source_id are missing', async () => {
+    const result = await writer.onboard({
+      actingOrgId: 'org-1',
+      name: 'Asha',
+      email: 'asha@example.com',
+      channel: '' as unknown as 'link',
+      source_id: 'link-1',
+      network: 'blue_dot',
+      domain: 'seeker',
+      item_type: 'profile_1.0',
+      profile: {},
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('SIGNALSTACK_INPUT_INVALID');
+  });
+
+  it('rejects an under-18 onboard with U18_NOT_ALLOWED', async () => {
+    const result = await writer.onboard({
+      actingOrgId: 'org-1',
+      name: 'Young Person',
+      email: 'young@example.com',
+      channel: 'link',
+      source_id: 'link-1',
+      network: 'blue_dot',
+      domain: 'seeker',
+      item_type: 'profile_1.0',
+      profile: {},
+      age: 16,
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('SIGNALSTACK_BAD_REQUEST');
+    expect(result.error.message).toContain('U18_NOT_ALLOWED');
+  });
+
   it('stores profiles accessible via listProfiles()', async () => {
     await writer.onboard({
       actingOrgId: 'org-1',
@@ -191,67 +247,27 @@ describe('InMemorySignalStackWriter.onboard', () => {
 
     expect(writer.listProfiles()).toHaveLength(1);
   });
+
+  it('records the onboarded user in listUsers()', async () => {
+    await writer.onboard({
+      actingOrgId: 'org-1',
+      name: 'Asha',
+      email: 'asha@example.com',
+      channel: 'bulk',
+      source_id: 'upload-1',
+      network: 'blue_dot',
+      domain: 'seeker',
+      item_type: 'profile_1.0',
+      profile: {},
+    });
+
+    const users = writer.listUsers();
+    expect(users).toHaveLength(1);
+    expect(users[0]!.name).toBe('Asha');
+  });
 });
 
 // ---------------------------------------------------------------------------
-// listItemsByAggregator()
-// ---------------------------------------------------------------------------
-
-describe('InMemorySignalStackWriter.listItemsByAggregator', () => {
-  let writer: InMemorySignalStackWriter;
-
-  beforeEach(() => {
-    writer = new InMemorySignalStackWriter();
-  });
-
-  it('returns only items matching the aggregator + network + domain', async () => {
-    // Seed two profiles with different aggregator_id via the fake
-    const fake = new SignalStackWriterFake();
-    fake.seed({
-      profiles: [
-        {
-          item_id: 'item-a',
-          created_by: 'user-1',
-          item_network: 'blue_dot',
-          item_domain: 'seeker',
-          item_type: 'profile_1.0',
-          aggregator_id: 'agg-1',
-        },
-        {
-          item_id: 'item-b',
-          created_by: 'user-2',
-          item_network: 'blue_dot',
-          item_domain: 'seeker',
-          item_type: 'profile_1.0',
-          aggregator_id: 'agg-2',
-        },
-      ],
-    });
-
-    const result = await fake.listItemsByAggregator({
-      aggregator_id: 'agg-1',
-      item_network: 'blue_dot',
-      item_domain: 'seeker',
-    });
-
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(result.value.items).toHaveLength(1);
-    expect(result.value.items[0]!.item_id).toBe('item-a');
-  });
-
-  it('returns SIGNALSTACK_INPUT_INVALID when aggregator_id is empty', async () => {
-    const result = await writer.listItemsByAggregator({
-      aggregator_id: '',
-      item_network: 'blue_dot',
-      item_domain: 'seeker',
-    });
-
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.code).toBe('SIGNALSTACK_INPUT_INVALID');
-  });
-});
 
 // ---------------------------------------------------------------------------
 // upsertAggregator()
@@ -299,7 +315,70 @@ describe('InMemorySignalStackWriter.upsertAggregator', () => {
     if (result.success) return;
     expect(result.error.code).toBe('SIGNALSTACK_INPUT_INVALID');
   });
+
+  it('records the upserted org in listAggregators()', async () => {
+    await writer.upsertAggregator({ external_id: 'ext-1', name: 'Org One', slug: 'org-one' });
+
+    const aggregators = writer.listAggregators();
+    expect(aggregators).toHaveLength(1);
+    expect(aggregators[0]!.external_id).toBe('ext-1');
+  });
 });
+
+// ---------------------------------------------------------------------------
+// probeUser() — validation branches on the in-memory impl
+// ---------------------------------------------------------------------------
+
+describe('InMemorySignalStackWriter.probeUser', () => {
+  let writer: InMemorySignalStackWriter;
+
+  beforeEach(() => {
+    writer = new InMemorySignalStackWriter();
+  });
+
+  it('returns SIGNALSTACK_INPUT_INVALID when actingOrgId is missing', async () => {
+    const result = await writer.probeUser({
+      email: 'asha@example.com',
+      network: 'blue_dot',
+      domain: 'seeker',
+    } as never);
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('SIGNALSTACK_INPUT_INVALID');
+  });
+
+  it('returns SIGNALSTACK_INPUT_INVALID when network/domain are missing', async () => {
+    const result = await writer.probeUser({
+      actingOrgId: 'org-1',
+      email: 'asha@example.com',
+    } as never);
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('SIGNALSTACK_INPUT_INVALID');
+  });
+
+  it('reports an own user with no item yet (seeded without an item)', async () => {
+    const fake = new SignalStackWriterFake();
+    fake.seedOwnUser({ actingOrgId: 'org-1', email: 'no-item@example.com' });
+
+    const result = await fake.probeUser({
+      actingOrgId: 'org-1',
+      email: 'no-item@example.com',
+      network: 'blue_dot',
+      domain: 'seeker',
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.value.user_exists).toBe(true);
+    expect(result.value.owned_elsewhere).toBe(false);
+    expect(result.value.lifecycle_summary).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // fetchDashboard() — canonical new shape (emptyDomainSlice)
@@ -565,5 +644,112 @@ describe('InMemorySignalStackWriter.fetchDecryptedProfiles', () => {
   it('returns ValidationError on empty itemIds', async () => {
     const result = await writer.fetchDecryptedProfiles({ actingOrgId: 'org-1', itemIds: [] });
     expect(result.success).toBe(false);
+  });
+
+  it('returns ValidationError when actingOrgId is missing', async () => {
+    const result = await writer.fetchDecryptedProfiles({ actingOrgId: '', itemIds: ['item-1'] });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('SIGNALSTACK_INPUT_INVALID');
+  });
+
+  it('honours the fields projection (fields:[] → empty item_state) and returns the contact block', async () => {
+    const fake = new SignalStackWriterFake();
+    fake.seed({
+      profiles: [
+        {
+          item_id: 'item-1',
+          created_by: 'sys',
+          item_network: 'blue_dot',
+          item_domain: 'seeker',
+          item_type: 'profile_1.0',
+          acting_org_id: 'org-1',
+          item_state: { name: 'Asha', phone: '+910000000000' },
+          contact: {
+            name: { value: 'Asha', source: 'item' },
+            email: { value: 'asha@example.com', source: 'user' },
+          },
+        },
+      ],
+    });
+
+    const result = await fake.fetchDecryptedProfiles({
+      actingOrgId: 'org-1',
+      itemIds: ['item-1'],
+      fields: [],
+      contact: ['name', 'email', 'phone'],
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const row = result.value.profiles[0]!;
+    // fields:[] → item_state projected to nothing
+    expect(row.item_state).toEqual({});
+    // contact block present, matching the HTTP impl's shape
+    expect(row.contact).toEqual({
+      name: { value: 'Asha', source: 'item' },
+      email: { value: 'asha@example.com', source: 'user' },
+      // unseeded canonical field resolves to the "absent in both" shape
+      phone: { value: null, source: null },
+    });
+  });
+
+  it('projects to named fields and resolves contact:true to all three canonical fields', async () => {
+    const fake = new SignalStackWriterFake();
+    fake.seed({
+      profiles: [
+        {
+          item_id: 'item-1',
+          created_by: 'sys',
+          item_network: 'blue_dot',
+          item_domain: 'seeker',
+          item_type: 'profile_1.0',
+          acting_org_id: 'org-1',
+          item_state: { name: 'Asha', phone: '+910000000000', extra: 'drop-me' },
+          contact: { name: { value: 'Asha', source: 'item' } },
+        },
+      ],
+    });
+
+    const result = await fake.fetchDecryptedProfiles({
+      actingOrgId: 'org-1',
+      itemIds: ['item-1'],
+      fields: ['name'], // keep only 'name' (present); phone/extra dropped
+      contact: true, // → resolves all three canonical fields
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const row = result.value.profiles[0]!;
+    expect(row.item_state).toEqual({ name: 'Asha' });
+    expect(row.contact).toEqual({
+      name: { value: 'Asha', source: 'item' },
+      email: { value: null, source: null },
+      phone: { value: null, source: null },
+    });
+  });
+
+  it('omits the contact block when no contact projection is requested', async () => {
+    const fake = new SignalStackWriterFake();
+    fake.seed({
+      profiles: [
+        {
+          item_id: 'item-1',
+          created_by: 'sys',
+          item_network: 'blue_dot',
+          item_domain: 'seeker',
+          item_type: 'profile_1.0',
+          acting_org_id: 'org-1',
+          item_state: { name: 'Asha' },
+        },
+      ],
+    });
+
+    const result = await fake.fetchDecryptedProfiles({ actingOrgId: 'org-1', itemIds: ['item-1'] });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.value.profiles[0]!.contact).toBeUndefined();
+    // no fields projection → full item_state
+    expect(result.value.profiles[0]!.item_state).toEqual({ name: 'Asha' });
   });
 });

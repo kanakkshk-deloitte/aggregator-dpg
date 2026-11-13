@@ -2,11 +2,10 @@ import pino from 'pino';
 import { config } from './config.js';
 
 /**
- * Redaction paths for the worker logger. The worker processes participant CSVs,
- * so email/phone (and secrets) must never reach the log stream. Covers the
- * common one/two-level nestings pino supports (e.g. row payloads under
- * `payload`/`data`, error detail under `err`/`fields`); pino has no recursive
- * wildcard, so deeper nestings must be added explicitly if they appear.
+ * Redaction paths for the worker logger, so email, phone and secrets are not logged.
+ *
+ * Covers up to two levels of nesting. Pino has no recursive wildcard, so
+ * deeper paths must be added explicitly.
  */
 export const REDACT_PATHS = [
   '*.password',

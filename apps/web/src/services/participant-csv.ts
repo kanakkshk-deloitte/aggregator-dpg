@@ -1,15 +1,12 @@
 /**
- * Client-side CSV builder for bulk-selected participant rows. Part of the
- * web app's dashboard bulk-action layer — turns the rows the operator has
- * selected (snapshotted across pages) into an RFC-4180 CSV string, without
- * touching the signalstack-owned full-export endpoint.
+ * Builds an RFC 4180 CSV of the selected dashboard rows in the browser (web app).
  *
  * @module apps/web/services/participant-csv
  */
 
 import type { ParticipantBase } from '../types';
 
-/** Column order of the generated CSV. Header names are stable API surface. */
+/** Column order of the generated CSV. Do not rename headers. */
 const COLUMNS = [
   'id',
   'name',
@@ -28,8 +25,7 @@ const COLUMNS = [
 ] as const;
 
 /**
- * Quotes a CSV field per RFC 4180: fields containing a comma, double quote,
- * or line break are wrapped in double quotes with inner quotes doubled.
+ * Quotes a CSV field per RFC 4180 when it contains a comma, quote or line break.
  *
  * @param value - Raw field value; null/undefined render as an empty field.
  * @returns The escaped field, safe to join with commas.
@@ -37,17 +33,15 @@ const COLUMNS = [
 function csvField(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return '';
   const s = String(value);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
 /**
- * Builds a CSV document (header + one line per row) for the given
- * participant rows.
+ * Builds a CSV document with a header and one line per row.
  *
- * Empty input yields just the header line so a downloaded file is never
- * zero-byte/ambiguous. Lines are CRLF-joined per RFC 4180.
+ * Empty input yields only the header. Lines are joined with CRLF.
  *
- * @param rows - Selected participant rows (any domain — seeker/provider).
+ * @param rows - Selected participant rows from any domain.
  * @returns The full CSV string.
  */
 export function buildParticipantCsv(rows: ParticipantBase[]): string {

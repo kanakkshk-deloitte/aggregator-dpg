@@ -170,6 +170,13 @@ describe('FsConfigService', () => {
     expect(svc.get('nonexistent')).toBeUndefined();
   });
 
+  it('get returns undefined when an intermediate path segment is not an object', async () => {
+    makeRepo(tmpDir, { envYaml: 'db: localhost\n', env: 'test' });
+    const svc = new FsConfigService(tmpDir);
+    await svc.load('test');
+    expect(svc.get('db.host')).toBeUndefined();
+  });
+
   it('require throws CONFIG_KEY_MISSING for absent path', async () => {
     makeRepo(tmpDir);
     const svc = new FsConfigService(tmpDir);
@@ -213,6 +220,79 @@ describe('FsConfigService', () => {
     const svc = new FsConfigService(tmpDir);
     await svc.load('test');
     expect(svc.getRegistry().has('pkgA')).toBe(true);
+  });
+
+  it('treats an empty env YAML file as an empty override (no throw)', async () => {
+    makeRepo(tmpDir, { envYaml: '', env: 'test' });
+    const svc = new FsConfigService(tmpDir);
+    await svc.load('test');
+    expect(svc.get('anything')).toBeUndefined();
+  });
+
+  it('throws CONFIG_PARSE_ERROR when env YAML is not a mapping', async () => {
+    makeRepo(tmpDir, { envYaml: '- a\n- b\n', env: 'test' });
+    const svc = new FsConfigService(tmpDir);
+    await expect(svc.load('test')).rejects.toMatchObject({ code: 'CONFIG_PARSE_ERROR' });
+  });
+
+  it('throws CONFIG_PARSE_ERROR when a package config.defaults.yaml slice is not a mapping', async () => {
+    makeRepo(tmpDir, {
+      packages: [
+        {
+          name: 'pkg-a',
+          configKey: 'pkgA',
+          defaultsYaml: 'pkgA: "not-an-object"\n',
+        },
+      ],
+    });
+    const svc = new FsConfigService(tmpDir);
+    await expect(svc.load('test')).rejects.toMatchObject({
+      code: 'CONFIG_PARSE_ERROR',
+      details: expect.objectContaining({ configKey: 'pkgA' }),
+    });
+  });
+
+  it('slice returns the typed config slice for a registered key', async () => {
+    makeRepo(tmpDir, {
+      packages: [{ name: 'pkg-a', configKey: 'pkgA', configDefaults: { host: 'localhost' } }],
+    });
+    const svc = new FsConfigService(tmpDir);
+    await svc.load('test');
+    expect(svc.slice<{ host: string }>('pkgA')).toEqual({ host: 'localhost' });
+  });
+
+  it('slice throws CONFIG_KEY_MISSING for an unregistered key', async () => {
+    makeRepo(tmpDir);
+    const svc = new FsConfigService(tmpDir);
+    await svc.load('test');
+    expect(() => svc.slice('missing')).toThrow('missing');
+  });
+
+  it('require returns the value when the path exists', async () => {
+    makeRepo(tmpDir, { envYaml: 'db:\n  host: prod-db\n', env: 'test' });
+    const svc = new FsConfigService(tmpDir);
+    await svc.load('test');
+    expect(svc.require<string>('db.host')).toBe('prod-db');
+  });
+
+  it('reload throws CONFIG_NOT_LOADED when called before the initial load()', async () => {
+    makeRepo(tmpDir);
+    const svc = new FsConfigService(tmpDir);
+    await expect(svc.reload()).rejects.toMatchObject({ code: 'CONFIG_NOT_LOADED' });
+  });
+
+  it('onChange unsubscribe stops further notifications', async () => {
+    makeRepo(tmpDir, { envYaml: 'x: 1\n', env: 'test' });
+    const svc = new FsConfigService(tmpDir);
+    await svc.load('test');
+
+    let notified = false;
+    const unsubscribe = svc.onChange(() => {
+      notified = true;
+    });
+    unsubscribe();
+    await svc.reload();
+    expect(notified).toBe(false);
   });
 
   describe('watch()', () => {
@@ -259,6 +339,22 @@ describe('FsConfigService', () => {
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('production'));
       expect(() => unsubscribe()).not.toThrow();
       warnSpy.mockRestore();
+    });
+
+    it('starts a real watcher and logs when CONFIG_WATCH=1 outside production', async () => {
+      process.env['CONFIG_WATCH'] = '1';
+      makeRepo(tmpDir);
+      const svc = new FsConfigService(tmpDir);
+      await svc.load('test');
+      const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+      const unsubscribe = svc.watch();
+      try {
+        expect(typeof unsubscribe).toBe('function');
+        expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('Watching'));
+      } finally {
+        unsubscribe();
+        infoSpy.mockRestore();
+      }
     });
   });
 });

@@ -1,4 +1,20 @@
 version: 2
+
+# Docker Hardened Image bases live on dhi.io, which refuses anonymous pulls — so
+# without this Dependabot cannot read the manifests and base-image update PRs for
+# any Dockerfile using `FROM dhi.io/...` simply stop appearing. Nothing errors,
+# which is what makes it worth being explicit about.
+#
+# PREREQUISITE: these are DEPENDABOT secrets, a separate store from Actions
+# secrets — set them under Settings > Secrets and variables > Dependabot.
+# Note the username must be a secret here: Dependabot registry config cannot
+# reference `vars`, which is what the Actions workflows use for it.
+registries:
+  dhi:
+    type: docker-registry
+    url: dhi.io
+    username: ${{secrets.DOCKERHUB_USERNAME}}
+    password: ${{secrets.DOCKERHUB_TOKEN}}
 updates:
   # npm/pnpm — one entry at the workspace root covers all packages because
   # pnpm-lock.yaml holds the full dependency graph for the monorepo.
@@ -8,11 +24,25 @@ updates:
     target-branch: "feature"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
       time: "03:00"
       timezone: "UTC"
-    open-pull-requests-limit: 5
+    # Do not adopt a release until it has been public for 7 days. A freshly
+    # published version is the window in which a compromised release is still
+    # undetected. GitHub applies an implicit 3-day cooldown already; 7 is the
+    # threshold zizmor checks for (zizmor dependabot-cooldown).
+    #
+    # This does NOT delay security patches: per GitHub's docs the cooldown option
+    # is only available for version updates, not security updates. A CVE fix still
+    # arrives immediately.
+    cooldown:
+      default-days: 7
+    # 5 was throttling this repo: the limit counts open *version-update* PRs, and
+    # the grouped production/development PRs plus a few singletons sat right at it,
+    # so no further npm PR could be raised. Observed 2026-08-04 — the production
+    # group PR appeared within minutes of slots being freed. Grouped updates make a
+    # handful of PRs normal here, so 10 leaves headroom without becoming a flood.
+    open-pull-requests-limit: 10
     labels:
       - "dependencies"
     commit-message:
@@ -29,8 +59,100 @@ updates:
       # typescript-eslint does not support TS 7 yet — hold the major.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
-      # vitest 4 needs vite 6 in lockstep — hold the major.
+      # Now on vitest 4.1.11 (taken here as the CVE-2026-84373 floor, see below),
+      # so the old "vitest 4 needs vite 6 in lockstep" reason is spent. What is
+      # held now is the v5 major, for a different and concrete reason: vitest 5
+      # requires Vite 6.4 while apps/web is still on vite 7 via next, and its
+      # "clear mocks by default before each test" change breaks suites silently
+      # rather than loudly. Dependabot proposed exactly that jump in #764 and it
+      # went red. Revisit v5 deliberately, with the mock audit, not on a Monday.
+      #
+      # Holding the major does NOT hold the 4.x line — patches and minors still
+      # flow, which is what matters for the next advisory on this package. That
+      # is the thing the previous hold got wrong: it blocked the 3.x -> 4.x move
+      # that CVE-2026-84373 needed, so the fix could only reach us sideways as a
+      # security PR proposing v5, which could never merge.
       - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      # @vitest/coverage-v8 peers on the EXACT vitest version, so its major can
+      # only move when vitest's does — and vitest's is held above. #559 proposed
+      # coverage-v8 4.1.10 against vitest 3, which passes CI (unmet peers are a
+      # warning, and `test:coverage` is continue-on-error) while silently
+      # producing no coverage for SonarCloud. Keep the two majors coupled: both
+      # sit at 4.1.11 here, and `test:coverage` was verified to emit a non-empty
+      # lcov (129 SF records) rather than assumed.
+      - dependency-name: "@vitest/coverage-v8"
+        update-types: ["version-update:semver-major"]
+      # Tailwind majors are migrations, not bumps: v4 (landed in #593, issue #586)
+      # moved the JS config into CSS-first `@theme`, swapped the PostCSS plugin for
+      # @tailwindcss/postcss, and renamed utilities in ways that change appearance
+      # without failing a build (`shadow` -> `shadow-sm`, `outline-none` ->
+      # `outline-hidden`). An un-migrated class silently emits no CSS, and jsdom
+      # tests cannot see it — verifying a Tailwind major needs a before/after
+      # screenshot diff. So the major stays held and is taken deliberately; 4.x
+      # minor and patch updates are unaffected by this entry and flow as normal.
+      #
+      # @tailwindcss/postcss is held WITH it, and must be: it depends on
+      # `tailwindcss` at an EXACT version (4.3.3 pins tailwindcss 4.3.3, plus
+      # @tailwindcss/node and @tailwindcss/oxide). Holding only the engine would let
+      # a v5 plugin land against a v4 engine and pull its own second copy of
+      # tailwindcss into the tree — the same duplicate-copy trap that broke the
+      # ioredis/bullmq typing in #585.
+      - dependency-name: "tailwindcss"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@tailwindcss/postcss"
+        update-types: ["version-update:semver-major"]
+      # @vitejs/plugin-react v6 peers on `vite ^8`, and the vite in this tree is
+      # not ours to choose — it arrives transitively through vitest 3, whose major
+      # is held above. #711 proposed v6 and died at test start with
+      # ERR_PACKAGE_PATH_NOT_EXPORTED on `vite/internal`, because plugin-react 6
+      # resolved against vite 7.3.6. This is the same lockstep shape as
+      # vitest/@vitest/coverage-v8: the plugin major can only move after vite does.
+      # 5.2.0 is taken instead (it peers on `^4 || ^5 || ^6 || ^7 || ^8`, so it is
+      # good both today and after a vite 8 move) and only the v6 major is held.
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
+      # openid-client v6 is an API rewrite, not a bump — the class-based surface
+      # (`Issuer`, `Client`, `generators`, `custom`) is gone in favour of functions
+      # over a Configuration object, so apps/web/src/lib/oidc/keycloak.ts does not
+      # typecheck against it at all (#716). Tracked in #724. Held rather than done
+      # in passing because it is the live Keycloak login path: green CI does not
+      # prove it, it needs a real authorization-code + PKCE round trip, and the
+      # epic/keycloak-iam branch may rewrite this adapter anyway.
+      - dependency-name: "openid-client"
+        update-types: ["version-update:semver-major"]
+      # fastify-type-provider-zod v7 requires zod v4 — it imports `safeEncode` from
+      # `zod/v4/core`, which does not exist under zod 3, so apps/api fails at module
+      # load and every API test dies (#714). zod's own major is held WITH it, and
+      # must be: `zod` is declared in nine manifests here, and letting one of them
+      # move alone would put two incompatible copies of zod in the tree — v3 and v4
+      # schema objects are not interchangeable across a package boundary, and that
+      # surfaces as a runtime type error rather than a build failure (the same
+      # duplicate-copy trap as the ioredis/bullmq typing in #585). Both move
+      # together in #725.
+      - dependency-name: "fastify-type-provider-zod"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "zod"
+        update-types: ["version-update:semver-major"]
+      # ioredis v6 CANNOT land while the pnpm-workspace.yaml override pins
+      # `ioredis: ^5.11.1`, which is why #744 is lockfile-only and would be
+      # reverted by the next install. That override is not incidental: bullmq
+      # pins ioredis 5.10.1 EXACTLY, so without it the tree carries two copies and
+      # TypeScript refuses to assign a `Redis` from one to the `ConnectionOptions`
+      # of the other — 16 errors, #573/#585. The hold and the override lift
+      # together, when bullmq moves its own pin; align with it rather than
+      # dropping the override.
+      - dependency-name: "ioredis"
+        update-types: ["version-update:semver-major"]
+      # next v16 is a framework migration, not a bump, and there is no security
+      # pressure for it: the two CRITICAL RCEs (CVE-2026-75604,
+      # GHSA-2xp9-vwfh-vxw4) were cleared on the 15.x line by taking 15.5.24+,
+      # which is what this tree runs. #734 proposes 16.3.4. Held so it is taken
+      # deliberately with its own test pass — apps/web is the participant-facing
+      # portal, and a Next major changes routing and rendering behaviour that a
+      # jsdom suite does not exercise. 15.x minors and patches are unaffected by
+      # this entry and keep flowing, which is what matters for the next advisory.
+      - dependency-name: "next"
         update-types: ["version-update:semver-major"]
 
   # GitHub Actions — keeps CI workflow action versions current
@@ -40,10 +162,19 @@ updates:
     target-branch: "feature"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
       time: "03:15"
       timezone: "UTC"
+    # Do not adopt a release until it has been public for 7 days. A freshly
+    # published version is the window in which a compromised release is still
+    # undetected. GitHub applies an implicit 3-day cooldown already; 7 is the
+    # threshold zizmor checks for (zizmor dependabot-cooldown).
+    #
+    # This does NOT delay security patches: per GitHub's docs the cooldown option
+    # is only available for version updates, not security updates. A CVE fix still
+    # arrives immediately.
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "ci"
@@ -56,6 +187,9 @@ updates:
 
   # Docker base images — one entry per directory containing a Dockerfile
   - package-ecosystem: "docker"
+    # Needed to read dhi.io manifests; see the registries block at the top.
+    registries:
+      - dhi
     # Check manifests on and raise PRs against the integration branch;
     # security updates still target the default branch (GitHub limitation).
     target-branch: "feature"
@@ -65,10 +199,19 @@ updates:
       - "/apps/worker"
       - "/infra/keycloak"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
       time: "03:30"
       timezone: "UTC"
+    # Do not adopt a release until it has been public for 7 days. A freshly
+    # published version is the window in which a compromised release is still
+    # undetected. GitHub applies an implicit 3-day cooldown already; 7 is the
+    # threshold zizmor checks for (zizmor dependabot-cooldown).
+    #
+    # This does NOT delay security patches: per GitHub's docs the cooldown option
+    # is only available for version updates, not security updates. A CVE fix still
+    # arrives immediately.
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "docker"
@@ -78,3 +221,20 @@ updates:
       docker:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+
+    ignore:
+      # Hold base-image bumps that cross a RELEASE CHANNEL. signals-dpg took
+      # exactly this after the dhi.io registry config reached main and the first
+      # two docker PRs it produced (signals-dpg#618, #619) both crossed one.
+      #
+      # node: even majors are LTS. 24 is Active LTS to 2028-04-30; 26 only
+      # becomes LTS on 2026-10-28. A major here also has to move all 8 FROM
+      # lines plus ci.yml's node-version and engines together, so it is a
+      # deliberate PR rather than a bump. Patches/minors on 24 still land.
+      - dependency-name: "dhi.io/node"
+        update-types: ["version-update:semver-major"]
+      # busybox has no stable/mainline split, so only the major is held — it is
+      # the tiny non-root shim in the keycloak image and a major is worth a
+      # deliberate look rather than an automatic merge.
+      - dependency-name: "dhi.io/busybox"
+        update-types: ["version-update:semver-major"]

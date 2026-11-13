@@ -1,8 +1,6 @@
 /**
- * OpenAPI helpers for the canonical error envelope. Routes spread
- * `errorResponses(...)` into their `schema.response` map so every declared
- * error status documents (and safely serializes) the standard envelope
- * produced by the global error handler.
+ * OpenAPI helpers for the api app's error envelope. Routes spread
+ * `errorResponses(...)` into `schema.response` to document their error statuses.
  */
 
 import { z } from 'zod';
@@ -29,14 +27,9 @@ export const ErrorEnvelopeSchema = z
   .passthrough();
 
 /**
- * Compile-time anchor: if the schema's inferred output drifts from the real
- * {@link ErrorEnvelope} wire type produced by the error handler (missing
- * field, wrong type, required field made optional), this fails to typecheck.
+ * Fails to typecheck if the schema stops matching {@link ErrorEnvelope}.
  *
- * Passthrough widens the output beyond the exact type, and zod infers
- * optionals as `T | undefined` (rejected verbatim under
- * `exactOptionalPropertyTypes`), so the guard widens the target's property
- * types with `| undefined` instead of using a direct `z.ZodType` assignment.
+ * Property types are widened with `| undefined` because zod infers optionals that way.
  */
 type _Expect<T extends true> = T;
 type _WidenOptional<T> = { [K in keyof T]: T[K] | undefined };

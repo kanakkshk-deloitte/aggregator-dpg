@@ -1,12 +1,9 @@
 /**
  * Server-side session accessor.
  *
- * Wraps the session-store lookup in React's `cache()` so every Server
- * Component in the same render tree shares one Redis hit per request.
- *
- * NOT a React context — this is a server-only helper. The browser-facing
- * AuthProvider lives in `auth-context.tsx` (legacy mock; will be replaced
- * once BFF is wired).
+ * Wrapped in React's `cache()` so all Server Components in one request share
+ * a single session-store lookup. Server-only; the browser-side provider is in
+ * `auth-context.tsx`.
  */
 
 import { cache } from 'react';

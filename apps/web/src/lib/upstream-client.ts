@@ -1,9 +1,8 @@
 /**
  * BFF → upstream API client.
  *
- * Pulls tokens from the active session, transparently refreshes the access
- * token if it is near expiry, and forwards the call to the resource API
- * with a Bearer header. Tokens never reach the browser.
+ * Uses the session's access token, refreshing it when near expiry, and sends
+ * it as a Bearer header. Tokens never reach the browser.
  */
 
 import { cookies } from 'next/headers';
@@ -29,7 +28,7 @@ export async function getFreshAccessToken(): Promise<string | null> {
 
   const refreshed = await getOidcAdapter().refresh(session.refreshToken);
   if (!refreshed.ok) {
-    // Refresh failed — kill session, force re-login on next request.
+    // Refresh failed: destroy the session so the next request re-logs in.
     const sid = (await cookies()).get(SESSION_COOKIE)?.value;
     if (sid) await getSessionStore().destroy(sid);
     return null;
@@ -74,7 +73,7 @@ export async function callApi(path: string, opts: UpstreamCallOptions = {}): Pro
     headers.set('Content-Type', 'application/json');
   }
 
-  // Default 15s timeout so a hung upstream cannot block the BFF thread.
+  // Default 15s timeout.
   const signal = opts.signal ?? AbortSignal.timeout(15_000);
   return fetch(base + path, {
     method: opts.method ?? 'GET',

@@ -1,12 +1,12 @@
 /**
- * Onboarding metrics endpoints.
+ * Onboarding metrics endpoints of the aggregator API (`@aggregator-dpg/api`).
  *
  *   GET /v1/onboarding/summary       totals across both sources
  *   GET /v1/onboarding/by-source     bulk vs link breakdown
  *
  * Reads only from the `onboarding` rollup table. Bulk rows are written by
  * the Finaliser (one per upload). Link rows are written by the Metrics
- * Aggregator (one per (aggregator, link, hour-bucket)).
+ * Coordinator (one per (aggregator, link, hour-bucket)).
  */
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -17,6 +17,7 @@ import { getDb } from '../db/client.js';
 import { onboarding } from '../db/schema.js';
 import { httpError } from '../errors/http-error.js';
 import { errorResponses } from '../errors/openapi.js';
+import { callerFromAuth, recordRouteCaller } from '../services/authz/index.js';
 
 const RangeQuerySchema = z.object({
   from: z.string().datetime({ offset: true }).optional(),
@@ -50,6 +51,7 @@ export async function registerOnboardingRoutes(app: FastifyInstance): Promise<vo
   app.get(
     '/v1/onboarding/summary',
     {
+      config: { rbac: { capability: 'profiles.view' } },
       schema: {
         tags: ['onboarding'],
         summary: 'Aggregated onboarding totals',
@@ -66,7 +68,7 @@ export async function registerOnboardingRoutes(app: FastifyInstance): Promise<vo
     async (req, reply) => {
       const auth = await requireAuth(req);
       const range = parseRange(req.query as z.infer<typeof RangeQuerySchema>);
-      const conditions = [eq(onboarding.aggregatorId, auth.aggregatorId)];
+      const conditions = [eq(onboarding.userId, auth.aggregatorId)];
       if (range.from) conditions.push(gte(onboarding.periodStart, range.from));
       if (range.to) conditions.push(lte(onboarding.periodEnd, range.to));
 
@@ -93,6 +95,7 @@ export async function registerOnboardingRoutes(app: FastifyInstance): Promise<vo
   app.get(
     '/v1/onboarding/by-source',
     {
+      config: { rbac: { capability: 'profiles.view' } },
       schema: {
         tags: ['onboarding'],
         summary: 'Onboarding totals grouped by source',
@@ -109,7 +112,7 @@ export async function registerOnboardingRoutes(app: FastifyInstance): Promise<vo
     async (req, reply) => {
       const auth = await requireAuth(req);
       const range = parseRange(req.query as z.infer<typeof RangeQuerySchema>);
-      const conditions = [eq(onboarding.aggregatorId, auth.aggregatorId)];
+      const conditions = [eq(onboarding.userId, auth.aggregatorId)];
       if (range.from) conditions.push(gte(onboarding.periodStart, range.from));
       if (range.to) conditions.push(lte(onboarding.periodEnd, range.to));
 
@@ -136,10 +139,7 @@ export async function registerOnboardingRoutes(app: FastifyInstance): Promise<vo
 }
 
 /**
- * Converts the route-validated `?from=&to=` query into Date bounds.
- *
- * The route's `querystring: RangeQuerySchema` already validated and replaced
- * `req.query`, so this only coerces the ISO strings to Dates.
+ * Converts the validated `?from=&to=` query into Date bounds.
  *
  * @param query - The zod-validated range query from `req.query`.
  * @returns Optional from/to Date bounds.
@@ -162,5 +162,6 @@ async function requireAuth(req: FastifyRequest): Promise<AuthContext> {
   if (!result.context.aggregatorId) {
     throw httpError('UNAUTHORIZED', { detail: 'Token missing aggregator_id claim.' });
   }
+  await recordRouteCaller(req, callerFromAuth(result.context));
   return result.context;
 }

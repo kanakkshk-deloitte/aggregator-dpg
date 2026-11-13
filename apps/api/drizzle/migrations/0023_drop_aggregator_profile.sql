@@ -1,0 +1,36 @@
+-- Migration 0023 — drop `aggregator_profile`.
+--
+-- The table was created in 0005 as a 1:1 secondary row for post-login profile
+-- fields (`contact_name`, `personas`, `services`, `verified_certificate`,
+-- `profile_completed_at`). It was never populated: registration inserted an
+-- all-defaults stub, and the only value-writing path — `PATCH
+-- /v1/aggregators/profile/me` with a `body.profile` — had no client.
+--
+-- Migration 0018 superseded its extensibility goal with `aggregators.profile`
+-- + `aggregators.profile_ref`, which is where registration payloads already
+-- land. The two GIN indexes justified as "Beckn catalog discovery" had no
+-- reader in any query.
+--
+-- DEPLOY CONSTRAINT — read before rolling this out.
+--   This ships in the SAME release as the code that stopped reading the table.
+--   `server.ts` runs `runMigrations()` at boot, so under a rolling deploy the
+--   first new pod drops the table while old pods are still serving
+--   `GET /v1/aggregators/profile/me` and the registration stub-insert — both
+--   of which would then hard-fail against a missing relation.
+--
+--   Deploy stop-the-world (scale the old ReplicaSet to zero first), or split
+--   this migration into a follow-up release once the new code is fully rolled
+--   out. Do NOT rolling-deploy this as-is.
+--
+-- NOT REVERSIBLE.
+--
+-- No CASCADE: the table's own CHECK constraints, indexes and `set_updated_at`
+-- trigger go with a plain DROP, and nothing else in the schema references
+-- `aggregator_profile` (its only FK is outbound, to `aggregators.id`). Leaving
+-- CASCADE off means an unexpected future dependent fails this migration loudly
+-- instead of being silently dropped.
+--
+-- The shared `set_updated_at()` function is deliberately NOT dropped —
+-- `aggregators_set_updated_at` still depends on it.
+
+DROP TABLE IF EXISTS "aggregator_profile";

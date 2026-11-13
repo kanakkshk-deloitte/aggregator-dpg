@@ -1,0 +1,37 @@
+{
+  "name": "@aggregator-dpg/rbac",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./interface": {
+      "import": "./dist/interface.js",
+      "types": "./dist/interface.d.ts"
+    },
+    "./testing": {
+      "import": "./dist/testing/index.js",
+      "types": "./dist/testing/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@aggregator-dpg/shared-primitives": "workspace:*",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@aggregator-dpg/tsconfig": "workspace:*",
+    "@types/node": "^26.4.1",
+    "@vitest/coverage-v8": "^4.1.12",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.12"
+  }
+}

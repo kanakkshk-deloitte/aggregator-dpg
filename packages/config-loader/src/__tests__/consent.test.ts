@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConfigError } from '@aggregator-dpg/shared-primitives/errors';
@@ -219,7 +219,7 @@ describe('loadConsentConfig', () => {
     const config = await loadConsentConfig('orange_dot', 'onetac', tmpDir);
     // Brand org terms content should win
     expect(config.audiences.org.documents.terms.versions[0].content).toBe('## OneTAC Terms v1');
-    // Aggregator docs unchanged — came from network file
+    // Coordinator docs unchanged — came from network file
     expect(config.audiences.aggregator.documents.terms.versions[0].content).toBe(`## Terms v1`);
   });
 
@@ -288,5 +288,61 @@ describe('loadConsentConfig', () => {
     // Org audience came from the network file and is untouched
     expect(config.audiences.org.documents.terms.current_version).toBe(1);
     expect(config.audiences.org.documents.terms.versions[0]?.content).toBe('## Terms v1');
+  });
+
+  it('throws ConfigError when the consent file contains malformed JSON', async () => {
+    const dir = join(tmpDir, 'config', 'blue_dot', 'schemas', 'aggregator');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'consent.json'), '{ this is not valid JSON', 'utf8');
+
+    await expect(loadConsentConfig('blue_dot', undefined, tmpDir)).rejects.toMatchObject({
+      code: 'CONSENT_CONFIG_READ_ERROR',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: findRepoRoot (exercised indirectly via loadConsentConfig without a
+// configRoot argument — it falls back to discovering the root from cwd()).
+// ---------------------------------------------------------------------------
+
+describe('loadConsentConfig — repo-root discovery from process.cwd()', () => {
+  let originalCwd: string;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tmpDir = join(tmpdir(), `consent-cwd-test-${Date.now()}`);
+    mkdirSync(tmpDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('discovers the repo root from process.cwd() when configRoot is omitted', async () => {
+    // process.cwd() itself is one of the searched candidates.
+    writeConsentFile(tmpDir);
+    process.chdir(tmpDir);
+
+    const config = await loadConsentConfig('some_network');
+    expect(config.audiences.org.documents.terms.current_version).toBe(1);
+  });
+
+  it('throws ConfigError when no config/schemas/aggregator/ is found within two parent levels', async () => {
+    // Use a fully isolated temp tree with no config/ directory anywhere nearby.
+    const isolatedRoot = mkdtempSync(join(tmpdir(), 'consent-isolated-'));
+    const deepDir = join(isolatedRoot, 'a', 'b');
+    mkdirSync(deepDir, { recursive: true });
+    process.chdir(deepDir);
+
+    try {
+      await expect(loadConsentConfig('some_network')).rejects.toMatchObject({
+        code: 'CONSENT_CONFIG_ROOT_NOT_FOUND',
+      });
+    } finally {
+      rmSync(isolatedRoot, { recursive: true, force: true });
+    }
   });
 });

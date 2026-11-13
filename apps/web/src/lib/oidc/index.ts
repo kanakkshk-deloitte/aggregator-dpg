@@ -1,8 +1,8 @@
 /**
  * OIDC adapter factory.
  *
- * Reads env at first call and returns a process-wide singleton. All BFF
- * routes share one instance so issuer discovery happens once.
+ * Reads env on first call and returns a process-wide singleton, so issuer
+ * discovery happens once.
  */
 
 import { KeycloakAdapter } from './keycloak';
@@ -13,12 +13,11 @@ let instance: IdentityProviderAdapter | null = null;
 /**
  * Returns the configured identity-provider adapter.
  *
- * Required env:
- *   - OIDC_ISSUER (e.g. http://localhost:8080/realms/aggregator)
- *   - OIDC_CLIENT_ID (e.g. aggregator-portal)
- * Optional env:
- *   - OIDC_CLIENT_SECRET (omit for public client)
- *   - OIDC_SCOPE (default: "openid profile email")
+ * Requires `OIDC_ISSUER` and `OIDC_CLIENT_ID`. Optional: `OIDC_CLIENT_SECRET`
+ * (omit for a public client) and `OIDC_SCOPE` (default "openid profile email").
+ *
+ * @returns The shared adapter.
+ * @throws {Error} If `OIDC_ISSUER` or `OIDC_CLIENT_ID` is unset.
  */
 export function getOidcAdapter(): IdentityProviderAdapter {
   if (instance) return instance;

@@ -13,7 +13,7 @@ import { ConfigError } from '@aggregator-dpg/shared-primitives/errors';
 import type { RegisteredPackage } from './discovery.js';
 
 /**
- * Returns true if `schema` is a genuine Zod schema (has `_def`).
+ * Returns true if `schema` is a Zod schema (has `_def`).
  * Duck-typed test fixtures that lack `_def` fall back to z.unknown().
  */
 function isZodSchema(schema: unknown): schema is z.ZodTypeAny {
@@ -28,8 +28,7 @@ function isZodSchema(schema: unknown): schema is z.ZodTypeAny {
  * The resulting schema is `z.object({ <configKey>: <packageSchema>, ... }).strict()`.
  * Unknown top-level keys (not owned by any package) are rejected.
  *
- * Schemas that are not genuine Zod instances (e.g., test doubles) fall back to
- * `z.unknown()` so they pass validation without type-checking.
+ * Schemas that are not Zod instances (e.g. test doubles) fall back to `z.unknown()`.
  *
  * @param registry - Map of discovered packages keyed by configKey.
  * @returns Composite strict Zod object schema.
@@ -47,11 +46,8 @@ export function buildCompositeSchema(
 /**
  * Validates the merged config tree against all per-package Zod schemas.
  *
- * If the registry is empty, validation is skipped and the config is returned as-is
- * (no packages have registered schemas yet).
- *
- * All validation errors are collected before throwing so every offending field
- * is reported in a single error rather than stopping at the first.
+ * Returns the config unchanged when the registry is empty. Reports every
+ * invalid field in one error.
  *
  * @param config - Merged and interpolated config tree.
  * @param registry - Map of discovered packages keyed by configKey.

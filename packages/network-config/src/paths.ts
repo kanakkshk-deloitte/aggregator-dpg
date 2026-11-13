@@ -1,9 +1,9 @@
 /**
- * Pure path-resolution helpers that derive `AGGREGATOR_CONFIG_PATH` and
- * `SCHEMA_ROOT_DIR` from the two high-level brand selectors
- * (`AGGREGATOR_NETWORK` + `AGGREGATOR_BRAND`) so a deployment only needs to
- * set those two vars. Explicit `AGGREGATOR_CONFIG_PATH` / `SCHEMA_ROOT_DIR`
- * env vars are still honoured as overrides (backwards-compatible).
+ * Path helpers for the network-config package.
+ *
+ * Derive the config and schema paths from `AGGREGATOR_NETWORK` and
+ * `AGGREGATOR_BRAND`. `AGGREGATOR_CONFIG_PATH` and `SCHEMA_ROOT_DIR`
+ * override the derived values when set.
  *
  * Derivation rule:
  *   dir = `${CONFIG_ROOT}/${AGGREGATOR_NETWORK}[/${AGGREGATOR_BRAND}]`
@@ -16,8 +16,9 @@
 import path from 'node:path';
 
 /**
- * Subset of `process.env` consulted by the path-resolution helpers.
- * Pass a custom object in tests instead of mutating `process.env`.
+ * Subset of `process.env` read by the path helpers.
+ *
+ * Tests pass their own object instead of changing `process.env`.
  */
 export interface ConfigPathEnv {
   CONFIG_ROOT?: string;
@@ -26,21 +27,33 @@ export interface ConfigPathEnv {
   AGGREGATOR_CONFIG_PATH?: string;
   SCHEMA_ROOT_DIR?: string;
   AGGREGATOR_NETWORK_SOURCE?: string;
+  AGGREGATOR_PARTICIPANT_CONSENT_SOURCE?: string;
 }
 
 /**
- * Resolves the deploy-time override for the signalstack `network.json`
- * URL. When `AGGREGATOR_NETWORK_SOURCE` is set (non-empty after trim)
- * it wins over `aggregator.network.source` from the YAML, letting a
- * deployment swap the schema source (e.g. via a Kubernetes ConfigMap)
- * without rebuilding the image or editing the mounted config (#512).
+ * Reads the `AGGREGATOR_NETWORK_SOURCE` override for the `network.json` URL.
+ *
+ * When set, it replaces `aggregator.network.source` from the YAML.
  *
  * @param env - Env-var bag; defaults to `process.env`.
  * @returns The override URL, or `undefined` when unset/blank.
  */
 export function resolveNetworkSourceOverride(env: ConfigPathEnv = process.env): string | undefined {
   const value = env.AGGREGATOR_NETWORK_SOURCE?.trim();
-  return value ? value : undefined;
+  return value || undefined;
+}
+
+/**
+ * Reads the `AGGREGATOR_PARTICIPANT_CONSENT_SOURCE` override for the consent URL.
+ *
+ * When set, it replaces `aggregator.network.consent_source` from the YAML.
+ *
+ * @param env - Env-var bag; defaults to `process.env`.
+ * @returns The override URL, or `undefined` when unset/blank.
+ */
+export function resolveConsentSourceOverride(env: ConfigPathEnv = process.env): string | undefined {
+  const value = env.AGGREGATOR_PARTICIPANT_CONSENT_SOURCE?.trim();
+  return value || undefined;
 }
 
 /**
@@ -53,10 +66,22 @@ export function resolveNetworkSourceOverride(env: ConfigPathEnv = process.env): 
  * @returns Absolute directory path for the active network/brand config.
  */
 export function resolveConfigDir(env: ConfigPathEnv = process.env): string {
-  const root = env.CONFIG_ROOT?.trim() || '/app/config';
+  const root = resolveConfigRoot(env);
   const net = env.AGGREGATOR_NETWORK?.trim() || 'blue_dot';
   const brand = env.AGGREGATOR_BRAND?.trim();
   return brand ? path.join(root, net, brand) : path.join(root, net);
+}
+
+/**
+ * Resolves the config root, which holds every network folder and the shared defaults.
+ *
+ * {@link resolveConfigDir} returns the active network folder under this root.
+ *
+ * @param env - Env-var bag; defaults to `process.env`.
+ * @returns Absolute path to the config root. Default: `/app/config`.
+ */
+export function resolveConfigRoot(env: ConfigPathEnv = process.env): string {
+  return env.CONFIG_ROOT?.trim() || '/app/config';
 }
 
 /**
@@ -88,20 +113,37 @@ export function resolveSchemaRoot(env: ConfigPathEnv = process.env): string {
 }
 
 /**
- * Resolves the active network and optional brand identifiers from env vars.
+ * Returns the candidate paths of an aggregator schema file, most specific first.
  *
- * These are the two high-level selectors used by both the web layer (to
- * determine which consent content to display) and the API layer (to determine
- * which consent version to record in the ledger). Using this helper in both
- * places guarantees the displayed content and the recorded version always
- * match the same config file.
+ * Callers use the first path that exists. A network or brand overrides the
+ * shared schema by placing a complete copy at
+ * `<network>[/<brand>]/schemas/aggregator/<file>`. Partial files are not
+ * merged.
  *
- * Defaults: `AGGREGATOR_NETWORK=blue_dot` (single-sourced from
- * {@link resolveConfigDir}). Empty/whitespace `AGGREGATOR_BRAND` is treated
- * as absent (`undefined`) — the same rule applied by `resolveConfigDir`.
+ * Keep in sync with `apps/web/src/lib/config-paths.ts`, which does not
+ * depend on this package.
+ *
+ * @param file - Bare schema file name, e.g. `registration.v1.json`.
+ * @param env - Env-var bag; defaults to `process.env`.
+ * @returns Root-relative paths, most specific first.
+ */
+export function aggregatorSchemaRelPaths(file: string, env: ConfigPathEnv = process.env): string[] {
+  const net = env.AGGREGATOR_NETWORK?.trim() || 'blue_dot';
+  const brand = env.AGGREGATOR_BRAND?.trim();
+  const relPath = (...prefix: string[]): string =>
+    path.join(...prefix, 'schemas', 'aggregator', file);
+  return brand ? [relPath(net, brand), relPath(net), relPath()] : [relPath(net), relPath()];
+}
+
+/**
+ * Resolves the active network and optional brand from env vars.
+ *
+ * The web app uses it to pick the consent content to show, and the api uses
+ * it to pick the consent version to record, so both read the same file.
+ * Defaults to `blue_dot`. A blank `AGGREGATOR_BRAND` counts as unset.
  *
  * @param env - Env-var bag; defaults to `process.env`.
- * @returns `{ network, brand? }` — `brand` is `undefined` when not set.
+ * @returns `{ network, brand? }`; `brand` is omitted when unset.
  */
 export function resolveActiveNetwork(env: ConfigPathEnv = process.env): {
   network: string;

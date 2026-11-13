@@ -11,10 +11,8 @@ const BRAND_BORDER = '#e8eaf1';
 const BRAND_BG = '#f7f8fb';
 
 /**
- * Network-driven brand surface for outbound emails. Sourced from
- * `getNetworkConfig().aggregator.brand` at server boot via
- * `setEmailBrand` — keeps each template synchronous + free of an
- * upstream config lookup.
+ * Brand values for outbound emails. Set from
+ * `getNetworkConfig().aggregator.brand` at server boot via `setEmailBrand`.
  */
 export interface EmailBrand {
   short_name: string;
@@ -97,8 +95,41 @@ export function renderShell(opts: ShellOptions): string {
 </html>`;
 }
 
+/** Schemes a CTA may link to. Anything else is a phishing vector in email. */
+const SAFE_HREF_SCHEMES: ReadonlySet<string> = new Set(['http:', 'https:']);
+
 /**
- * Renders a primary CTA button.
+ * Validates and escapes a CTA destination for use in an `href` attribute.
+ *
+ * The button helpers are the only place a URL reaches HTML without passing
+ * through `substitute`, so the check lives here. It blocks attribute breakout
+ * and `javascript:` links.
+ *
+ * @param href - Destination URL.
+ * @returns The URL, escaped for attribute context.
+ * @throws {Error} If the URL is unparseable or its scheme is not http(s).
+ */
+function safeHref(href: string): string {
+  let scheme: string;
+  try {
+    scheme = new URL(href).protocol;
+  } catch {
+    throw new Error(`unsafe CTA href (unparseable): ${href.slice(0, 60)}`);
+  }
+  if (!SAFE_HREF_SCHEMES.has(scheme)) {
+    throw new Error(`unsafe CTA href scheme: ${scheme}`);
+  }
+  // `&` becomes `&amp;` — correct for an attribute value; clients decode it.
+  return escapeHtml(href);
+}
+
+/**
+ * Renders an inline CTA button.
+ *
+ * @param label - Button text.
+ * @param href - Target URL; must be http(s).
+ * @param color - `primary` uses the brand colour, `danger` red.
+ * @returns HTML for the button.
  */
 export function ctaButton(
   label: string,
@@ -106,14 +137,97 @@ export function ctaButton(
   color: 'primary' | 'danger' = 'primary',
 ): string {
   const bg = color === 'danger' ? '#dc2626' : getEmailBrand().primary_color;
-  return `<a href="${href}" style="display:inline-block;background:${bg};color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;font-size:14px;">${escapeHtml(label)}</a>`;
+  return `<a href="${safeHref(href)}" style="display:inline-block;background:${bg};color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;font-size:14px;">${escapeHtml(label)}</a>`;
+}
+
+/**
+ * Status pill shown above an email heading (e.g. "Action required"). Uses a
+ * table cell because Outlook drops padding on inline elements.
+ *
+ * @param label - Short pill text; upper-cased for emphasis by the caller's CSS.
+ * @param tone - `info` for neutral notices, `action` for anything needing a reply.
+ * @returns HTML for the pill.
+ */
+export function pill(label: string, tone: 'info' | 'action' = 'info'): string {
+  const bg = tone === 'action' ? '#dbeafe' : '#f1f5f9';
+  const fg = tone === 'action' ? '#1d4ed8' : '#475069';
+  return (
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px;">` +
+    `<tr><td style="background:${bg};color:${fg};border-radius:999px;padding:6px 14px;` +
+    `font-size:11.5px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">` +
+    `${escapeHtml(label)}</td></tr></table>`
+  );
+}
+
+/**
+ * Full-width CTA button, for the main action of an email.
+ *
+ * @param label - Button text.
+ * @param href - Target URL; already signed/encoded by the caller.
+ * @param color - `primary` uses the brand colour, `danger` red.
+ * @returns HTML for a full-width button row.
+ */
+export function ctaButtonFull(
+  label: string,
+  href: string,
+  color: 'primary' | 'danger' = 'primary',
+): string {
+  const bg = color === 'danger' ? '#dc2626' : getEmailBrand().primary_color;
+  return (
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">` +
+    `<tr><td align="center" style="background:${bg};border-radius:12px;">` +
+    `<a href="${safeHref(href)}" style="display:block;padding:15px 22px;color:#ffffff;` +
+    `text-decoration:none;font-weight:700;font-size:15px;">${escapeHtml(label)} &rarr;</a>` +
+    `</td></tr></table>`
+  );
 }
 
 export function escapeHtml(s: string): string {
   return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+// ── Block helpers ───────────────────────────────────────────────────────────
+// These helpers own all body-block styling, so the copy files carry no inline CSS.
+
+/** Standard body paragraph. `html` must already be escaped or code-generated. */
+export function para(html: string): string {
+  return `<p style="margin:0 0 14px;font-size:14px;color:${BRAND_INK_500};line-height:1.55;">\n  ${html}\n</p>`;
+}
+
+/** Body paragraph with the wider bottom margin used before a footnote. */
+export function paraLast(html: string): string {
+  return `<p style="margin:0 0 22px;font-size:14px;color:${BRAND_INK_500};line-height:1.55;">\n  ${html}\n</p>`;
+}
+
+/** Top-of-body heading. */
+export function heading(html: string): string {
+  return `<h1 style="font-size:22px;font-weight:700;letter-spacing:-0.01em;margin:0 0 12px;color:${BRAND_INK};">\n  ${html}\n</h1>`;
+}
+
+/** Small grey closing note. */
+export function note(html: string): string {
+  return `<p style="margin:0;font-size:12px;color:#7c84a6;line-height:1.55;">\n  ${html}\n</p>`;
+}
+
+/** Warning callout — used for a rejection reason. */
+export function callout(html: string): string {
+  return (
+    `<div style="margin:18px 0 0;padding:14px;background:#fef2f2;border:1px solid #fecaca;` +
+    `border-radius:10px;font-size:13.5px;color:#7f1d1d;line-height:1.55;">${html}</div>`
+  );
+}
+
+/** Wraps a CTA button in its own row. */
+export function ctaRow(buttonHtml: string): string {
+  return `<div style="margin:0 0 18px;">\n  ${buttonHtml}\n</div>`;
+}
+
+/** Smaller closing paragraph — used for the rejection appeal line. */
+export function paraSmall(html: string): string {
+  return `<p style="margin:18px 0 0;font-size:13.5px;color:${BRAND_INK_500};line-height:1.55;">\n  ${html}\n</p>`;
 }

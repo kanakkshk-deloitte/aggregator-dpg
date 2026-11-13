@@ -1,4 +1,113 @@
 packages:
-  - "apps/*"
-  - "services/*"
-  - "packages/*"
+  - 'apps/*'
+  - 'services/*'
+  - 'packages/*'
+
+# Every override belongs in THIS block. pnpm 10 reads overrides from exactly one
+# source: adding a `pnpm.overrides` block to the root `package.json` does not merge
+# with this file, it *replaces* it — silently dropping the ioredis pin below and
+# resurrecting the duplicate-ioredis type errors it exists to prevent (#588).
+overrides:
+  # Keep exactly ONE copy of ioredis in the tree. bullmq pins `ioredis: 5.10.1`
+  # exactly (not a range), so without this our apps get 5.11.x while bullmq gets
+  # 5.10.1 — and TypeScript cannot assign a `Redis` from one copy to the `Redis`
+  # in the other copy's `ConnectionOptions`, because the class carries private
+  # members. That produced 16 `Type 'Redis' is not assignable to type
+  # 'ConnectionOptions'` errors in apps/worker and packages/queue and stalled
+  # Dependabot's ioredis bump (#573, #585) — misread at the time as ioredis 5.11
+  # having retyped its client. It had not; there were simply two of it.
+  #
+  # Verified both ways: with two copies, 16 type errors; with this override, zero,
+  # and the full test suite passes. Revisit when bullmq moves its own pin — check
+  # `bullmq`'s `dependencies.ioredis` and align rather than dropping the override,
+  # or the duplicate reappears silently.
+  ioredis: ^5.11.1
+
+  # Floor, not a pin. Nothing declares jiti directly — it arrives via eslint's
+  # optional peer and cosmiconfig-typescript-loader — and this range only keeps
+  # the tree off jiti 1.x. It does NOT collapse the 2.x copies: 2.6.1 (pulled by
+  # cosmiconfig-typescript-loader) and 2.7.0 (everything else) still coexist, which
+  # is fine because jiti is build-time only and carries no cross-copy types.
+  jiti: ^2.6.1
+
+  # Security bumps for vulnerable transitives (Trivy / GHSA). Range-scoped so
+  # only the vulnerable copies move; already-patched consumers are untouched.
+  #   postcss <8.5.26 → GHSA-r28c-9q8g-f849 + CVE-2026-45623 (HIGH), CVE-2026-41305
+  #     / -69153 (MED). apps/web already declares ^8.5.26; this dedups the
+  #     vulnerable transitive copy up to it.
+  #   sharp <0.35.4 → GHSA-rgj7-g3m4-5g8c (HIGH), the bundled libheif carrying
+  #     GHSA-g89c-p67h-r497 + GHSA-2jg2-4ch7-h545; 0.35.4 is the fix. This floor
+  #     previously read `sharp@<0.35.0: 0.35.0` for the older GHSA-f88m-g3jw-g9cj.
+  #     sharp is declared nowhere here — it arrives as next's optional peer — so
+  #     Dependabot cannot raise it.
+  #   @babel/core <7.29.6 → CVE-2026-49356 (LOW).
+  'postcss@<8.5.26': 8.5.26
+  'sharp@<0.35.5': 0.35.5
+  '@babel/core@<7.29.6': 7.29.6
+
+  # fast-uri 3.1.5 and 4.1.2 → four HIGH SSRF / host-confusion advisories:
+  # CVE-2026-75899, CVE-2026-75931, CVE-2026-75975, CVE-2026-76172. Fixed in
+  # 2.4.5 / 3.1.6 / 4.1.3. It arrives via fastify/ajv, is declared nowhere here,
+  # and so cannot be raised by Dependabot.
+  #
+  # Both major lines are in this tree and are floored SEPARATELY — collapsing
+  # them onto one version is the same duplicate/cross-major trap as ioredis
+  # above. The replacement is an exact version, not `'>=3.1.6'`: an open-ended
+  # `>=` is not bounded by the selector's major, so the 3.x floor silently
+  # pulled that copy up to 4.1.4 when first tried in signals-dpg.
+  #
+  # Raised again: 3.1.7 and 4.1.4 — the versions the previous floors produced —
+  # carry CVE-2026-86472 (host-case normalization bypass) and CVE-2026-86818
+  # (mailto header injection via percent-encoded field-name desynchronization).
+  # Fixed in 2.4.7 / 3.1.8 / 4.1.5. Each selector is widened to catch its own
+  # prior output; the two majors stay on separate copies.
+  # Raised again: 3.1.8/4.1.5 -> CVE-2026-110180/110306/110095/110725
+  # (host/XSS/path-traversal bypasses). Fixed in 3.1.9 / 4.2.3.
+  'fast-uri@>=3.0.0 <3.1.9': 3.1.9
+  'fast-uri@>=4.0.0 <4.2.3': 4.2.3
+
+  # vite/launch-editor arrive via vitest, declared nowhere here.
+  # CVE-2026-112946/112945 (vite) and CVE-2026-112942/112943/112944
+  # (launch-editor). Fixed in 7.3.7 / 2.14.2.
+  'vite@>=7.0.0 <7.3.7': 7.3.7
+  'launch-editor@<2.14.2': 2.14.2
+
+  # js-yaml 4.3.1, via cosmiconfig — a different major line from the ^5.4.2
+  # declared directly elsewhere. CVE-2026-84375. Fixed in 4.3.2.
+  'js-yaml@>=4.0.0 <4.3.2': 4.3.2
+
+  # undici 7.29.1/8.11.2 (via @scalar/json-magic, jsdom) -> CVE-2026-109869/
+  # 109841/109924 (DoS, SRI bypass). Fixed in 7.30.1 / 8.12.2.
+  'undici@>=7.0.0 <7.30.1': 7.30.1
+  'undici@>=8.0.0 <8.12.2': 8.12.2
+
+  # brace-expansion → CVE-2026-102276 and CVE-2026-102278 (HIGH) plus
+  # CVE-2026-102277 (MODERATE): ReDoS and uncontrolled recursion on crafted
+  # brace patterns. Three major lines are present in this tree (1.x and 2.x via
+  # the glob/minimatch family, 5.x via the newer consumers), so each is floored
+  # separately rather than collapsed — the same cross-major rule as fast-uri
+  # above. Declared nowhere here, so Dependabot cannot raise it.
+  'brace-expansion@<1.1.21': 1.1.21
+  'brace-expansion@>=2.0.0 <2.1.7': 2.1.7
+  'brace-expansion@>=5.0.0 <5.0.12': 5.0.12
+
+  # source-map-js <1.2.2 → CVE-2026-93749 (HIGH), DoS via malformed indexed
+  # source maps. Arrives via postcss and the css tooling; not declared here.
+  'source-map-js@<1.2.2': 1.2.2
+
+  # shell-quote <1.11.0 → GHSA (MODERATE), argument injection via crafted
+  # quoting. Transitive, not declared here.
+  'shell-quote@<1.11.0': 1.11.0
+
+  # uuid <11.1.1 → GHSA-w5hq-g745-h8pq (MODERATE): missing buffer bounds check
+  # in v3/v5/v6 when `buf` is passed. NOT reachable here — it arrives only via
+  # `apps/api > exceljs > uuid` (8.3.2), and exceljs calls `uuidv4()` with no
+  # `buf`, from a conditional-formatting path the template generator never
+  # emits. Raised anyway so `pnpm audit --prod` is quiet and a real advisory is
+  # not lost in a known-noisy line.
+  #
+  # Safe across the major jump: uuid 11 still exports `v4`, and its `exports`
+  # map keeps a CJS entry (`require: ./dist/cjs/index.js`), which is how exceljs
+  # loads it. Only one copy of uuid is in the tree, so this raises rather than
+  # duplicates.
+  'uuid@<11.1.1': 11.1.1

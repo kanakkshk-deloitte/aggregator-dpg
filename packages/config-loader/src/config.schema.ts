@@ -1,9 +1,8 @@
 /**
  * Runtime configuration schema for this package.
  *
- * Parsed and validated at startup via @aggregator-dpg/config-loader
- * (wired once that package is available). Add your service's config
- * keys here as Zod fields.
+ * Validated at startup by @aggregator-dpg/config-loader. Add config keys
+ * here as Zod fields.
  *
  * @module @aggregator-dpg/config-loader/config
  */

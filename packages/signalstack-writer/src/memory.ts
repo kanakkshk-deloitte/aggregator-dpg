@@ -1,14 +1,11 @@
 /**
- * In-memory SignalStackWriter — Map-backed, used by unit tests.
+ * Map-backed SignalStackWriter for unit tests, in the signalstack-writer package.
  *
- * Mirrors signalstack semantics as closely as a fake can:
- *   - User identity is shared (single row per phone OR email).
- *   - Profile rows are appended; uniqueness is NOT enforced (matches current
- *     server behaviour — no dedupe on items).
- *   - `aggregator_id` is recorded on create and immutable on update.
+ * Follows signalstack behaviour:
+ *   - One user row per phone or email.
+ *   - Profile rows are appended; items are not deduplicated.
  *
- * Returned ids and timestamps are deterministic across the lifetime of the
- * writer to make assertions predictable.
+ * Returned ids and timestamps are deterministic.
  */
 
 import { UpstreamError, ValidationError } from '@aggregator-dpg/shared-primitives/errors';
@@ -23,12 +20,11 @@ import {
   type SignalStackDashboardExportQuery,
   type SignalStackDashboardPage,
   type SignalStackDashboardQuery,
+  type SignalStackContactCanonical,
+  type SignalStackContactValue,
   type SignalStackDecryptedProfileRow,
   type SignalStackDecryptedProfiles,
   type SignalStackFetchDecryptedProfilesQuery,
-  type SignalStackGetItemQuery,
-  type SignalStackItemList,
-  type SignalStackItemQuery,
   type SignalStackOnboardParticipantInput,
   type SignalStackOnboardParticipantResult,
   type SignalStackProbeUserInput,
@@ -47,12 +43,14 @@ interface StoredUser {
 
 interface StoredProfile extends SignalStackProfile {
   created_by: string;
-  /** Acting org id captured at onboard time; mirrored from x-acting-org-id. */
+  /** Acting org id (x-acting-org-id) from the onboard call. */
   acting_org_id: string;
-  /** Channel attribution captured at onboard time. */
+  /** Channel from the onboard call. */
   channel: 'bulk' | 'link';
-  /** Source id captured at onboard time (bulk_upload_id or link_id). */
+  /** Source id from the onboard call (bulk_upload_id or link_id). */
   source_id: string;
+  /** Contact block returned when decrypt requests `contact`. Set by test seeds. */
+  contact?: Partial<Record<SignalStackContactCanonical, SignalStackContactValue>>;
 }
 
 const ISO_FIXED = '2026-01-01T00:00:00.000Z';
@@ -61,35 +59,25 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
   protected readonly users: Map<string, StoredUser> = new Map();
   protected readonly profiles: Map<string, StoredProfile> = new Map();
   /**
-   * Aggregator org table keyed by `external_id` (our Postgres aggregator
-   * UUID). Mirrors signalstack's dedupe key so repeated upserts with the
-   * same input return the same `org_id` and never create duplicates.
+   * Aggregator orgs keyed by `external_id` (our aggregator UUID). Repeated
+   * upserts return the same `org_id`.
    */
   protected readonly aggregators: Map<string, SignalStackAggregator> = new Map();
   /**
-   * Pinned lifecycle classification used by the next `onboard()` call when
-   * `submit_mode !== 'account_only'`. Consumed (cleared) after one use so a
-   * second call falls back to the default `live` classification.
-   * Tests set this via {@link setNextClassification}.
+   * Lifecycle status for the next item-creating `onboard()` call. Cleared after
+   * one use. Set via {@link setNextClassification}.
    */
   protected nextClassification: { lifecycle_status: 'draft' | 'live' | 'paused' } | undefined;
   /**
-   * Foreign-user lookup keys (`email:...` / `phone:...`). When the next
-   * `onboard()` matches a key here, the writer returns `owned_elsewhere:
-   * true` with no item — mirroring signalstack's behaviour when the user
-   * already exists under a different aggregator. Tests seed entries via
-   * {@link seedForeignUser}.
+   * Keys (`email:...` / `phone:...`) of users owned by another aggregator.
+   * A matching `onboard()` returns `owned_elsewhere: true` with no item. Set
+   * via {@link seedForeignUser}.
    */
   protected readonly foreignUsers: Set<string> = new Set();
   /**
-   * Own-user probe seeds keyed by `email:...` / `phone:...`. Each entry
-   * carries the acting org id and optionally the primary item's
-   * lifecycle classification. {@link probeUser} returns
-   * `user_exists: true` (with `lifecycle_summary` populated when the
-   * entry has an `item`) on a key hit. Tests seed entries via
-   * {@link seedOwnUser}. Kept separate from {@link profiles} because
-   * probes do not need a full StoredProfile row — only the slim
-   * classification triple a lifecycle resumption requires.
+   * Own-user probe entries keyed by `email:...` / `phone:...`. On a match,
+   * {@link probeUser} returns `user_exists: true`, with `lifecycle_summary`
+   * set when the entry has an `item`. Set via {@link seedOwnUser}.
    */
   protected readonly ownUserProbes: Map<
     string,
@@ -134,8 +122,7 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
         }),
       );
     }
-    // Mirror Signals' hard-reject of under-18 onboards via the admin API
-    // (`U18_NOT_ALLOWED`) so callers can exercise the §4.4 redirect mapping.
+    // Signals rejects under-18 onboards via the admin API with `U18_NOT_ALLOWED`.
     if (typeof input.age === 'number' && input.age <= 18) {
       return err(
         new UpstreamError(
@@ -145,11 +132,7 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
       );
     }
 
-    // Foreign-user short-circuit: signalstack reports the user already
-    // exists under a different aggregator, so we mint a synthetic user_id
-    // (signals would echo its own) and surface owned_elsewhere=true with
-    // no item. Lifecycle fields are omitted because no item exists for
-    // this aggregator.
+    // User owned by another aggregator: return owned_elsewhere with no item.
     const foreignEmailKey = email ? `email:${email}` : null;
     const foreignPhoneKey = phone ? `phone:${phone}` : null;
     const isForeign =
@@ -188,10 +171,7 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
       this.users.set(userRow.id, userRow);
     }
 
-    // account_only: signalstack creates the user row but no item. Lookup
-    // endpoint + partial-data registrations use this path to opt out of
-    // item creation. No lifecycle fields are returned because no item
-    // exists yet.
+    // account_only: user row only, no item, so no lifecycle fields.
     const submitMode: 'with_item' | 'account_only' = input.submit_mode ?? 'with_item';
     if (submitMode === 'account_only') {
       return ok({
@@ -204,9 +184,6 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
 
     const profileItemId = `mem-item-${this.nextProfileSeq++}`;
     const classification = this.nextClassification ?? { lifecycle_status: 'live' as const };
-    // Consume the pinned classification so a second call reverts to the
-    // default `live` shape — keeps test fixtures terse without forcing every
-    // test to reset the writer.
     this.nextClassification = undefined;
 
     const profile: StoredProfile = {
@@ -217,7 +194,6 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
       item_state: input.profile,
       item_latitude: null,
       item_longitude: null,
-      aggregator_id: null,
       created_at: ISO_FIXED,
       updated_at: ISO_FIXED,
       lifecycle_status: classification.lifecycle_status,
@@ -238,26 +214,21 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
   }
 
   /**
-   * Pins the lifecycle classification used by the next `onboard()` call
-   * (when `submit_mode !== 'account_only'`). The classification is
-   * consumed after one call — subsequent calls fall back to the default
-   * `live` / `100` shape until re-pinned.
+   * Sets the lifecycle status for the next item-creating `onboard()` call.
+   * Later calls use `live` until set again.
    *
-   * @param classification - Pinned lifecycle status + completion percent.
+   * @param classification - Lifecycle status to return.
    */
   setNextClassification(classification: { lifecycle_status: 'draft' | 'live' | 'paused' }): void {
     this.nextClassification = classification;
   }
 
   /**
-   * Marks the given email and/or phone as belonging to a user that
-   * signalstack reports under a different aggregator. The next
-   * `onboard()` matching one of these keys returns `owned_elsewhere:
-   * true` with no item — mirroring signalstack's response when the user
-   * already exists outside the calling aggregator's scope.
+   * Marks an email and/or phone as owned by another aggregator.
    *
-   * @param key - Email and/or phone to mark as foreign-owned. At least
-   *   one of `email` or `phoneNumber` must be provided.
+   * Matching `onboard()` and `probeUser()` calls return `owned_elsewhere: true`.
+   *
+   * @param key - Email and/or phone; at least one is required.
    */
   seedForeignUser(key: { email?: string; phoneNumber?: string }): void {
     const email = normalizeEmail(key.email);
@@ -267,18 +238,13 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
   }
 
   /**
-   * Registers an own-aggregator user for {@link probeUser} matches.
-   * Tests seed an entry per identity (email, phoneNumber, or both) plus
-   * an optional `item` carrying the primary lifecycle classification.
+   * Registers a user of this aggregator for {@link probeUser}.
    *
-   * When the next `probeUser` call matches the email or phone key, the
-   * fake returns `user_exists: true`, `owned_elsewhere: false`, and
-   * (when `item` is present) a populated `lifecycle_summary`.
+   * A matching probe returns `user_exists: true`, `owned_elsewhere: false`,
+   * and a `lifecycle_summary` when `item` is set. Seeding the same key again
+   * overwrites the entry.
    *
-   * Re-seeding the same key overwrites the previous entry. At least one
-   * of `email` or `phoneNumber` must be supplied.
-   *
-   * @param seed - actingOrgId + at least one identity + optional item.
+   * @param seed - actingOrgId, at least one of email/phoneNumber, and an optional item.
    */
   seedOwnUser(seed: {
     actingOrgId: string;
@@ -328,9 +294,7 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
       );
     }
 
-    // Foreign-owned user takes precedence over an own-user seed for the
-    // same identity — signals never returns lifecycle state across
-    // aggregator boundaries.
+    // A foreign-owned match wins over an own-user seed for the same identity.
     const emailKey = email ? `email:${email}` : null;
     const phoneKey = phone ? `phone:${phone}` : null;
     const isForeign =
@@ -374,104 +338,14 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
     });
   }
 
-  override async getItem(
-    query: SignalStackGetItemQuery,
-  ): Promise<Result<SignalStackProfile | null, BaseError>> {
-    if (!query?.item_id) {
-      return err(
-        new ValidationError('item_id is required', {
-          code: 'SIGNALSTACK_INPUT_INVALID',
-        }),
-      );
-    }
-    const row = this.profiles.get(query.item_id);
-    if (!row) return ok(null);
-    return ok(stripCreatedBy(row));
-  }
-
   /**
-   * Seeds a single signalstack item keyed by `itemId`, filling unspecified
-   * fields with deterministic defaults. Used by tests to pin the lifecycle
-   * a `getItem(...)` lookup will surface for a given id.
+   * Creates or updates an aggregator row keyed by `external_id`.
    *
-   * Re-seeding the same `itemId` overwrites the previous entry.
+   * The first call assigns `mem-org-N`. Later calls update `name`, `slug`, and
+   * `metadata` and return the same `org_id`.
    *
-   * @param itemId - Item id the seed is keyed under.
-   * @param partial - Optional overrides; `lifecycle_status` is the field the
-   *   lifecycle re-check reads.
-   */
-  seedItem(
-    itemId: string,
-    partial: Partial<SignalStackProfile> & {
-      lifecycle_status?: 'draft' | 'live' | 'paused';
-    } = {},
-  ): void {
-    const row: StoredProfile = {
-      item_id: itemId,
-      item_network: partial.item_network ?? 'blue_dot',
-      item_domain: partial.item_domain ?? 'seeker',
-      item_type: partial.item_type ?? 'profile_1.0',
-      item_state: partial.item_state ?? {},
-      item_latitude: partial.item_latitude ?? null,
-      item_longitude: partial.item_longitude ?? null,
-      aggregator_id: partial.aggregator_id ?? null,
-      created_at: partial.created_at ?? ISO_FIXED,
-      updated_at: partial.updated_at ?? ISO_FIXED,
-      ...(partial.lifecycle_status !== undefined
-        ? { lifecycle_status: partial.lifecycle_status }
-        : {}),
-      created_by: '',
-      acting_org_id: '',
-      channel: 'link',
-      source_id: '',
-    };
-    this.profiles.set(itemId, row);
-  }
-
-  override async listItemsByAggregator(
-    query: SignalStackItemQuery,
-  ): Promise<Result<SignalStackItemList, BaseError>> {
-    if (!query.aggregator_id || !query.item_network || !query.item_domain) {
-      return err(
-        new UpstreamError('aggregator_id, item_network, and item_domain are required', {
-          code: 'SIGNALSTACK_INPUT_INVALID',
-        }),
-      );
-    }
-    // signalstack's default is `live_only` — drafts and paused rows are
-    // hidden unless the caller passes `lifecycle_filter: 'all'`. Treat an
-    // absent lifecycle_status on a stored row as 'live' so seeds written
-    // before lifecycle support landed remain visible by default.
-    const lifecycleFilter: 'live_only' | 'all' = query.lifecycle_filter ?? 'live_only';
-    const matching = Array.from(this.profiles.values()).filter((p) => {
-      if (p.aggregator_id !== query.aggregator_id) return false;
-      if (p.item_network !== query.item_network) return false;
-      if (p.item_domain !== query.item_domain) return false;
-      if (query.item_type && p.item_type !== query.item_type) return false;
-      if (lifecycleFilter === 'live_only') {
-        const status = p.lifecycle_status ?? 'live';
-        if (status !== 'live') return false;
-      }
-      return true;
-    });
-    const total = matching.length;
-    const offset = query.offset ?? 0;
-    const limit = query.limit ?? 50;
-    const page = matching.slice(offset, offset + limit).map(stripCreatedBy);
-    return ok({ meta: { total, limit, offset }, items: page });
-  }
-
-  /**
-   * Deterministic Map-backed upsert. First call for an `external_id`
-   * mints a new `mem-org-N` id and stores the row; subsequent calls update
-   * `name`, `slug`, and `metadata` in place and return the same `org_id`.
-   * Used by unit + cross-package consumer tests to assert against the
-   * aggregator-approval flow without touching a real signalstack.
-   *
-   * @param input - external_id (our aggregator UUID) + display name + slug
-   *   + optional metadata bag.
-   * @returns ok(SignalStackAggregator) — same id on repeat calls;
-   *   err(BaseError) only when a required input field is missing.
+   * @param input - external_id, display name, slug, and optional metadata.
+   * @returns ok(SignalStackAggregator); err(BaseError) when a required field is missing.
    */
   override async upsertAggregator(
     input: SignalStackUpsertAggregatorInput,
@@ -505,20 +379,18 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
     return ok(row);
   }
 
-  /** Test helper — current user table snapshot. */
+  /** Test helper. Returns all stored users. */
   listUsers(): StoredUser[] {
     return Array.from(this.users.values());
   }
 
-  /** Test helper — current profile table snapshot. */
+  /** Test helper. Returns all stored profiles. */
   listProfiles(): StoredProfile[] {
     return Array.from(this.profiles.values());
   }
 
   /**
-   * Snapshot of the in-memory aggregator table. Tests use this to assert
-   * which upserts the approval flow dispatched without depending on the
-   * fake's internal Map.
+   * Test helper. Returns all stored aggregator rows.
    *
    * @returns Array of stored aggregator rows in insertion order.
    */
@@ -527,11 +399,8 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
   }
 
   /**
-   * Pinned dashboard responses keyed by `actingOrgId`. Test helpers may
-   * write directly via `seed({ dashboards })` on the testing fake; when
-   * unset, {@link fetchDashboard} synthesises a deterministic empty
-   * rollup so callers that only care about the success path still get a
-   * usable shape.
+   * Dashboard responses keyed by `actingOrgId`, set via `seed({ dashboards })`.
+   * When unset, {@link fetchDashboard} returns an empty rollup.
    */
   protected readonly dashboards: Map<string, SignalStackDashboardPage> = new Map();
 
@@ -559,12 +428,9 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
   }
 
   /**
-   * Pinned CSV exports keyed by `actingOrgId`. Tests that exercise the
-   * export route MUST seed a row here — the fake does not synthesise a
-   * CSV body because signalstack owns the column set and that shape
-   * changes over time. Unseeded callers get an empty body and a
-   * `SIGNALSTACK_BAD_RESPONSE` error so the test fails loud instead of
-   * passing on a stale hardcoded header list.
+   * CSV exports keyed by `actingOrgId`. Tests of the export must seed one;
+   * signalstack owns the columns, so the fake does not build a CSV. Unseeded
+   * calls return `SIGNALSTACK_BAD_RESPONSE`.
    */
   protected readonly dashboardExports: Map<string, string> = new Map();
 
@@ -614,15 +480,20 @@ export class InMemorySignalStackWriter extends SignalStackWriterBase {
     for (const id of requested) {
       const stored = this.profiles.get(id);
       if (stored && stored.acting_org_id === query.actingOrgId) {
-        profiles.push({
+        // Apply `fields` and `contact` the same way as the HTTP implementation.
+        const row: SignalStackDecryptedProfileRow = {
           item_id: stored.item_id,
           item_network: stored.item_network,
           item_domain: stored.item_domain,
           item_type: stored.item_type,
-          item_state: stored.item_state,
+          item_state: projectItemState(stored.item_state, query.fields),
           created_at: stored.created_at,
           updated_at: stored.updated_at,
-        });
+        };
+        if (query.contact) {
+          row.contact = resolveContactBlock(stored.contact, query.contact);
+        }
+        profiles.push(row);
       } else {
         skipped.push(id);
       }
@@ -658,18 +529,56 @@ function normalizePhone(value: string | null | undefined): string | null {
   return trimmed || null;
 }
 
-function stripCreatedBy(profile: StoredProfile): SignalStackProfile {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { created_by, acting_org_id, channel, source_id, ...rest } = profile;
-  return rest;
+/**
+ * Projects a stored item_state to the requested `fields`.
+ *
+ * `undefined` returns the full state; `[]` returns an empty object; a list
+ * keeps only the keys that are present.
+ *
+ * @param state - The stored item_state.
+ * @param fields - Requested field names, or undefined for the full state.
+ * @returns The projected item_state.
+ */
+function projectItemState(
+  state: Record<string, unknown>,
+  fields: string[] | undefined,
+): Record<string, unknown> {
+  if (fields === undefined) return state;
+  const out: Record<string, unknown> = {};
+  for (const key of fields) {
+    if (Object.hasOwn(state, key)) out[key] = state[key];
+  }
+  return out;
 }
 
 /**
- * Deterministic empty per-domain slice. The synthesised dashboard payload
- * from {@link InMemorySignalStackWriter.fetchDashboard} uses this for every
- * domain when the test hasn't pinned a response — the shape mirrors the
- * live signalstack contract so downstream consumers never branch on
- * "shape from real api vs. fake".
+ * Builds the contact block for the requested fields.
+ *
+ * `contact: true` resolves all three fields; an array resolves only those.
+ * Unseeded fields resolve to `{ value: null, source: null }`.
+ *
+ * @param seeded - The stored contact block (from the seed), if any.
+ * @param contact - The decrypt query's `contact` selector.
+ * @returns The resolved contact block.
+ */
+function resolveContactBlock(
+  seeded: Partial<Record<SignalStackContactCanonical, SignalStackContactValue>> | undefined,
+  contact: boolean | SignalStackContactCanonical[],
+): Partial<Record<SignalStackContactCanonical, SignalStackContactValue>> {
+  const canonical: SignalStackContactCanonical[] = Array.isArray(contact)
+    ? contact
+    : ['name', 'email', 'phone'];
+  const out: Partial<Record<SignalStackContactCanonical, SignalStackContactValue>> = {};
+  for (const field of canonical) {
+    out[field] = seeded?.[field] ?? { value: null, source: null };
+  }
+  return out;
+}
+
+/**
+ * Empty per-domain slice in the signalstack response shape.
+ *
+ * Used by {@link InMemorySignalStackWriter.fetchDashboard} when no response is seeded.
  */
 function emptyDomainSlice(): {
   rollup: {

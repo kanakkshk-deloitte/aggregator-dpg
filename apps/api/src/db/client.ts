@@ -1,22 +1,17 @@
 /**
- * Reusable Postgres connection pool + Drizzle ORM client.
+ * Shared Postgres pool and Drizzle client for the api app.
  *
- * One shared `pg.Pool` per process — pg already pools connections internally,
- * so a singleton instance gives the canonical connection pool. The Drizzle
- * client wraps the pool and is the entry point for all queries elsewhere in
- * the API.
- *
- * Lazy init on first use; `closeDb()` for graceful shutdown.
+ * One `pg.Pool` per process, created on first use. `closeDb()` closes it on shutdown.
  */
 
 import { createRequire } from 'node:module';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as PgModule from 'pg';
+import { ConfigError } from '@aggregator-dpg/shared-primitives/errors';
 import * as schema from './schema.js';
 
 const require = createRequire(import.meta.url);
-// pg ships CommonJS — load the constructible Pool via createRequire to avoid
-// the ESM/CJS default-import interop issues under NodeNext.
+// pg is CommonJS; load it with createRequire to avoid ESM interop issues.
 const { Pool } = require('pg') as typeof PgModule;
 
 type Pool = InstanceType<typeof Pool>;
@@ -25,10 +20,8 @@ let pool: Pool | null = null;
 let db: NodePgDatabase<typeof schema> | null = null;
 let closing = false;
 
-const DEFAULT_DATABASE_URL = 'postgres://aggregator:aggregator-dev@localhost:5433/aggregator';
-
 interface PoolOptions {
-  /** Override the connection string. Defaults to `DATABASE_URL` env var. */
+  /** Override the connection string. Falls back to the `DATABASE_URL` env var. */
   url?: string;
   /** Maximum pool size. Default 10. */
   max?: number;
@@ -41,13 +34,23 @@ interface PoolOptions {
 /**
  * Returns the shared `pg.Pool`. Creates it on first call.
  *
+ * The connection string has no default, since it carries credentials.
+ *
+ * @param opts - Pool overrides; `url` takes precedence over `DATABASE_URL`.
  * @returns Shared connection pool.
+ * @throws {ConfigError} If neither `opts.url` nor `DATABASE_URL` is set.
  */
 export function getPool(opts: PoolOptions = {}): Pool {
   if (pool && !closing) return pool;
   if (closing) throw new Error('Postgres pool is shutting down');
+  const connectionString = opts.url ?? process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new ConfigError('DATABASE_URL is not set; refusing to start without a database URL.', {
+      code: 'DATABASE_URL_MISSING',
+    });
+  }
   pool = new Pool({
-    connectionString: opts.url ?? process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL,
+    connectionString,
     max: opts.max ?? 10,
     idleTimeoutMillis: opts.idleTimeoutMs ?? 10_000,
     connectionTimeoutMillis: opts.connectionTimeoutMs ?? 5_000,

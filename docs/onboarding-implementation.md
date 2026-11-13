@@ -2,6 +2,22 @@
 
 **Scope:** Participant onboarding pipeline covering two sources — **bulk CSV upload** and **public registration link** — with a shared metrics surface.
 
+> **Superseded in part — the local `participant` table has been removed.**
+>
+> This document describes the design as originally drafted, when both sources
+> INSERTed into a local `participant` table with
+> `ON CONFLICT (aggregator_id, participant_id) DO NOTHING` and counted a conflict
+> as `skipped` / `duplicate`.
+> That mirror (built as `participants`) was dropped in migration 0024 (#819).
+>
+> Signals is now the only participant record. Every reference below to inserting
+> into, deduplicating against, or securing a local `participant` table no longer
+> applies. There is **no local deduplication** on either path: a bulk row's
+> outcome is Signals' verdict, and Signals rejections such as `DOMAIN_LOCKED`,
+> `USER_ALREADY_EXISTS` and `IDENTITY_CONFLICT` are what errors.csv categorises
+> as `duplicate` (`SIGNALS_REJECTION_CATEGORY` in
+> `apps/worker/src/jobs/bulk-row-process.ts`).
+
 **Status:** Draft.
 
 **Date:** 2026-05-08.
@@ -128,9 +144,9 @@ Finaliser is its own queue (concurrency 1 per upload) — separated from row pro
 
 ### 4.1 Link Creation
 
-Aggregator creates a link via authenticated API. Stored in `registration_link` (slug, status, context, qr_object_key). Status lifecycle: `draft → live → retired`. Only `live` links accept submissions; `draft` 404s, `retired` returns 410 Gone.
+Aggregator creates a link via authenticated API. Stored in `registration_link` (slug, status, context). Status lifecycle: `draft → live → retired`. Only `live` links accept submissions; `draft` 404s, `retired` returns 410 Gone.
 
-QR code generated server-side at link creation time using `qrcode` (Node), persisted to S3 at deterministic key `qr/{aggregator_id}/{link_id}.png`. Returned as a pre-signed URL on link reads.
+QR code is **not persisted** (#650). It is a deterministic function of `public_url`, so the admin UI generates the PNG in the browser (`qrcode`) and downloads it on demand — no S3 write, no presigned URL, no TTL expiry. Activating a link therefore does no object-storage work and never fails on an unreachable bucket. The nullable `qr_object_key` column and the `qr_url`/`qr_expires_at` response fields (always `null`) remain for one release for backward compatibility and will be dropped in a follow-up.
 
 ### 4.2 Public Submission (sync API)
 
@@ -212,7 +228,7 @@ aggregator_id         UUID FK
 slug                  TEXT NOT NULL
 domain                seeker | provider
 context               JSONB        (state, district, signal_source, campaign)
-qr_object_key         TEXT         (S3 path of qr.png)
+qr_object_key         TEXT NULL     (legacy; unused since #650 — QR is client-side. Drop in follow-up)
 status                draft | live | retired
 expires_at            TIMESTAMPTZ NULL
 created_by            UUID NOT NULL
@@ -399,7 +415,7 @@ Bulk:
   GET    /v1/bulk-uploads/:id/errors.csv        → pre-signed download (410 if not completed)
 
 Link:
-  POST   /v1/links/create                       → creates link, returns slug + qr_url
+  POST   /v1/links/create                       → creates link, returns slug + public_url (QR is client-side, #650)
   GET    /v1/links/list                         → aggregator's links
   POST   /v1/links/:id/deactivate               → flips to retired
   GET    /public/v1/links/resolve/:slug         → public resolve
@@ -473,18 +489,18 @@ Link path has no errors.csv — single submissions return validation/dedup error
 
 ## 14. Cleanup & Retention
 
-| Data                           | Retention                                                 | Mechanism                               |
-| ------------------------------ | --------------------------------------------------------- | --------------------------------------- |
-| BullMQ records (Redis)         | 1h on complete, 7d on fail                                | `removeOnComplete` / `removeOnFail`     |
-| Redis batch keys (`bu:{id}:*`) | DEL'd at finalisation; 24h TTL fallback                   | Inline cleanup + TTL                    |
-| `bulk_upload` rows             | 90 days                                                   | Nightly cron                            |
-| `link_submission` rows         | 90 days                                                   | Nightly cron (after `rolled_up_at` set) |
-| `registration_link` rows       | Soft-retire; never auto-delete                            | Manual admin action                     |
-| `onboarding` rows              | Forever (rollup data)                                     | n/a                                     |
-| `participant` rows             | Forever (manual delete only)                              | n/a                                     |
-| Original CSV in S3             | 30 days                                                   | S3 lifecycle on `bulk-uploads/` prefix  |
-| `errors.csv` in S3             | 30 days                                                   | Same lifecycle rule                     |
-| QR PNGs in S3                  | Same lifetime as parent link; orphans swept after 30 days | Manual + lifecycle                      |
+| Data                           | Retention                                           | Mechanism                               |
+| ------------------------------ | --------------------------------------------------- | --------------------------------------- |
+| BullMQ records (Redis)         | 1h on complete, 7d on fail                          | `removeOnComplete` / `removeOnFail`     |
+| Redis batch keys (`bu:{id}:*`) | DEL'd at finalisation; 24h TTL fallback             | Inline cleanup + TTL                    |
+| `bulk_upload` rows             | 90 days                                             | Nightly cron                            |
+| `link_submission` rows         | 90 days                                             | Nightly cron (after `rolled_up_at` set) |
+| `registration_link` rows       | Soft-retire; never auto-delete                      | Manual admin action                     |
+| `onboarding` rows              | Forever (rollup data)                               | n/a                                     |
+| `participant` rows             | Forever (manual delete only)                        | n/a                                     |
+| Original CSV in S3             | 30 days                                             | S3 lifecycle on `bulk-uploads/` prefix  |
+| `errors.csv` in S3             | 30 days                                             | Same lifecycle rule                     |
+| QR PNGs                        | Not stored (#650) — generated client-side on demand | n/a (no sweep needed)                   |
 
 ### Stuck-job watchdog (hourly cron)
 
@@ -523,7 +539,7 @@ sweep 2: stalled in-flight
 - Every API endpoint validates JWT `aggregator_id` matches the resource. Postgres row-level security on `bulk_upload`, `participant`, `link_submission`, `onboarding`.
 - Schema fetch and Ajv compile live in worker bootstrap (and API for the link sync path), not in any request hot path otherwise.
 - Redis AOF persistence required (`appendonly yes`, `appendfsync everysec`).
-- QR generated synchronously at link create time; deterministic S3 key; lazy regeneration on read 404.
+- QR is derived data (#650): generated client-side from `public_url` on demand, never persisted — activation does no S3 work.
 - Registration links are immutable post-create; status flip (`draft → live → retired`) is the only allowed change.
 - Both bulk and link sources write to the same `participant` table and the same `onboarding` metrics table.
 - `onboarding` rows: bulk = one per upload (Finaliser); link = one per (aggregator, hour-bucket) (Metrics Aggregator UPSERT).
@@ -545,7 +561,7 @@ sweep 2: stalled in-flight
 11. Row Processor worker (`bulk-row-process`) — Lua-atomic per-row processing.
 12. Finaliser worker (`bulk-finalise`) — HSCAN errors → errors.csv → UPDATE bulk_upload → INSERT onboarding → DEL Redis.
 13. `GET /v1/bulk-uploads/:id/errors.csv` — pre-signed download.
-14. `POST /v1/links/create` — link creation with QR generation + S3 upload.
+14. `POST /v1/links/create` — link creation (public_url only; QR generated client-side, #650).
 15. `GET /v1/links/list`, `GET /v1/links/:id`, `POST /v1/links/:id/deactivate`.
 16. `GET /public/v1/links/resolve/:slug` — public link resolve.
 17. `POST /public/v1/registrations/create/:slug` — sync submission path (validate, dedup, INSERT participant, INSERT link_submission).
@@ -568,6 +584,6 @@ sweep 2: stalled in-flight
 | Audit / regulatory demand for queryable per-row errors | Add durable `bulk_upload_errors` table; Finaliser writes both PG and S3                |
 | Multi-region                                           | Replicate `bulk_upload`, `participant`, `link_submission`, `onboarding` across regions |
 | Link traffic spike                                     | Move link submission to async (enqueue + poll); BFF holds 3s for fast paths            |
-| QR generation burst                                    | Move QR to outbox-driven async generation; deterministic key + lazy regen on read 404  |
+| QR generation burst                                    | N/A since #650 — QR is generated client-side, no server load                           |
 
 None required at MVP.

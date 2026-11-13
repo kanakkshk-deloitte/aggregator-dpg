@@ -12,6 +12,14 @@
       "import": "./dist/http.js",
       "types": "./dist/http.d.ts"
     },
+    "./item-state": {
+      "import": "./dist/item-state.js",
+      "types": "./dist/item-state.d.ts"
+    },
+    "./keycloak-token-provider": {
+      "import": "./dist/keycloak-token-provider.js",
+      "types": "./dist/keycloak-token-provider.d.ts"
+    },
     "./memory": {
       "import": "./dist/memory.js",
       "types": "./dist/memory.d.ts"
@@ -32,9 +40,9 @@
   },
   "devDependencies": {
     "@aggregator-dpg/tsconfig": "workspace:*",
-    "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "^3.2.0",
+    "@types/node": "^26.6.3",
+    "@vitest/coverage-v8": "^4.1.12",
     "typescript": "^6.0.3",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.12"
   }
 }

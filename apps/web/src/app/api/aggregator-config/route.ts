@@ -3,13 +3,8 @@
  *
  *   GET /api/aggregator-config
  *
- * Forwards verbatim to the aggregator API's GET /v1/aggregator-config.
- * Surfaces brand + domain labels + url slug to the web app so the
- * sidebar / topbar / dashboard never hardcode "Blue Dots" / "Seekers" /
- * "Providers" — the same image runs purple_dot / yellow_dot / future
- * networks by swapping the upstream config file.
- *
- * Unauthenticated — every value is operator-public.
+ * Forwards to the aggregator API's GET /v1/aggregator-config, which returns
+ * the brand, domain labels and url slug. Unauthenticated: every value is public.
  */
 
 import { type NextRequest, NextResponse } from 'next/server';
@@ -18,10 +13,9 @@ import { serviceUnavailableResponse } from '../../../lib/bff-errors';
 export const runtime = 'nodejs';
 
 /**
- * No session required — every value the upstream returns is
- * operator-public (brand, domain labels, url slug). The login page +
- * pre-auth flows also need this payload, so we hit the api directly
- * without a Bearer token instead of going through `callApi`.
+ * Returns the aggregator config without a session.
+ *
+ * Calls the api without a Bearer token because pre-login pages need it.
  */
 export async function GET(_req: NextRequest): Promise<NextResponse> {
   const base = process.env.API_BASE_URL ?? 'http://localhost:4000';

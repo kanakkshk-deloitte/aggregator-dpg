@@ -1,17 +1,18 @@
 /**
- * Worker-role selection for the BullMQ worker process.
+ * Worker role selection for the worker app.
  *
- * By default one process runs every queue consumer. Setting `WORKER_ROLES`
- * lets a deployment run a subset — most usefully the CPU-sensitive File
- * Processor (`file`) in its own pod, so a large parse cannot contend with the
- * row / finalise / cron consumers on the same event loop, and each role scales
- * independently.
+ * By default one process runs every consumer. `WORKER_ROLES` selects a subset,
+ * for example to run the `file` parser in its own pod.
  *
  * @module @aggregator-dpg/worker
  */
 
-/** Selectable consumer roles. `cron` covers link-metrics + watchdog ticks. */
-export const WORKER_ROLES = ['file', 'row', 'finalise', 'cron'] as const;
+/**
+ * Selectable consumer roles.
+ *
+ * `cron` runs the link-metrics and watchdog ticks; `campaign` runs campaign jobs.
+ */
+export const WORKER_ROLES = ['file', 'row', 'finalise', 'cron', 'campaign'] as const;
 
 /** A single worker role. */
 export type WorkerRole = (typeof WORKER_ROLES)[number];
@@ -21,14 +22,12 @@ const ALL_ROLES: ReadonlySet<WorkerRole> = new Set(WORKER_ROLES);
 /**
  * Parses the `WORKER_ROLES` env value into the set of roles this process runs.
  *
- * Unset, empty, or the literal `all` selects every role (backwards-compatible
- * single-process default). Otherwise the value is a comma-separated list;
- * tokens are case- and whitespace-insensitive and empty tokens are ignored.
+ * Unset, empty or `all` selects every role. Otherwise a comma-separated list;
+ * case and whitespace are ignored, as are empty tokens.
  *
  * @param value - Raw `WORKER_ROLES` env value, if set.
  * @returns The set of roles to start. Always non-empty.
- * @throws {Error} If any token is not a known role — fail fast at boot rather
- *   than silently running fewer consumers than intended.
+ * @throws {Error} If any token is not a known role.
  */
 export function parseWorkerRoles(value?: string): Set<WorkerRole> {
   const raw = (value ?? '').trim();
@@ -48,15 +47,10 @@ export function parseWorkerRoles(value?: string): Set<WorkerRole> {
 }
 
 /**
- * Reports roles this process does NOT run, for an operator sanity check at boot.
+ * Returns the roles this process does not run, for a boot-time warning.
  *
- * The pipeline only completes if the union of roles across the whole worker
- * fleet covers every role: the file processor enqueues row jobs, the row
- * processor enqueues the finaliser, and `cron` runs the watchdog that fails
- * stranded uploads out. A deployment running a strict subset is valid ONLY if
- * the complement runs elsewhere — this helper lets the entrypoint warn so a
- * single-pod misconfiguration (e.g. `file,row` with no `finalise`/`cron`)
- * doesn't silently strand uploads in `row_processing` forever.
+ * Every role must run somewhere in the fleet, or uploads and campaigns stall.
+ * This only sees the current process.
  *
  * @param roles - Roles this process runs.
  * @returns The roles not covered here (empty when running all).

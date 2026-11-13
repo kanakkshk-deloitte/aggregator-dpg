@@ -6,6 +6,8 @@ name: aggregator-dpg
 # Apps:        web (Next.js BFF), api (Fastify), worker (BullMQ consumer).
 # Edge:        jonasal/nginx-certbot terminates TLS on :443 and proxies all
 #              browser-facing traffic — no service exposes its own host port.
+#              Requests for the api go through `envoy` first, which decides
+#              route permissions with OPA (docs/rbac/rbac-edge-enforcement.md).
 #
 # Quick start (VM, real domain, Let's Encrypt cert):
 #   cp infra/env.template .env
@@ -83,7 +85,8 @@ services:
   #                    via http://localhost:9000 → S3_PUBLIC_ENDPOINT)
   #   9001 → console  (web UI, minioadmin / ${MINIO_ROOT_PASSWORD})
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # minio/minio and minio/mc are gone from Docker Hub; this image ships both binaries.
+    image: cgr.dev/chainguard/minio:latest
     container_name: aggregator-minio
     restart: unless-stopped
     # Dev/docker-only. Gated behind the `storage` profile so a plain
@@ -105,7 +108,7 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1" ]
+      test: ["CMD-SHELL", "mc alias set local http://localhost:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" >/dev/null && mc ready local"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -113,7 +116,7 @@ services:
 
   # Creates the bucket once MinIO is healthy. Idempotent — re-running is safe.
   minio-init:
-    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    image: cgr.dev/chainguard/minio:latest
     container_name: aggregator-minio-init
     # Same `storage` profile as minio — only runs when local MinIO is enabled.
     profiles: [ "storage" ]
@@ -155,10 +158,14 @@ services:
       AGGREGATOR_API_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:?KEYCLOAK_ADMIN_CLIENT_SECRET must be set in .env}
       AGGREGATOR_PORTAL_SECRET: ${OIDC_CLIENT_SECRET:?OIDC_CLIENT_SECRET must be set in .env}
       AGGREGATOR_BFF_SECRET: ${BFF_SERVICE_CLIENT_SECRET:?BFF_SERVICE_CLIENT_SECRET must be set in .env}
+      # Realm name substituted into the realm JSON's "realm" field by
+      # render-realm.sh. Per-deployment identity value, same as
+      # AGGREGATOR_NETWORK below — not a fixed constant across networks.
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-bluedots}
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: ${POSTGRES_USER:-aggregator}
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-aggregator-dev}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       KC_HOSTNAME: ${PUBLIC_HOST:-keycloak}
       # Substituted into realm JSON at boot (clients[].redirectUris,
       # webOrigins, post.logout.redirect.uris). Must be the browser-facing
@@ -245,7 +252,7 @@ services:
     environment:
       # Internal URL — must include /auth because KC_HTTP_RELATIVE_PATH=/auth.
       KC_URL: http://keycloak:8080/auth
-      KC_REALM: ${KEYCLOAK_REALM:-aggregator}
+      KC_REALM: ${KEYCLOAK_REALM:-bluedots}
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
       UNMANAGED_POLICY: ENABLED
@@ -265,9 +272,23 @@ services:
       # API confidential client whose service account creates the org KC group
       # + assigns org_owner (needs realm-management:manage-realm).
       API_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-aggregator-api}
+      # apply-portal-gate.py reads these names (KC_ADMIN_*, not KC_BOOTSTRAP_*).
+      KC_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
     volumes:
       - ./infra/keycloak/init:/init:ro
-    entrypoint: [ "sh", "-c", "apk add --no-cache curl jq > /dev/null && sh /init/apply-user-profile.sh" ]
+    # apply-portal-gate.py runs on EVERY boot, not just a fresh import: realm
+    # import only applies to an empty realm, so a redeploy onto an
+    # already-provisioned realm would otherwise leave aggregator-portal on the
+    # ungated default browser flow and send OTPs to ineligible accounts. The
+    # script verifies first and is a no-op when the gate is already correct; it
+    # exits non-zero (failing this sidecar, loudly) if it cannot apply it.
+    entrypoint:
+      [
+        'sh',
+        '-c',
+        'apk add --no-cache curl jq python3 > /dev/null && sh /init/apply-user-profile.sh && python3 /init/apply-portal-gate.py',
+      ]
     restart: "no"
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -278,12 +299,9 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
-      # NEXT_PUBLIC_* vars must be present at image build time (Next.js inlines
-      # them into the client bundle during `next build`). Pass them as build args
-      # so the Dockerfile ARG/ENV declarations can forward them to `next build`.
-      args:
-        NEXT_PUBLIC_API_URL: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}/backend"
-        NEXT_PUBLIC_ENABLED_LANGUAGES: "${NEXT_PUBLIC_ENABLED_LANGUAGES:-en,kn,hi}"
+      # No build args: the web image carries no deployment-specific values, so
+      # it never needs rebuilding to be reconfigured. Everything the browser
+      # needs is resolved server-side per request from the `environment` below.
     image: aggregator-dpg/web:dev
     container_name: aggregator-web
     restart: unless-stopped
@@ -292,25 +310,64 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
-      # All browser-visible URLs go through nginx on :443 — no service port suffixes.
-      NEXT_PUBLIC_API_URL: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}/backend"
-      NEXT_PUBLIC_ENABLED_LANGUAGES: "${NEXT_PUBLIC_ENABLED_LANGUAGES:-en,kn,hi}"
-      API_BASE_URL: ${API_BASE_URL:-http://api:4000}
-      # Gates the "Register Organisation" tab; read server-side by the register
-      # page. Must match the api's ORG_HIERARCHY_ENABLED so both agree.
-      ORG_HIERARCHY_ENABLED: ${ORG_HIERARCHY_ENABLED:-false}
+      # The api behind its edge (`envoy`), never the api directly.
+      API_BASE_URL: ${API_BASE_URL:-http://envoy:4000}
+      # Switchable UI languages, comma-separated and ordered; `en` is always
+      # included as the fallback. Read per request by the root layout, so
+      # changing this needs only a container restart. Set it to `en,hi` to drop
+      # Kannada, or to `en` to hide the switcher entirely.
+      #
+      # NO literal default here, deliberately. `${ENABLED_LANGUAGES:-en,kn,hi}`
+      # would put that default in the container whenever the operator's `.env`
+      # omits the var, which is indistinguishable from them having chosen it —
+      # and it silently masked the legacy-name fallback below. The default now
+      # lives in exactly one place, `parseEnabledLocales`' SUPPORTED_LOCALES,
+      # which an empty value falls through to.
+      ENABLED_LANGUAGES: ${ENABLED_LANGUAGES:-}
+      # Max invites an org owner can send per submission. Keep in step with the
+      # api's INVITE_MINT_MAX_RECIPIENTS. Empty → the app's default of 10.
+      INVITE_MAX_RECIPIENTS: ${INVITE_MAX_RECIPIENTS:-}
+      # Registration-form address autocomplete + institute picker. All four are
+      # runtime values read per request by the root layout, so a change needs a
+      # container restart and never an image rebuild — same reason the two above
+      # are not `NEXT_PUBLIC_`-prefixed. No literal defaults here for the same
+      # reason as ENABLED_LANGUAGES: the defaults live in the app, in
+      # `getFormRuntimeConfig`, and an empty value falls through to them.
+      #
+      # Empty GOOGLE_MAPS_API_KEY → the key-less Photon geocoder, so the address
+      # field still works. Empty REFERENCE_BASE_URL → this app's own
+      # `/reference/`, which holds nothing locally: the datasets are not
+      # committed, so point it at canonical to work on the institute field. See
+      # infra/env.template for the URL.
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      COLLEGE_DATASET: ${COLLEGE_DATASET:-}
+      REFERENCE_BASE_URL: ${REFERENCE_BASE_URL:-}
+      PHOTON_URL: ${PHOTON_URL:-}
+      GEO_COUNTRY: ${GEO_COUNTRY:-}
+      # Transitional: both settings were `NEXT_PUBLIC_`-prefixed before they
+      # were made runtime-readable. Forwarded so a deployment whose `.env` still
+      # uses the old name keeps working until it renames. Drop these two once no
+      # deployment sets them.
+      NEXT_PUBLIC_ENABLED_LANGUAGES: ${NEXT_PUBLIC_ENABLED_LANGUAGES:-}
+      NEXT_PUBLIC_INVITE_MAX_RECIPIENTS: ${NEXT_PUBLIC_INVITE_MAX_RECIPIENTS:-}
       # ─── OIDC (Authorization Code + PKCE) ────────────────────────────
       # OIDC_ISSUER must resolve identically from the browser AND the web
       # container. With nginx as the sole ingress, both reach Keycloak via
       # ${PUBLIC_PROTOCOL}://${PUBLIC_HOST}/auth/realms/${realm}. The web
       # container's back-channel call is short-circuited to the docker host
       # gateway via the `extra_hosts` mapping below.
-      OIDC_ISSUER: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}/auth/realms/${KEYCLOAK_REALM:-aggregator}"
+      OIDC_ISSUER: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}/auth/realms/${KEYCLOAK_REALM:-bluedots}"
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-aggregator-portal}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
       OIDC_REDIRECT_URI: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}/api/auth/callback"
       OIDC_POST_LOGOUT_REDIRECT_URI: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}/"
       OIDC_SCOPE: ${OIDC_SCOPE:-openid profile email}
+      # Optional override. The source of truth is config as code —
+      # `aggregator.signals.realm_roles` in the active network's
+      # aggregator.config.yaml, which the web app reads server-side. Left unset
+      # here so the mounted config/ tree is what actually decides; set it in
+      # .env only to override that for a local experiment.
+      SIGNALS_REALM_ROLES: ${SIGNALS_REALM_ROLES:-}
       # ─── BFF service token (anonymous-proxy routes like /api/aggregator/register) ──
       # The web BFF mints a Keycloak service-account token via the dedicated,
       # minimal-scope `aggregator-bff` client to authorise upstream calls made on
@@ -347,6 +404,10 @@ services:
       AGGREGATOR_NETWORK: ${AGGREGATOR_NETWORK:-blue_dot}
       AGGREGATOR_BRAND: ${AGGREGATOR_BRAND:-}
       CONFIG_ROOT: /app/config
+      # Consent `__SUPPORT_EMAIL__` token (Terms/Privacy/Grievances) reuses the
+      # aggregator's existing SUPPORT_EMAIL — no separate var. Empty ⇒ default
+      # hello@bluedotseconomy.org.
+      CONSENT_SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
     # No host port mapping — exposed only via nginx at /.
     # Resolve PUBLIC_HOST (the VM's public IP) to the docker host gateway so
     # the BFF's back-channel OIDC discovery + token exchange reaches nginx via
@@ -362,7 +423,7 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
-      api:
+      envoy:
         condition: service_healthy
 
   api:
@@ -378,17 +439,24 @@ services:
       HOST: "0.0.0.0"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CORS_ORIGINS: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}"
-      DATABASE_URL: postgres://${POSTGRES_USER:-aggregator}:${POSTGRES_PASSWORD:-aggregator-dev}@postgres:5432/${POSTGRES_DB:-aggregator}
+      DATABASE_URL: postgres://${POSTGRES_USER:-aggregator}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/${POSTGRES_DB:-aggregator}
       RUN_MIGRATIONS_ON_BOOT: "true"
+      # Dev / e2e only: lets a database WITH data apply the user & org release
+      # train at boot. Deployments apply it with the instance-upgrade tool; leave
+      # this false there (apps/api/src/db/migration-guards.ts).
+      ALLOW_TRAIN_ON_BOOT: ${ALLOW_TRAIN_ON_BOOT:-false}
       # Keycloak admin (service account). Must equal the public issuer prefix
       # so the JWT `iss` claim matches what `expectedIssuer()` derives from
       # KEYCLOAK_URL (apps/api/src/services/auth/access-token.ts).
       KEYCLOAK_URL: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}/auth"
-      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-aggregator}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-bluedots}
       KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-aggregator-api}
       KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
       # JWT client-scoping (#1.7): azp allow-list (enforced) + optional aud check.
+      # campaign-manager is deliberately NOT in the global list — it is allowed
+      # only on the campaign routes via CAMPAIGN_MANAGER_ALLOWED_AZP (default-deny).
       KEYCLOAK_ALLOWED_AZP: ${KEYCLOAK_ALLOWED_AZP:-aggregator-portal,aggregator-api,aggregator-bff}
+      CAMPAIGN_MANAGER_ALLOWED_AZP: ${CAMPAIGN_MANAGER_ALLOWED_AZP:-campaign-manager}
       KEYCLOAK_EXPECTED_AUDIENCE: ${KEYCLOAK_EXPECTED_AUDIENCE:-}
       # Mailer — `smtp` (default, points at Mailpit in compose) or `ses`
       MAIL_PROVIDER: ${MAIL_PROVIDER:-smtp}
@@ -401,14 +469,40 @@ services:
       AWS_REGION: ${AWS_REGION:-ap-south-1}
       SES_FROM: ${SES_FROM:-}
       SES_CONFIGURATION_SET: ${SES_CONFIGURATION_SET:-}
-      # Org hierarchy — when true, registers the org-registration + approval
-      # routes. Must match the web app's ORG_HIERARCHY_ENABLED so both agree.
-      ORG_HIERARCHY_ENABLED: ${ORG_HIERARCHY_ENABLED:-false}
       # Approval flow
       APPROVAL_TOKEN_SECRET: ${APPROVAL_TOKEN_SECRET:?APPROVAL_TOKEN_SECRET must be set in .env (≥32 chars)}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@bluedots.local}
+      # Owner of the fixed Default org (migration 0028); optional. Unset: Default
+      # org approvals go to ADMIN_EMAILS.
+      DEFAULT_ORG_OWNER_EMAIL: ${DEFAULT_ORG_OWNER_EMAIL:-}
+      # ─── Signals UI hand-off ──────────────────────────────────────────
+      # Per-domain Signals UI login URLs (`domain=url` pairs). Without this
+      # passed through, the feature was unreachable in the composed stack
+      # even with the host .env set — unset here means no hand-off anywhere,
+      # on any domain, regardless of the host .env value.
+      SIGNALS_UI_URLS: ${SIGNALS_UI_URLS:-}
+      # ─── Onboarding capability allow-list (#637) ──────────────────────
+      # Comma-separated subset of `form,voice` this instance may create
+      # registration links for (`bulk` is reserved and does nothing yet).
+      # Unset — the default — enables all of them, i.e. today's behaviour.
+      # This map is a closed list, so without the passthrough the var would
+      # never reach the container however the host .env is set.
+      # Value-less on purpose: `${VAR:-}` would define the key as an empty
+      # string inside the container, and an empty value is a misconfiguration
+      # that disables ALL onboarding (see config.ts). A bare key is a true
+      # passthrough — the var reaches the container only when the host sets it.
+      AGGREGATOR_ONBOARDING_ENABLED:
       PUBLIC_API_URL: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}/backend"
       PUBLIC_PORTAL_URL: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}"
+      # ─── Contact-support form ────────────────────────────────────────
+      # Without SUPPORT_EMAIL the endpoint 503s and the portal hides the
+      # entry point, so the form was unreachable in the composed stack until
+      # these were passed through. The attachment budget (#551) rides along:
+      # the API serves it to the form and derives its own body limit from it.
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+      SUPPORT_CC_EMAIL: ${SUPPORT_CC_EMAIL:-}
+      SUPPORT_ATTACHMENT_MAX_TOTAL_BYTES: ${SUPPORT_ATTACHMENT_MAX_TOTAL_BYTES:-5242880}
+      SUPPORT_ATTACHMENT_MAX_FILES: ${SUPPORT_ATTACHMENT_MAX_FILES:-3}
       # ─── Object storage (bulk uploads + QR PNGs + errors.csv) ────────
       # AWS S3 via IAM role on the VM. S3_ENDPOINT/S3_PUBLIC_ENDPOINT are
       # intentionally unset — the SDK uses the regional AWS endpoint.
@@ -426,7 +520,25 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       BULK_UPLOAD_URL_TTL_SECONDS: ${BULK_UPLOAD_URL_TTL_SECONDS:-900}
       BULK_UPLOAD_MAX_BYTES: ${BULK_UPLOAD_MAX_BYTES:-10485760}
-      QR_DOWNLOAD_URL_TTL_SECONDS: ${QR_DOWNLOAD_URL_TTL_SECONDS:-900}
+      # Campaign PII export (#579): max item_ids accepted per request.
+      CAMPAIGN_EXPORT_MAX_ITEMS: ${CAMPAIGN_EXPORT_MAX_ITEMS:-500}
+      # Must match the worker's CAMPAIGN_EXPORT_FIELDS below (#617): the API
+      # derives the export audit row's `pii_fields` from this same variable,
+      # so a mismatched value here understates what the worker actually
+      # releases.
+      CAMPAIGN_EXPORT_FIELDS: ${CAMPAIGN_EXPORT_FIELDS:-contact}
+      # Campaign async-job engine ingress controls (per signalstack org),
+      # per channel — export (#579) and email (#578) never share a budget.
+      CAMPAIGN_EXPORT_SUBMIT_WINDOW_SECONDS: ${CAMPAIGN_EXPORT_SUBMIT_WINDOW_SECONDS:-60}
+      CAMPAIGN_EXPORT_SUBMIT_MAX: ${CAMPAIGN_EXPORT_SUBMIT_MAX:-10}
+      CAMPAIGN_EXPORT_MAX_ACTIVE_PER_ORG: ${CAMPAIGN_EXPORT_MAX_ACTIVE_PER_ORG:-3}
+      CAMPAIGN_EXPORT_ATTEMPTS: ${CAMPAIGN_EXPORT_ATTEMPTS:-3}
+      # Campaign participant email (#578): recipients per request + ingress.
+      CAMPAIGN_EMAIL_MAX_ITEMS: ${CAMPAIGN_EMAIL_MAX_ITEMS:-200}
+      CAMPAIGN_EMAIL_SUBMIT_WINDOW_SECONDS: ${CAMPAIGN_EMAIL_SUBMIT_WINDOW_SECONDS:-60}
+      CAMPAIGN_EMAIL_SUBMIT_MAX: ${CAMPAIGN_EMAIL_SUBMIT_MAX:-10}
+      CAMPAIGN_EMAIL_MAX_ACTIVE_PER_ORG: ${CAMPAIGN_EMAIL_MAX_ACTIVE_PER_ORG:-3}
+      CAMPAIGN_EMAIL_ATTEMPTS: ${CAMPAIGN_EMAIL_ATTEMPTS:-3}
       PUBLIC_LINK_BASE_URL: ${PUBLIC_LINK_BASE_URL:-${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}}
       # Brand selectors — the api derives AGGREGATOR_CONFIG_PATH and SCHEMA_ROOT_DIR
       # from these two vars. Set AGGREGATOR_BRAND to select a brand subfolder (e.g. upsdm);
@@ -440,6 +552,10 @@ services:
       # Deploy-time override for the signalstack network.json URL (#512);
       # empty = use `aggregator.network.source` from the YAML.
       AGGREGATOR_NETWORK_SOURCE: ${AGGREGATOR_NETWORK_SOURCE:-}
+      # Deploy-time override for the participant consent.json URL (ConfigMap-
+      # injected by automation); empty = use `aggregator.network.consent_source`
+      # from the YAML, or fall back to the on-disk copy when neither is set.
+      AGGREGATOR_PARTICIPANT_CONSENT_SOURCE: ${AGGREGATOR_PARTICIPANT_CONSENT_SOURCE:-}
       # Force-empty so the app derives the config path from CONFIG_ROOT +
       # AGGREGATOR_NETWORK. Exporting the key (even empty) stops dotenv from
       # loading a stale host path baked into the image's /app/.env.
@@ -458,7 +574,14 @@ services:
       # cert, or NODE_EXTRA_CA_CERTS for a real internal CA.
       NODE_TLS_REJECT_UNAUTHORIZED: ${NODE_TLS_REJECT_UNAUTHORIZED:-1}
       INSTANCE_ENV: ${INSTANCE_ENV:-production}
-    # No host port mapping — exposed only via nginx at /backend/.
+      # RBAC (docs/rbac/rbac-edge-enforcement.md): one switch for the api and
+      # its edge (`envoy` + `opa` below). `off` loads nothing; `log` records
+      # would-denies at the edge and in the api's per-organisation checks;
+      # `enforce` refuses. `log` here so local runs exercise the policy without
+      # blocking anything.
+      RBAC_MODE: ${RBAC_MODE:-log}
+      OPA_URL: ${OPA_URL:-http://opa:8181}
+    # No host port mapping — reached only through `envoy` (nginx /backend/, web).
     # See `extra_hosts` rationale on the web service: api hits Keycloak via
     # the public URL for both admin REST + JWKS, so we short-circuit DNS to
     # the host gateway where nginx listens.
@@ -470,13 +593,88 @@ services:
       # Active paths are picked by AGGREGATOR_NETWORK/AGGREGATOR_BRAND env.
       - ./config:/app/config:ro
     healthcheck:
-      test: [ "CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health/ready || exit 1" ]
+      # CMD, not CMD-SHELL, and node rather than wget: the api image is a Docker
+      # Hardened Image with no /bin/sh and no wget, so CMD-SHELL fails with
+      # `exec: "/bin/sh": no such file or directory` and the container never
+      # reports healthy — which blocks every service that waits on it.
+      # node is PID 1 here and has global fetch (v24), so it needs nothing extra.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 3s
       retries: 10
       start_period: 10s
     depends_on:
       postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      # So the first requests are not denied because OPA is still starting.
+      opa:
+        condition: service_healthy
+
+  # ── OPA (RBAC decisions) ──────────────────────────────────────────────────
+  # The opa-envoy-plugin build: the REST API on 8181 serves the api's own
+  # decisions (POST /v1/data/rbac/decision) and its catalogue push, and 9191
+  # answers Envoy's ext_authz check (infra/opa/edge-config.yaml). Only used
+  # when the api runs with RBAC_MODE=log|enforce. Deployments run it as a
+  # sidecar in the api pod (bluedots-automation).
+  opa:
+    image: openpolicyagent/opa:1.21.1-envoy-1-static@sha256:c1f40d815a15c4ca0ccbdf300e0a3515fccf1d30fbd92e69917ab96bad83811d
+    container_name: aggregator-opa
+    restart: unless-stopped
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level=error", "--config-file=/config/edge-config.yaml", "--ignore=*_test.rego", "--ignore=vectors.json", "/policy"]
+    # Host port for hybrid dev (`pnpm dev` on the host, OPA_URL defaults to
+    # http://localhost:8181). Loopback only.
+    ports:
+      - "127.0.0.1:8181:8181"
+    volumes:
+      - ./policy/rbac:/policy:ro
+      - ./infra/opa:/config:ro
+    healthcheck:
+      test: ["CMD", "/opa", "eval", "--fail", "--data", "/policy", "--ignore", "*_test.rego", "--ignore", "vectors.json", "data.rbac.not_through_root"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ── Envoy (RBAC edge) ─────────────────────────────────────────────────────
+  # In front of the api (docs/rbac/rbac-edge-enforcement.md): verifies the
+  # Keycloak token, asks OPA whether the caller holds the route's permission,
+  # and forwards only allowed requests. nginx (/backend/) and web reach the api
+  # only through it. infra/envoy/render.sh fills in envoy.yaml's placeholders
+  # from the environment below: the issuer is the public one the api expects (KEYCLOAK_URL); the
+  # signing keys are fetched from Keycloak inside the network. The access log
+  # (operation rbac.edge) is flushed every second.
+  envoy:
+    image: envoyproxy/envoy:v1.34.1@sha256:007da57c2c328a90bd4e6d99b70bd899132f1b4a9426ccafe25437cf84a60c14
+    container_name: aggregator-envoy
+    restart: unless-stopped
+    environment:
+      ADMIN_ADDRESS: 0.0.0.0
+      LISTEN_PORT: "4000"
+      API_HOST: api
+      API_PORT: "4000"
+      OPA_HOST: opa
+      KEYCLOAK_HOST: keycloak
+      KEYCLOAK_PORT: "8080"
+      JWT_ISSUER: "${PUBLIC_PROTOCOL:-http}://${PUBLIC_HOST:-localhost}/auth/realms/${KEYCLOAK_REALM:-bluedots}"
+      JWKS_URI: "http://keycloak:8080/auth/realms/${KEYCLOAK_REALM:-bluedots}/protocol/openid-connect/certs"
+    command: ["sh", "/etc/envoy/render.sh", "--log-level", "warn", "--file-flush-interval-msec", "1000"]
+    # No host port mapping — reached through nginx and web only.
+    volumes:
+      - ./infra/envoy/envoy.yaml:/etc/envoy/envoy.template.yaml:ro
+      - ./infra/envoy/render.sh:/etc/envoy/render.sh:ro
+    healthcheck:
+      # HTTP/1.1 with a Host header: Envoy's admin port refuses HTTP/1.0 (426).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9901 && printf 'GET /ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q LIVE <&3"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    depends_on:
+      api:
+        condition: service_healthy
+      opa:
         condition: service_healthy
       keycloak:
         condition: service_healthy
@@ -499,7 +697,7 @@ services:
       # default and arm the config guard on the VM path. See the web/api notes.
       NODE_TLS_REJECT_UNAUTHORIZED: ${NODE_TLS_REJECT_UNAUTHORIZED:-1}
       INSTANCE_ENV: ${INSTANCE_ENV:-production}
-      DATABASE_URL: postgres://${POSTGRES_USER:-aggregator}:${POSTGRES_PASSWORD:-aggregator-dev}@postgres:5432/${POSTGRES_DB:-aggregator}
+      DATABASE_URL: postgres://${POSTGRES_USER:-aggregator}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/${POSTGRES_DB:-aggregator}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       # ─── Object storage (raw CSV download + errors.csv write) ──────
       # AWS S3 via IAM role on the VM — see notes on the api service.
@@ -512,6 +710,29 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      # ─── Mailer (campaign PII export emails the download link, #579) ──
+      # The export job now sends from the worker, so it needs the same mailer
+      # config as the api — `smtp` (Mailpit in compose) or `ses`.
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@bluedots.local}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      SES_FROM: ${SES_FROM:-}
+      SES_CONFIGURATION_SET: ${SES_CONFIGURATION_SET:-}
+      # ─── Campaign async-job engine tunables (#579) ─────────────────
+      EXPORT_URL_TTL_SECONDS: ${EXPORT_URL_TTL_SECONDS:-86400}
+      CAMPAIGN_CONCURRENCY: ${CAMPAIGN_CONCURRENCY:-2}
+      # ─── Campaign email channel tunable (#578) ─────────────────────
+      EMAIL_SEND_CONCURRENCY: ${EMAIL_SEND_CONCURRENCY:-5}
+      CAMPAIGN_DECRYPT_CHUNK: ${CAMPAIGN_DECRYPT_CHUNK:-500}
+      CAMPAIGN_EXPORT_FIELDS: ${CAMPAIGN_EXPORT_FIELDS:-contact}
+      CAMPAIGN_STALL_SECONDS: ${CAMPAIGN_STALL_SECONDS:-900}
+      CAMPAIGN_EXPORT_RECIPIENT: ${CAMPAIGN_EXPORT_RECIPIENT:-requester}
+      EXPORT_NETWORK_ADMIN_EMAIL: ${EXPORT_NETWORK_ADMIN_EMAIL:-}
       # ─── Schemas (participant validators) ──────────────────────────
       # Brand selectors — the worker derives AGGREGATOR_CONFIG_PATH and SCHEMA_ROOT_DIR
       # from these two vars. Set AGGREGATOR_BRAND to select a brand subfolder (e.g. upsdm);
@@ -525,6 +746,10 @@ services:
       # Deploy-time override for the signalstack network.json URL (#512);
       # empty = use `aggregator.network.source` from the YAML.
       AGGREGATOR_NETWORK_SOURCE: ${AGGREGATOR_NETWORK_SOURCE:-}
+      # Deploy-time override for the participant consent.json URL (ConfigMap-
+      # injected by automation); empty = use `aggregator.network.consent_source`
+      # from the YAML, or fall back to the on-disk copy when neither is set.
+      AGGREGATOR_PARTICIPANT_CONSENT_SOURCE: ${AGGREGATOR_PARTICIPANT_CONSENT_SOURCE:-}
       # Force-empty so the app derives the config path from CONFIG_ROOT +
       # AGGREGATOR_NETWORK (stops dotenv loading a stale host path baked in).
       AGGREGATOR_CONFIG_PATH: ${AGGREGATOR_CONFIG_PATH:-}
@@ -596,7 +821,7 @@ services:
     depends_on:
       web:
         condition: service_started
-      api:
+      envoy:
         condition: service_healthy
       keycloak:
         condition: service_healthy

@@ -1,8 +1,7 @@
 /**
- * In-memory session store. Dev/test fallback when Redis is unavailable.
+ * In-memory session store, used for tests and dev without Redis.
  *
- * Not safe for multi-process deployments — every Node instance has its own
- * Map, so sessions created on one will not be visible on another.
+ * Not for multi-process deployments: each process has its own sessions.
  */
 
 import { randomUUID } from 'node:crypto';

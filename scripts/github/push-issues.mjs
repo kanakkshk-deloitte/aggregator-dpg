@@ -11,10 +11,11 @@
 // Usage:
 //   node scripts/github/push-issues.mjs [--repo sanketika-labs/aggregator-dpg] [--dry-run] [--limit N]
 
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
-import { join, basename } from "node:path";
-import { execSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { join, basename } from 'node:path';
+import { execSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 const argv = process.argv.slice(2);
 const flag = (name) => {
@@ -23,14 +24,14 @@ const flag = (name) => {
 };
 const has = (name) => argv.includes(name);
 
-const REPO = flag("--repo") ?? "sanketika-labs/aggregator-dpg";
-const DRY = has("--dry-run");
-const LIMIT = flag("--limit") ? Number(flag("--limit")) : Infinity;
-const MAP_PATH = "scripts/github/.issue-map.json";
-const ISSUES_DIR = "docs/issues";
+const REPO = flag('--repo') ?? 'sanketika-labs/aggregator-dpg';
+const DRY = has('--dry-run');
+const LIMIT = flag('--limit') ? Number(flag('--limit')) : Infinity;
+const MAP_PATH = 'scripts/github/.issue-map.json';
+const ISSUES_DIR = 'docs/issues';
 
 const issueMap = existsSync(MAP_PATH)
-  ? JSON.parse(readFileSync(MAP_PATH, "utf8"))
+  ? JSON.parse(readFileSync(MAP_PATH, 'utf8'))
   : { epics: {}, features: {} };
 
 function saveMap() {
@@ -40,13 +41,13 @@ function saveMap() {
 function gh(args, { capture = true } = {}) {
   if (DRY) {
     console.log(`  [DRY] gh ${args.slice(0, 200)}…`);
-    return "";
+    return '';
   }
   const out = execSync(`gh ${args}`, {
-    stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
-    encoding: "utf8",
+    stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit',
+    encoding: 'utf8',
   });
-  return capture ? out.trim() : "";
+  return capture ? out.trim() : '';
 }
 
 function sleep(ms) {
@@ -60,18 +61,18 @@ function parseFrontmatter(content) {
   const meta = {};
   const lines = m[1].split(/\r?\n/);
   for (const line of lines) {
-    const idx = line.indexOf(":");
+    const idx = line.indexOf(':');
     if (idx < 0) continue;
     const key = line.slice(0, idx).trim();
     let val = line.slice(idx + 1).trim();
     if (/^\[.*\]$/.test(val)) {
       val = val
         .slice(1, -1)
-        .split(",")
-        .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+        .split(',')
+        .map((s) => s.trim().replace(/^["']|["']$/g, ''))
         .filter(Boolean);
     } else {
-      val = val.replace(/^["']|["']$/g, "");
+      val = val.replace(/^["']|["']$/g, '');
     }
     meta[key] = val;
   }
@@ -84,7 +85,7 @@ function walk(dir) {
   for (const name of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, name.name);
     if (name.isDirectory()) out.push(...walk(p));
-    else if (name.isFile() && p.endsWith(".md")) out.push(p);
+    else if (name.isFile() && p.endsWith('.md')) out.push(p);
   }
   return out;
 }
@@ -94,7 +95,7 @@ const allMd = walk(ISSUES_DIR);
 // Epic files: anything that is NOT INDEX, README, -features, -stubs
 const epicFiles = allMd.filter((p) => {
   const b = basename(p);
-  if (b === "INDEX.md" || b === "README.md") return false;
+  if (b === 'INDEX.md' || b === 'README.md') return false;
   if (/-features\.md$/.test(b)) return false;
   if (/-stubs\.md$/.test(b)) return false;
   return true;
@@ -105,14 +106,18 @@ const stubsFiles = allMd.filter((p) => /-stubs\.md$/.test(basename(p)));
 
 // -------- Issue creation --------
 function createIssue({ title, body, labels = [], milestone }) {
-  const tmp = join(tmpdir(), `issue-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.md`);
+  const tmp = join(tmpdir(), `issue-${process.pid}-${Date.now()}-${randomUUID()}.md`);
   writeFileSync(tmp, body);
-  const labelArgs = labels.map((l) => `--label "${l}"`).join(" ");
-  const milestoneArg = milestone ? `--milestone "${milestone}"` : "";
+  const labelArgs = labels.map((l) => `--label "${l}"`).join(' ');
+  const milestoneArg = milestone ? `--milestone "${milestone}"` : '';
   // Escape for double-quoted shell: backslash, backtick, dollar, double-quote
-  const titleEsc = title.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$").replace(/"/g, '\\"');
+  const titleEsc = title
+    .replaceAll('\\', String.raw`\\`)
+    .replaceAll('`', String.raw`\``)
+    .replaceAll('$', String.raw`\$`)
+    .replaceAll('"', String.raw`\"`);
   const url = gh(
-    `issue create --repo ${REPO} --title "${titleEsc}" --body-file "${tmp}" ${labelArgs} ${milestoneArg}`
+    `issue create --repo ${REPO} --title "${titleEsc}" --body-file "${tmp}" ${labelArgs} ${milestoneArg}`,
   );
   const m = url.match(/\/issues\/(\d+)/);
   if (!m && !DRY) throw new Error(`Could not parse issue URL: ${url}`);
@@ -121,11 +126,9 @@ function createIssue({ title, body, labels = [], milestone }) {
 
 function addToProject(issueUrl) {
   // Load project meta (optional)
-  if (!existsSync("scripts/github/.project.json")) return;
-  const project = JSON.parse(readFileSync("scripts/github/.project.json", "utf8"));
-  gh(
-    `project item-add ${project.number} --owner ${project.owner} --url "${issueUrl}"`
-  );
+  if (!existsSync('scripts/github/.project.json')) return;
+  const project = JSON.parse(readFileSync('scripts/github/.project.json', 'utf8'));
+  gh(`project item-add ${project.number} --owner ${project.owner} --url "${issueUrl}"`);
 }
 
 function addSubIssue(parentNumber, childNumber) {
@@ -133,18 +136,14 @@ function addSubIssue(parentNumber, childNumber) {
     console.log(`  [DRY] link sub-issue ${childNumber} -> parent ${parentNumber}`);
     return;
   }
-  const parentId = JSON.parse(
-    gh(`issue view ${parentNumber} --repo ${REPO} --json id`)
-  ).id;
-  const childId = JSON.parse(
-    gh(`issue view ${childNumber} --repo ${REPO} --json id`)
-  ).id;
+  const parentId = JSON.parse(gh(`issue view ${parentNumber} --repo ${REPO} --json id`)).id;
+  const childId = JSON.parse(gh(`issue view ${childNumber} --repo ${REPO} --json id`)).id;
   const mutation = `mutation{addSubIssue(input:{issueId:"${parentId}",subIssueId:"${childId}"}){issue{number}}}`;
   try {
     gh(`api graphql -f query='${mutation}'`);
   } catch (e) {
     console.warn(
-      `  sub-issue link failed for ${childNumber} -> ${parentNumber}: ${e.message?.slice(0, 200) ?? e}`
+      `  sub-issue link failed for ${childNumber} -> ${parentNumber}: ${e.message?.slice(0, 200) ?? e}`,
     );
   }
 }
@@ -158,7 +157,7 @@ function epicKeyFromFile(file) {
 }
 function epicKeyFromFeaturesFile(file) {
   // P-03-features.md -> P-03 ; PH-1-features.md -> PH-1 ; X-01-stubs.md -> X-01
-  return basename(file).replace(/-(features|stubs)\.md$/, "");
+  return basename(file).replace(/-(features|stubs)\.md$/, '');
 }
 
 // -------- Pass 1: epics --------
@@ -170,7 +169,7 @@ for (const file of epicFiles) {
     console.log(`epic ${key} already pushed as #${issueMap.epics[key]}; skipping`);
     continue;
   }
-  const { meta, body } = parseFrontmatter(readFileSync(file, "utf8"));
+  const { meta, body } = parseFrontmatter(readFileSync(file, 'utf8'));
   const title = meta.title ?? `[EPIC] ${key}`;
   const labels = Array.isArray(meta.labels) ? meta.labels : [];
   const milestone = meta.milestone;
@@ -199,7 +198,7 @@ function splitH2Sections(body) {
   for (const ln of lines) {
     if (/^## /.test(ln)) {
       if (current) sections.push(current);
-      current = { heading: ln.replace(/^## /, "").trim(), content: [ln] };
+      current = { heading: ln.replace(/^## /, '').trim(), content: [ln] };
     } else if (current) {
       current.content.push(ln);
     }
@@ -207,14 +206,14 @@ function splitH2Sections(body) {
   if (current) sections.push(current);
   return sections.map((s) => ({
     heading: s.heading,
-    body: s.content.join("\n").trim(),
+    body: s.content.join('\n').trim(),
   }));
 }
 
 function featureLabelsFromEpic(epicKey, epicLabels) {
   // Replace epic label with feature label; preserve phase/area/jtbd/priority.
-  const labels = (epicLabels ?? []).filter((l) => l !== "type:epic");
-  if (!labels.includes("type:feature")) labels.unshift("type:feature");
+  const labels = (epicLabels ?? []).filter((l) => l !== 'type:epic');
+  if (!labels.includes('type:feature')) labels.unshift('type:feature');
   return labels;
 }
 
@@ -233,11 +232,11 @@ for (const file of [...featuresFiles, ...stubsFiles]) {
     console.warn(`Cannot find epic file for ${epicKey}; skipping ${file}`);
     continue;
   }
-  const epicMeta = parseFrontmatter(readFileSync(epicFile, "utf8")).meta;
+  const epicMeta = parseFrontmatter(readFileSync(epicFile, 'utf8')).meta;
   const inheritedLabels = featureLabelsFromEpic(epicKey, epicMeta.labels);
   const milestone = epicMeta.milestone;
 
-  const body = readFileSync(file, "utf8");
+  const body = readFileSync(file, 'utf8');
   const sections = splitH2Sections(body);
   console.log(`\n${epicKey}: ${sections.length} sections in ${basename(file)}`);
 
@@ -250,7 +249,7 @@ for (const file of [...featuresFiles, ...stubsFiles]) {
     }
 
     // Build title
-    const headingForTitle = section.heading.replace(/^Φ\d+ /, "").trim();
+    const headingForTitle = section.heading.replace(/^Φ\d+ /, '').trim();
     const title = `[FEAT] ${headingForTitle}`;
 
     // Build body — append a parent-epic pointer
@@ -280,5 +279,5 @@ for (const file of [...featuresFiles, ...stubsFiles]) {
 }
 
 console.log(
-  `\nDone. Epics: ${Object.keys(issueMap.epics).length}. Features: ${Object.keys(issueMap.features).length}. ${DRY ? "(dry-run)" : ""}`
+  `\nDone. Epics: ${Object.keys(issueMap.epics).length}. Features: ${Object.keys(issueMap.features).length}. ${DRY ? '(dry-run)' : ''}`,
 );

@@ -1,9 +1,9 @@
 /**
- * Shared ioredis singleton for the API process.
+ * Shared ioredis connection for the API process (`@aggregator-dpg/api`).
  *
- * Used by routes that need to read transient run-state owned by the worker
- * (e.g. live bulk-upload counters in `bu:<id>:counters`). Other services
- * such as the rate limiter and bull queues maintain their own connections.
+ * Used by routes that read run-state written by the worker, such as
+ * bulk-upload counters in `bu:<id>:counters`. The rate limiter and queues use
+ * their own connections.
  */
 
 import type { Redis } from 'ioredis';
@@ -18,14 +18,13 @@ export function getRedis(): Redis {
   return instance;
 }
 
-/** Test helper — replace the singleton. */
+/** Test helper; replaces the singleton. */
 export function _setRedis(r: Redis | null): void {
   instance = r;
 }
 
 /**
  * Closes the shared Redis connection. Idempotent; call from process shutdown.
- * Previously this singleton was leaked on SIGTERM (nothing closed it).
  */
 export async function closeRedis(): Promise<void> {
   await instance?.quit().catch(() => undefined);

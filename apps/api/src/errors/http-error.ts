@@ -1,8 +1,7 @@
 /**
- * HttpError — thrown from route handlers, rendered by the global error handler.
+ * Error thrown by api route handlers and rendered by the global error handler.
  *
- * Carries the catalogue entry verbatim so the handler can build the response
- * envelope and structured log without re-deriving fields.
+ * Carries the catalogue entry so the handler can build the response and log.
  */
 
 import { ERR, type ErrorCatalogueEntry, type ErrorCode } from './codes.js';
@@ -39,7 +38,7 @@ export class HttpError extends Error {
   }
 }
 
-/** Throws an HttpError from a catalogue key. Concise call site. */
+/** Builds an HttpError from a catalogue key. */
 export function httpError(code: ErrorCode, options?: HttpErrorOptions): HttpError {
   return new HttpError(ERR[code], options);
 }

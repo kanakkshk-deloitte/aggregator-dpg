@@ -1,12 +1,22 @@
 {
   "ui:layout": "stack",
-  "ui:order": ["display_name", "state", "owner", "consent"],
+  "ui:order": ["display_name", "website", "gst_number", "domains", "address", "owner", "consent"],
   "display_name": {
     "ui:placeholder": "e.g. Enable India",
     "ui:autofocus": true
   },
-  "state": {
-    "ui:placeholder": "e.g. Karnataka"
+  "website": {
+    "ui:placeholder": "https://yourorg.org",
+    "ui:options": {
+      "inputType": "url"
+    }
+  },
+  "gst_number": {
+    "ui:placeholder": "e.g. 29ABCDE1234F1ZW"
+  },
+  "domains": {
+    "ui:widget": "checkboxes",
+    "ui:placeholder": "Select domains"
   },
   "owner": {
     "ui:layout": "grid",
@@ -16,11 +26,15 @@
     },
     "phone": {
       "ui:placeholder": "+91 98765 43210",
-      "ui:options": { "inputType": "tel" }
+      "ui:options": {
+        "inputType": "tel"
+      }
     },
     "email": {
       "ui:placeholder": "owner@yourorg.org",
-      "ui:options": { "inputType": "email" }
+      "ui:options": {
+        "inputType": "email"
+      }
     }
   },
   "consent": {
@@ -31,11 +45,26 @@
     },
     "given_at": {
       "ui:widget": "hidden",
-      "ui:options": { "label": false }
+      "ui:options": {
+        "label": false
+      }
     },
     "valid_till": {
       "ui:widget": "hidden",
-      "ui:options": { "label": false }
+      "ui:options": {
+        "label": false
+      }
     }
+  },
+  "address": {
+    "ui:title": "",
+    "streetAddress": {
+      "ui:widget": "location-autocomplete",
+      "ui:placeholder": "Start typing and pick your address",
+      "ui:options": {
+        "isPrimaryLocation": true
+      }
+    },
+    "ui:layout": "stack"
   }
 }

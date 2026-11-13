@@ -1,12 +1,11 @@
 .PHONY: help setup dev up down logs ps reset psql redis-cli mc kc rebuild-web rebuild-keycloak kc-plugin kc-logs \
-        helm-sync-files helm-deps helm-lint helm-template helm-package helm-install-dev helm-uninstall keycloak-image \
+        helm-sync-files helm-deps helm-lint helm-template helm-package helm-install-dev helm-uninstall \
         check-brand
 
 # ─── Helm chart settings ────────────────────────────────────────────────
 HELM_CHART_DIR    ?= helm/aggregator-dpg
 HELM_RELEASE_NAME ?= aggregator
 HELM_NAMESPACE    ?= aggregator
-KEYCLOAK_IMAGE    ?= aggregator-dpg/keycloak:26.5.5-aggregator
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -110,6 +109,12 @@ helm-install-dev: helm-deps ## Install the chart into the current kube-context w
 helm-uninstall: ## Remove the release (does NOT delete PVCs).
 	helm uninstall $(HELM_RELEASE_NAME) --namespace $(HELM_NAMESPACE)
 
-keycloak-image: ## Build the custom Keycloak image (SPI baked in + kc.sh build run).
-	docker build -f infra/keycloak/Dockerfile -t $(KEYCLOAK_IMAGE) infra/keycloak
-	@echo "Built $(KEYCLOAK_IMAGE)."
+# NOTE: the `keycloak-image` target is gone. The deployment Keycloak image (OTP
+# SPI baked in + `kc.sh build`) is now built in the bluedots-automation repo at
+# `dockerfiles/keycloak/`, published as ghcr.io/<owner>/keycloak-server by its
+# manual "Build Keycloak image" workflow. Keycloak is a shared common service for
+# both DPGs, so its image is released from the repo that deploys it.
+#
+# Local dev is unaffected: `make up` still runs the stock Keycloak image with
+# infra/keycloak/providers bind-mounted and `start-dev`, which re-indexes the SPI
+# on every boot. `make kc-plugin` / `make rebuild-keycloak` still work.

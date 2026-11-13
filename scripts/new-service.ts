@@ -11,9 +11,10 @@
  * Aborts if packages/<name> already exists.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import path, { join, relative } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const TEMPLATE_DIR = 'packages/_template';
 const PACKAGES_DIR = 'packages';
@@ -28,6 +29,65 @@ function usage(): never {
   console.error('Usage: pnpm new-service <name>');
   console.error('Example: pnpm new-service signal-stack');
   process.exit(1);
+}
+
+/**
+ * Basenames the pnpm CLI entry point is known to carry. `pnpm run` and
+ * Corepack both point `npm_execpath` at the JS entry (`pnpm.cjs`); the
+ * standalone `@pnpm/exe` install points at the launcher itself.
+ */
+const PNPM_CLI_BASENAMES = new Set(['pnpm', 'pnpm.cjs', 'pnpm.js', 'pnpm.mjs', 'pnpm.exe']);
+
+/**
+ * Validates the package-manager entry point handed down by the invoking run.
+ *
+ * The workspace re-link is executed as `<node> <pnpm-cli> install` — two
+ * absolute paths — rather than resolving a bare `pnpm` through `PATH`, which
+ * a user-writable PATH entry could hijack. That means trusting
+ * `npm_execpath`, so it has to be checked: npm and yarn set it too, and
+ * running `npm install` inside a pnpm workspace drops a stray
+ * `package-lock.json` and a non-pnpm `node_modules` layout.
+ *
+ * Pure, so `scripts/new-service.test.mjs` can cover it; `pnpmCli()` is the
+ * process-exiting wrapper.
+ *
+ * @param execPath - Value of `npm_execpath`, or undefined when unset.
+ * @returns `{ cli }` when `execPath` is a pnpm entry point, otherwise
+ *   `{ error }` carrying the message to print.
+ */
+export function resolvePnpmCli(execPath: string | undefined): { cli: string } | { error: string } {
+  if (!execPath) {
+    return {
+      error: 'pnpm not detected (npm_execpath is unset) — run this as: pnpm new-service <name>',
+    };
+  }
+  // `win32.basename` splits on BOTH `/` and `\`, so a Windows `npm_execpath`
+  // is still reduced correctly when this runs on POSIX. Splitting too eagerly
+  // can only cause a refusal, never a silent wrong-package-manager install.
+  const cliName = path.win32.basename(execPath);
+  if (!PNPM_CLI_BASENAMES.has(cliName)) {
+    return {
+      error:
+        `This workspace is pnpm-only, but new-service was invoked through "${cliName}" (${execPath}).\n` +
+        'Refusing to run it — doing so would install with the wrong package manager.\n' +
+        'Re-run as: pnpm new-service <name>',
+    };
+  }
+  return { cli: execPath };
+}
+
+/**
+ * Absolute path to the pnpm CLI entry point of the invoking `pnpm run`.
+ *
+ * @returns Absolute path to the pnpm entry script.
+ */
+function pnpmCli(): string {
+  const resolved = resolvePnpmCli(process.env.npm_execpath);
+  if ('error' in resolved) {
+    console.error(resolved.error);
+    process.exit(1);
+  }
+  return resolved.cli;
 }
 
 function slug(name: string): string {
@@ -77,6 +137,11 @@ function main(): void {
     process.exit(1);
   }
 
+  // Resolved before anything is written to disk: aborting here must leave no
+  // half-scaffolded packages/<name> behind, which would otherwise make every
+  // retry fail with "Package already exists" until the user removes it.
+  const pnpmEntry = pnpmCli();
+
   const repoRoot = process.cwd();
   const templatePath = join(repoRoot, TEMPLATE_DIR);
   const destPath = join(repoRoot, PACKAGES_DIR, name);
@@ -96,7 +161,7 @@ function main(): void {
   copyDir(templatePath, destPath, name);
 
   console.log('Running pnpm install to link workspace...');
-  execSync('pnpm install', { stdio: 'inherit', cwd: repoRoot });
+  execFileSync(process.execPath, [pnpmEntry, 'install'], { stdio: 'inherit', cwd: repoRoot });
 
   console.log(`\nDone. Next steps:`);
   console.log(`  1. Edit packages/${name}/src/interface.ts — define your abstract class`);
@@ -106,4 +171,8 @@ function main(): void {
   console.log(`  5. Run: pnpm --filter @aggregator-dpg/${name} test`);
 }
 
-main();
+// Only run when invoked directly (`pnpm new-service <name>`), not when
+// imported by the test module.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

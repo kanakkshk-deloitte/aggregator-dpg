@@ -7,8 +7,8 @@ interface AvatarProps {
 const PALETTE = ['#6366F1', '#10B981', '#F59E0B', '#EC4899', '#0EA5E9', '#8B5CF6', '#14B8A6'];
 
 export function Avatar({ initials, color, size = 36 }: AvatarProps) {
-  const a = initials.charCodeAt(0) || 0;
-  const b = initials.charCodeAt(1) || 0;
+  const a = initials.codePointAt(0) ?? 0;
+  const b = initials.codePointAt(1) ?? 0;
   const palette = PALETTE[(a + b) % PALETTE.length] ?? '#6366F1';
   const c = color ?? palette;
   return (

@@ -267,6 +267,25 @@ button {
   object-position: left center;
 }
 
+/* Names the app being signed in to (see template.ftl's bd-brand header).
+   Colours come from the palette vars, so each theme's pill picks up its own
+   accent without a rule per theme. */
+.bd-app-label {
+  display: inline-block;
+  flex-shrink: 0;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--bd-primary-50);
+  color: var(--bd-primary-600);
+  border: 1px solid var(--bd-primary-100);
+  font-family: var(--bd-font-sans);
+  font-weight: 600;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .bd-brand-text strong {
   display: block;
   font-family: var(--bd-font-heading);
@@ -495,6 +514,18 @@ button {
   cursor: pointer;
 }
 .bd-link-btn:hover { text-decoration: underline; }
+
+/* Error-page escape hatch. Stacks the prompt above the sign-out link so the
+   link reads as an action rather than as part of the sentence. */
+.bd-error-switch {
+  margin: 18px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--bd-ink-600, #4b5563);
+}
+.bd-error-switch a { display: inline-block; }
 
 .bd-terms {
   margin: 28px 0 0;
@@ -769,4 +800,42 @@ button {
   .bd-hero { display: none; }
   .bd-pane { padding: 36px 20px; }
   .bd-version { right: 14px; bottom: 12px; }
+}
+
+/* ── "Owned by / Managed by" attribution (signals-dpg#720) ──────────────────
+   Mirrors the web login page: marks sized by HEIGHT only, so each column is
+   as wide as its own artwork and the caption can centre over it. A shared
+   fixed width would leave a different amount of empty space beside each mark
+   — the two have different aspect ratios — and that reads as misalignment.
+   Renders only when the brand sets attrOneLabel/attrTwoLabel. */
+.bd-attribution {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 32px;
+  margin-top: 64px;
+}
+.bd-attribution-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.bd-attribution-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--bd-fg-muted, #6b7493);
+}
+.bd-attribution-mark {
+  height: 96px;
+  width: auto;
+  object-fit: contain;
+  display: block;
+}
+.bd-attribution-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--bd-fg, #0b1020);
 }

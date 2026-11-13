@@ -1,14 +1,12 @@
 /**
  * Keycloak adapter for the IdP admin port.
  *
- * Talks to Keycloak's admin REST API (`/admin/realms/{realm}/...`) using a
- * confidential service-account client (`aggregator-api`) granted only the
- * `realm-management:manage-users` role. Tokens are fetched via the
- * client_credentials grant and cached until ~30s before expiry.
+ * Part of `@aggregator-dpg/api`. Calls Keycloak's admin REST API
+ * (`/admin/realms/{realm}/...`) with a confidential service-account client
+ * (`aggregator-api`) that has only `realm-management:manage-users`. Tokens come
+ * from the client_credentials grant and are cached until ~30s before expiry.
  *
- * Maintained as a thin layer — every method maps to one or two REST calls;
- * no SDK in the dependency graph (DPG-friendly: replace by writing a new
- * adapter, no SDK lock-in).
+ * Each method maps to one or two REST calls; no SDK is used.
  */
 
 import {
@@ -24,7 +22,7 @@ const TOKEN_REFRESH_LEAD_MS = 30_000;
 
 export interface KeycloakAdminOptions {
   baseUrl: string; // e.g. http://keycloak:8080
-  realm: string; // e.g. aggregator
+  realm: string; // e.g. bluedots
   clientId: string; // e.g. aggregator-api
   clientSecret: string;
   /** Override fetch (for tests). */
@@ -35,6 +33,9 @@ interface CachedToken {
   accessToken: string;
   expiresAt: number;
 }
+
+/** Keycloak's error for a first or last name with a character its validator refuses. */
+const KC_INVALID_NAME_ERROR = 'error-person-name-invalid-character';
 
 export class KeycloakIdpAdmin extends IdpAdminAdapter {
   private cachedToken: CachedToken | null = null;
@@ -79,6 +80,13 @@ export class KeycloakIdpAdmin extends IdpAdminAdapter {
     }
     if (res.value.status !== 201) {
       const text = await res.value.text().catch(() => '');
+      // Keycloak's person-name validator refuses symbols such as ( ) < > & /.
+      if (res.value.status === 400 && text.includes(KC_INVALID_NAME_ERROR)) {
+        return {
+          ok: false,
+          error: { code: 'INVALID_NAME', message: 'name has a refused character' },
+        };
+      }
       return {
         ok: false,
         error: {
@@ -88,8 +96,7 @@ export class KeycloakIdpAdmin extends IdpAdminAdapter {
       };
     }
 
-    // Keycloak returns the new user's URL in the Location header. Re-fetch
-    // to get the full representation.
+    // Keycloak returns the new user's URL in Location; re-fetch the full record.
     const location = res.value.headers.get('location');
     const userId = location?.split('/').pop();
     if (!userId) {
@@ -171,8 +178,7 @@ export class KeycloakIdpAdmin extends IdpAdminAdapter {
       };
     }
     const list = (await res.value.json()) as KcUserPayload[];
-    // Defensive filter — Keycloak's q param matches partial values in some
-    // versions, so post-filter for an exact match on the attribute value.
+    // Some Keycloak versions match `q` partially; keep exact matches only.
     const exact = list.find((u) => {
       const vals = u.attributes?.[name];
       return Array.isArray(vals) && vals.includes(value);
@@ -223,9 +229,7 @@ export class KeycloakIdpAdmin extends IdpAdminAdapter {
     const tokenResult = await this.getToken();
     if (!tokenResult.ok) return tokenResult;
 
-    // Read existing user representation so we can merge — Keycloak's
-    // `PUT /users/{id}` replaces the full `attributes` block, so partial
-    // writes need a read-modify-write cycle.
+    // `PUT /users/{id}` replaces all attributes, so read and merge first.
     const current = await this.readUser(userId, tokenResult.value);
     if (!current.ok) return current;
 
@@ -240,10 +244,7 @@ export class KeycloakIdpAdmin extends IdpAdminAdapter {
       }
     }
 
-    // Some Keycloak versions interpret an admin PUT that omits top-level
-    // fields (email, username, firstName, lastName) as "clear those
-    // fields". To stay safe across versions, write back the full user
-    // representation we just read, with the merged attributes layered on.
+    // Write back the full user; some Keycloak versions clear omitted top-level fields.
     const u = current.value;
     const fullPayload: Record<string, unknown> = {
       id: u.id,
@@ -332,9 +333,7 @@ export class KeycloakIdpAdmin extends IdpAdminAdapter {
       };
     }
 
-    // Keycloak's `POST /groups` ignores the `attributes` field on creation, so
-    // attributes must be persisted with a follow-up `PUT /groups/{id}`. Without
-    // this the group carries no `org_id` / `display_name`.
+    // `POST /groups` ignores `attributes`, so set them with `PUT /groups/{id}`.
     if (Object.keys(kcAttributes).length > 0) {
       const putUrl = `${this.opts.baseUrl}/admin/realms/${this.opts.realm}/groups/${groupId}`;
       const putRes = await this.safeFetch(putUrl, {
@@ -371,11 +370,58 @@ export class KeycloakIdpAdmin extends IdpAdminAdapter {
       headers: { Authorization: `Bearer ${tokenResult.value}` },
     });
     if (!res.ok) return res;
-    // 404 → already gone; treat as success (idempotent).
+    // 404 means already gone; treat as success.
     if (!res.value.ok && res.value.status !== 404) {
       return {
         ok: false,
         error: { code: 'IDP_UNAVAILABLE', message: `deleteGroup HTTP ${res.value.status}` },
+      };
+    }
+    return { ok: true, value: undefined };
+  }
+
+  async findGroupByName(
+    name: string,
+  ): Promise<IdpResult<{ id: string; attributes: Record<string, string[]> } | null>> {
+    const tokenResult = await this.getToken();
+    if (!tokenResult.ok) return tokenResult;
+    const url = `${this.opts.baseUrl}/admin/realms/${this.opts.realm}/groups?search=${encodeURIComponent(name)}&exact=true&briefRepresentation=false`;
+    const res = await this.safeFetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${tokenResult.value}` },
+    });
+    if (!res.ok) return res;
+    if (!res.value.ok) {
+      return {
+        ok: false,
+        error: { code: 'IDP_UNAVAILABLE', message: `findGroupByName HTTP ${res.value.status}` },
+      };
+    }
+    const groups = (await res.value.json().catch(() => [])) as Array<{
+      id?: string;
+      name?: string;
+      attributes?: Record<string, string[]>;
+    }>;
+    const match = Array.isArray(groups) ? groups.find((g) => g.name === name && g.id) : undefined;
+    return {
+      ok: true,
+      value: match?.id ? { id: match.id, attributes: match.attributes ?? {} } : null,
+    };
+  }
+
+  async removeUserFromGroup(userId: string, groupId: string): Promise<IdpResult<void>> {
+    const tokenResult = await this.getToken();
+    if (!tokenResult.ok) return tokenResult;
+    const url = `${this.opts.baseUrl}/admin/realms/${this.opts.realm}/users/${userId}/groups/${groupId}`;
+    const res = await this.safeFetch(url, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tokenResult.value}` },
+    });
+    if (!res.ok) return res;
+    if (!res.value.ok && res.value.status !== 404) {
+      return {
+        ok: false,
+        error: { code: 'IDP_UNAVAILABLE', message: `removeUserFromGroup HTTP ${res.value.status}` },
       };
     }
     return { ok: true, value: undefined };
@@ -407,8 +453,7 @@ export class KeycloakIdpAdmin extends IdpAdminAdapter {
     const tokenResult = await this.getToken();
     if (!tokenResult.ok) return tokenResult;
 
-    // Resolve the realm-role representation first — the role-mappings endpoint
-    // requires the full {id,name} object, not just the role name.
+    // The role-mappings endpoint needs the full {id,name} role object.
     const roleRes = await this.safeFetch(
       `${this.opts.baseUrl}/admin/realms/${this.opts.realm}/roles/${encodeURIComponent(role)}`,
       { headers: { Authorization: `Bearer ${tokenResult.value}` } },
@@ -444,6 +489,96 @@ export class KeycloakIdpAdmin extends IdpAdminAdapter {
       return {
         ok: false,
         error: { code: 'IDP_UNAVAILABLE', message: `assignRealmRole HTTP ${mapRes.value.status}` },
+      };
+    }
+    return { ok: true, value: undefined };
+  }
+
+  async listRealmRoles(userId: string): Promise<IdpResult<string[]>> {
+    const tokenResult = await this.getToken();
+    if (!tokenResult.ok) return tokenResult;
+    const res = await this.safeFetch(
+      `${this.opts.baseUrl}/admin/realms/${this.opts.realm}/users/${userId}/role-mappings/realm`,
+      { headers: { Authorization: `Bearer ${tokenResult.value}` } },
+    );
+    if (!res.ok) return res;
+    if (!res.value.ok) {
+      return {
+        ok: false,
+        error: {
+          code: res.value.status === 404 ? 'USER_NOT_FOUND' : 'IDP_UNAVAILABLE',
+          message: `listRealmRoles HTTP ${res.value.status}`,
+        },
+      };
+    }
+    const roles = (await res.value.json()) as Array<{ name?: unknown }>;
+    return {
+      ok: true,
+      value: roles.map((r) => r.name).filter((n): n is string => typeof n === 'string'),
+    };
+  }
+
+  async removeRealmRole(userId: string, role: string): Promise<IdpResult<void>> {
+    const tokenResult = await this.getToken();
+    if (!tokenResult.ok) return tokenResult;
+
+    const roleRes = await this.safeFetch(
+      `${this.opts.baseUrl}/admin/realms/${this.opts.realm}/roles/${encodeURIComponent(role)}`,
+      { headers: { Authorization: `Bearer ${tokenResult.value}` } },
+    );
+    if (!roleRes.ok) return roleRes;
+    if (!roleRes.value.ok) {
+      return {
+        ok: false,
+        error: {
+          code: roleRes.value.status === 404 ? 'BAD_REQUEST' : 'IDP_UNAVAILABLE',
+          message: `removeRealmRole role lookup HTTP ${roleRes.value.status}`,
+        },
+      };
+    }
+    const roleRep = (await roleRes.value.json()) as { id: string; name: string };
+
+    // DELETE on role-mappings is a no-op for a role the user does not hold.
+    const mapRes = await this.safeFetch(
+      `${this.opts.baseUrl}/admin/realms/${this.opts.realm}/users/${userId}/role-mappings/realm`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${tokenResult.value}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([{ id: roleRep.id, name: roleRep.name }]),
+      },
+    );
+    if (!mapRes.ok) return mapRes;
+    if (mapRes.value.status === 404) {
+      return { ok: false, error: { code: 'USER_NOT_FOUND', message: userId } };
+    }
+    if (!mapRes.value.ok) {
+      return {
+        ok: false,
+        error: { code: 'IDP_UNAVAILABLE', message: `removeRealmRole HTTP ${mapRes.value.status}` },
+      };
+    }
+    return { ok: true, value: undefined };
+  }
+
+  async logoutSessions(userId: string): Promise<IdpResult<void>> {
+    const tokenResult = await this.getToken();
+    if (!tokenResult.ok) return tokenResult;
+
+    const res = await this.safeFetch(
+      `${this.opts.baseUrl}/admin/realms/${this.opts.realm}/users/${userId}/logout`,
+      { method: 'POST', headers: { Authorization: `Bearer ${tokenResult.value}` } },
+    );
+    if (!res.ok) return res;
+    if (res.value.status === 404) {
+      return { ok: false, error: { code: 'USER_NOT_FOUND', message: userId } };
+    }
+    if (!res.value.ok) {
+      return {
+        ok: false,
+        error: { code: 'IDP_UNAVAILABLE', message: `logoutSessions HTTP ${res.value.status}` },
       };
     }
     return { ok: true, value: undefined };

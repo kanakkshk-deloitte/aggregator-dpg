@@ -9,21 +9,10 @@
  * @module @aggregator-dpg/config-loader/testing
  */
 
-import { ConfigError } from '@aggregator-dpg/shared-primitives/errors';
+import { sliceFromStore, getFromStore, requireFromStore } from '../store-access.js';
 import type { ConfigChangeCallback, Env, Unsubscribe } from '../interface.js';
 import { ConfigServiceBase } from '../interface.js';
 export type { ConfigSlice } from '../interface.js';
-
-/**
- * Resolves a dotted path into a nested object.
- * Returns undefined if any segment along the path is missing.
- */
-function resolvePath(obj: Record<string, unknown>, path: string): unknown {
-  return path.split('.').reduce<unknown>((current, key) => {
-    if (current === undefined || current === null || typeof current !== 'object') return undefined;
-    return (current as Record<string, unknown>)[key];
-  }, obj);
-}
 
 /**
  * In-memory ConfigService for tests.
@@ -63,14 +52,7 @@ export class ConfigServiceFake extends ConfigServiceBase {
    * @throws {ConfigError} With code CONFIG_KEY_MISSING if the key is absent.
    */
   slice<T>(key: string): T {
-    const value = this.store[key];
-    if (value === undefined) {
-      throw new ConfigError(`Config slice not found: "${key}"`, {
-        code: 'CONFIG_KEY_MISSING',
-        details: { key },
-      });
-    }
-    return value as T;
+    return sliceFromStore<T>(this.store, key);
   }
 
   /**
@@ -79,7 +61,7 @@ export class ConfigServiceFake extends ConfigServiceBase {
    * @param path - Dotted key path.
    */
   get<T = unknown>(path: string): T | undefined {
-    return resolvePath(this.store, path) as T | undefined;
+    return getFromStore<T>(this.store, path);
   }
 
   /**
@@ -89,18 +71,11 @@ export class ConfigServiceFake extends ConfigServiceBase {
    * @throws {ConfigError} If the path does not exist or the value is undefined.
    */
   require<T = unknown>(path: string): T {
-    const value = resolvePath(this.store, path);
-    if (value === undefined) {
-      throw new ConfigError(`Required config key not found: "${path}"`, {
-        code: 'CONFIG_KEY_MISSING',
-        details: { path },
-      });
-    }
-    return value as T;
+    return requireFromStore<T>(this.store, path);
   }
 
   /**
-   * Replaces the config store and notifies all onChange listeners.
+   * Notifies all onChange listeners. The store is unchanged.
    */
   async reload(): Promise<void> {
     for (const cb of this.listeners) {
@@ -122,8 +97,7 @@ export class ConfigServiceFake extends ConfigServiceBase {
   }
 
   /**
-   * No-op watch — in-memory fake has no files to watch.
-   * Present to satisfy the abstract contract.
+   * No-op. The fake has no files to watch.
    *
    * @returns No-op unsubscribe function.
    */

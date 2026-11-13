@@ -1,10 +1,9 @@
 /**
- * Locale constants and pure resolution helpers for the web portal's i18n.
+ * Locale constants and pure helpers for the web app's i18n.
  *
- * Kept free of `next/*` imports so it is unit-testable and importable from
- * both server and client code. The active set of switchable languages is
- * driven by `NEXT_PUBLIC_ENABLED_LANGUAGES` (Next.js equivalent of
- * Signals-DPG's `VITE_ENABLED_LANGUAGES`).
+ * Has no `next/*` imports, so server and client code can import it.
+ * `getEnabledLocales()` is server-only; client components use
+ * `EnabledLocalesProvider` instead.
  */
 
 export const SUPPORTED_LOCALES = ['en', 'kn', 'hi'] as const;
@@ -28,12 +27,15 @@ export function isSupportedLocale(v: string | undefined | null): v is Locale {
 }
 
 /**
- * Locales shown in the switcher, derived from `NEXT_PUBLIC_ENABLED_LANGUAGES`
- * (comma-separated, ordered). `en` is always force-included as the fallback.
- * Unsupported codes are dropped. Unset env → all supported locales.
+ * Parses a comma-separated locale list into the set shown in the switcher.
+ *
+ * `en` is always included, unsupported codes and duplicates are dropped, and
+ * empty input means all supported locales.
+ *
+ * @param raw - Comma-separated locale codes, or undefined when unconfigured.
+ * @returns The enabled locales, in display order.
  */
-export function getEnabledLocales(): Locale[] {
-  const raw = process.env.NEXT_PUBLIC_ENABLED_LANGUAGES;
+export function parseEnabledLocales(raw: string | undefined | null): Locale[] {
   if (!raw) return [...SUPPORTED_LOCALES];
   const requested = raw
     .split(',')
@@ -45,16 +47,33 @@ export function getEnabledLocales(): Locale[] {
   return result.length > 0 ? result : [...SUPPORTED_LOCALES];
 }
 
+/**
+ * Locales shown in the switcher, from the `ENABLED_LANGUAGES` environment variable.
+ *
+ * Server-only: never call from a client component. Client components get the
+ * list from `EnabledLocalesProvider`.
+ *
+ * Falls back to `NEXT_PUBLIC_ENABLED_LANGUAGES`. Uses `||` because Compose
+ * sets an unset variable to an empty string.
+ *
+ * @returns The enabled locales, in display order.
+ */
+export function getEnabledLocales(): Locale[] {
+  return parseEnabledLocales(
+    process.env.ENABLED_LANGUAGES || process.env.NEXT_PUBLIC_ENABLED_LANGUAGES,
+  );
+}
+
 /** True when `v` is supported AND enabled for this deployment. */
 export function isEnabledLocale(v: string | undefined | null): v is Locale {
   return isSupportedLocale(v) && getEnabledLocales().includes(v);
 }
 
 /**
- * Resolves the active locale from a cookie value and an Accept-Language
- * header. Cookie wins when it names an enabled locale; otherwise the first
- * Accept-Language tag whose base matches an enabled locale; otherwise the
- * default. Pure — no `next/*` access — so it is unit-testable.
+ * Resolves the active locale from the locale cookie and Accept-Language header.
+ *
+ * Order: an enabled cookie locale, then the first enabled Accept-Language
+ * tag, then the default.
  *
  * @param cookieValue - The locale cookie value, if present.
  * @param acceptLanguage - The Accept-Language header string, or null.

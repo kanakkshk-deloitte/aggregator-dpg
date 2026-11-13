@@ -1,17 +1,10 @@
 /**
- * Shared BFF → aggregator-API proxy for **anonymous** (pre-session) routes.
+ * BFF proxy to the aggregator API for anonymous (pre-session) routes only.
  *
- * The browser has no portal session on the public registration surfaces, but
- * the aggregator API requires a Bearer token on every endpoint. This helper
- * attaches a Keycloak service-account token (client_credentials), forwards the
- * request, and passes the upstream status + body through verbatim — the API is
- * the source of truth for the canonical error envelope. It only synthesises an
- * envelope when the call could not be made at all (bad JSON, no service token,
- * network failure).
- *
- * Extracted from three near-identical route handlers (`/api/aggregator/register`,
- * `/api/org/register`, `/api/orgs`) so the token/timeout/passthrough/logging
- * logic lives in one place.
+ * Attaches a Keycloak service-account token, forwards the request, and passes
+ * the upstream status and body through. It builds its own error body only when
+ * the call cannot be made (bad JSON, no service token, network failure).
+ * Never use it for routes that act for a signed-in user.
  *
  * @module apps/web/src/lib/bff-service-proxy
  */
@@ -23,7 +16,7 @@ import { logger, pickRequestId } from './logger';
 const UPSTREAM_TIMEOUT_MS = 10_000;
 const REQUEST_ID_HEADER = 'x-request-id';
 
-/** Canonical error envelope this proxy synthesises for pre-upstream failures. */
+/** Error body this proxy builds when the upstream call cannot be made. */
 interface BffErrorEnvelope {
   error: { code: string; title: string; detail: string; requestId: string; timestamp: string };
 }
@@ -64,8 +57,7 @@ export interface ServiceProxyOptions {
  *
  * @param req - The incoming Next.js request.
  * @param opts - Upstream path/method + proxy behaviour.
- * @returns The upstream response forwarded verbatim, or a synthesised envelope
- *   (400 bad JSON, 503 IdP/upstream unavailable).
+ * @returns The upstream response, or a 400 (bad JSON) / 503 (IdP or upstream down).
  */
 export async function proxyServiceRequest(
   req: NextRequest,
@@ -157,8 +149,7 @@ export async function proxyServiceRequest(
   const latency_ms = Date.now() - start;
   const contentType = upstream.headers.get('content-type') ?? '';
 
-  // Pass the upstream body through unchanged — the API renders the canonical
-  // envelope for every error and the success body for 2xx.
+  // Pass the upstream body through unchanged.
   if (contentType.includes('application/json')) {
     const data = (await upstream.json()) as unknown;
     log.info({ status: upstream.status, latency_ms }, 'upstream response forwarded');

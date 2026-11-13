@@ -18,7 +18,7 @@ describe('support routes (SUPPORT_EMAIL unset)', () => {
     delete process.env.SUPPORT_EMAIL;
     _resetJwks();
     process.env.KEYCLOAK_URL = 'http://kc.local';
-    process.env.KEYCLOAK_REALM = 'aggregator';
+    process.env.KEYCLOAK_REALM = 'bluedots';
     _setAccessTokenVerifier(async (token) => {
       if (token === 'good-token') {
         return { sub: 'u1', aggregator_id: 'agg-9', email: 'asha@example.com' };
@@ -59,6 +59,8 @@ describe('support routes (SUPPORT_EMAIL unset)', () => {
       headers: { authorization: 'Bearer good-token' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ enabled: false });
+    // Attachment limits are still reported when support is off (#551) — the
+    // form is hidden on `enabled`, not on the absence of the limits.
+    expect(res.json()).toMatchObject({ enabled: false, maxFiles: 3 });
   });
 });

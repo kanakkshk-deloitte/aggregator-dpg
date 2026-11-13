@@ -1,0 +1,92 @@
+# Active aggregator config for the running stack. Switched to purple_dot
+# for the PWD-services rollout; the same docker image runs blue_dot,
+# yellow_dot, or any other signalstack network by editing only this file.
+# Treat as deploy state; the .example.yaml sibling documents every
+# supported field.
+
+aggregator:
+  name: Purple Dots Aggregator
+  contact_email: ops@purpledots.local
+
+  network:
+    # Pin to a tag in production; develop is fine for local iteration.
+    source: https://raw.githubusercontent.com/Blue-Dots-Economy/bluedots-schemas/refs/heads/main/purple_dot/alimco/network.json
+    # Participant registration-link consent (Terms/Privacy/profile-creation),
+    # fetched the same cache-backed way as network.json (sibling in the schemas
+    # repo). Env AGGREGATOR_PARTICIPANT_CONSENT_SOURCE overrides; absent ⇒ web app uses the
+    # on-disk schemas/participant/consent.json copy.
+    consent_source: https://raw.githubusercontent.com/Blue-Dots-Economy/bluedots-schemas/refs/heads/main/purple_dot/alimco/consent.json
+    # Purple_dot schemas have array-typed fields (disability_type,
+    # looking_for, documents_available) — bulk CSV cells use `|` as the
+    # delimiter.
+    csv_array_delimiter: '|'
+    field_overrides:
+      seeker:
+        name: beneficiary_name
+        phone: mobile_number
+        email: email
+      provider:
+        name: contact_name
+        phone: contact_phone
+        email: contact_email
+
+  brand:
+    short_name: Purple Dots
+    long_name: Purple Dot Aggregator Portal
+    tagline: Discovery & services network for People with Disabilities
+    url_slug: purple-dots
+    # Canonical hex from Purple Dots Brand Guidelines (see brand.json).
+    # Purple 700 (deep) for CTAs — AAA contrast on white text.
+    primary_color: '#4c29c3'
+    accent_color: '#a176e4'
+
+  domain_labels:
+    seeker:
+      singular: Seeker
+      plural: Seekers
+      tab_label: Seekers
+    provider:
+      singular: Service Provider
+      plural: Service Providers
+      tab_label: Service Providers
+
+  onboarding:
+    # Bulk-upload only: when true, an adult bulk row is pushed to Signals with
+    # user_terms / user_privacy / profile_creation asserted on the participant's
+    # behalf, satisfying the consent_required go-live gate and publishing the
+    # profile immediately. false => compliance omitted, rows stay draft until the
+    # participant accepts. Minors are never presumed either way. The interactive
+    # registration-link flow always captures real consent.
+    presume_consent: false
+    bulk_max_rows: 10000
+
+  # Per-link registration modes. Each key names an admin-facing channel.
+  # `submission_shape` decides what the public form renders:
+  #   - account_only        : MinimalIdentityForm (name + phone OR email + consent).
+  #   - account_and_profile : full RJSF profile schema; partial submissions accepted.
+  # `public_hint_i18n_key` is the i18n key rendered beneath the form;
+  # null means no hint.
+  registration_modes:
+    voice:
+      label_i18n_key: registration_mode.voice.label
+      submission_shape: account_only
+      public_hint_i18n_key: registration_mode.voice.hint
+      signals_cta: false
+    form:
+      label_i18n_key: registration_mode.form.label
+      submission_shape: account_and_profile
+      public_hint_i18n_key: null
+      signals_cta: true
+
+  admin_emails:
+    - abhishekg@sanketika.in
+
+  # ── Organisation tree ──────────────────────────────────────────────────────
+  # Omit the block for a flat tree: every organisation sits directly under the
+  # network and at most 50 organisations. Every organisation is "Aggregator"
+  # until its parent's owner defines "known as" values in the console.
+  organisation:
+    hierarchy:
+      max_depth: 10 # Deepest allowed aggregator org; 1 is directly under the network.
+      max_children: 100 # Direct children of any org, the network included.
+      max_total_orgs: 200 # Aggregator orgs in the instance (root and Default org not counted).

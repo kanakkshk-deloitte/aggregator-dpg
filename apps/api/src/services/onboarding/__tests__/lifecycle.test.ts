@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { resolveLifecycle, type LifecycleStatus } from '../lifecycle.js';
 
 describe('resolveLifecycle', () => {
-  it('returns live when lifecycle_status absent', () => {
-    expect(resolveLifecycle({})).toBe<'live'>('live');
+  it('returns draft when lifecycle_status absent (#613 pessimistic default)', () => {
+    expect(resolveLifecycle({})).toBe<'draft'>('draft');
   });
 
   it('returns the explicit value when present', () => {
@@ -13,8 +13,8 @@ describe('resolveLifecycle', () => {
     }
   });
 
-  it('clamps unknown strings to live', () => {
-    expect(resolveLifecycle({ lifecycle_status: 'bogus' as LifecycleStatus })).toBe('live');
+  it('clamps unknown strings to draft', () => {
+    expect(resolveLifecycle({ lifecycle_status: 'bogus' as LifecycleStatus })).toBe('draft');
   });
 
   it('returns null for null input', () => {

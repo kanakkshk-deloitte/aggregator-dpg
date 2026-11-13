@@ -1,13 +1,75 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-display: var(--bd-font-heading), 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-sans: var(--bd-font-sans), Inter, system-ui, sans-serif;
+  --font-body: var(--bd-font-body), var(--bd-font-sans), Inter, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --color-ink-50: #f4f6fb;
+  --color-ink-100: #e5e8f2;
+  --color-ink-200: #c5cadd;
+  --color-ink-300: #9098b5;
+  --color-ink-400: #6b7493;
+  --color-ink-500: #475069;
+  --color-ink-600: #2a3350;
+  --color-ink-700: #1e263f;
+  --color-ink-800: #141a2e;
+  --color-ink-900: #0b1020;
+
+  --animate-fade-up: fadeUp 0.35s ease-out both;
+  --animate-pulse-dot: pulseDot 2s ease-in-out infinite;
+
+  @keyframes fadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes pulseDot {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(1.4);
+      opacity: 0.5;
+    }
+  }
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
 :root {
   --bd-primary: #4f46e5;
   --bd-primary-600: #4338ca;
   --bd-primary-500: #6366f1;
-  --bd-primary-100: #e0e7ff;
-  --bd-primary-50: #eef2ff;
+  /* Brand tints: derived from --bd-primary (set by the theme provider). */
+  --bd-primary-100: color-mix(in srgb, var(--bd-primary) 15%, #ffffff);
+  --bd-primary-50: color-mix(in srgb, var(--bd-primary) 8%, #ffffff);
   --bd-brand: #10b981;
   --bd-brand-dark: #059669;
   --bd-brand-50: #ecfdf5;
@@ -48,7 +110,10 @@
   --bd-table-head-bg: #161c33;
   --bd-table-group-bg: #1a2038;
   --bd-tint-amber: #2a210e;
-  --bd-tint-primary: #1a1f3b;
+  /* Brand tints over the dark surface. */
+  --bd-tint-primary: color-mix(in srgb, var(--bd-primary) 18%, #0b1020);
+  --bd-primary-50: color-mix(in srgb, var(--bd-primary) 18%, #0b1020);
+  --bd-primary-100: color-mix(in srgb, var(--bd-primary) 30%, #0b1020);
   --bd-tint-rose: #2a1418;
   --bd-tint-emerald: #0e2a1f;
   --bd-tint-sky: #0e1f2a;
@@ -59,33 +124,121 @@
 
 /* Bulk dark overrides for Tailwind colour utilities used across the
    app. Avoids per-component `dark:` variant churn. */
-.dark .bg-white { background-color: var(--bd-card) !important; }
-.dark .from-white { --tw-gradient-from: var(--bd-card) !important; }
-.dark .to-white { --tw-gradient-to: var(--bd-card) !important; }
-.dark .border-white { border-color: var(--bd-card); }
+.dark .bg-white {
+  background-color: var(--bd-card) !important;
+}
+.dark .from-white {
+  --tw-gradient-from: var(--bd-card) !important;
+}
+.dark .to-white {
+  --tw-gradient-to: var(--bd-card) !important;
+}
+.dark .border-white {
+  border-color: var(--bd-card);
+}
 
-.dark .text-ink-900 { color: #e7ebf5; }
-.dark .text-ink-800 { color: #d6dbeb; }
-.dark .text-ink-700 { color: #c4cae0; }
-.dark .text-ink-600 { color: #adb4cf; }
-.dark .text-ink-500 { color: #9aa3c0; }
-.dark .text-ink-400 { color: #818aab; }
-.dark .text-ink-300 { color: #5d6582; }
-.dark .text-ink-200 { color: #4a5168; }
-.dark .text-ink-100 { color: #353c54; }
-.dark .text-ink-50 { color: #2a3147; }
+.dark .text-ink-900 {
+  color: #e7ebf5;
+}
+.dark .text-ink-800 {
+  color: #d6dbeb;
+}
+.dark .text-ink-700 {
+  color: #c4cae0;
+}
+.dark .text-ink-600 {
+  color: #adb4cf;
+}
+.dark .text-ink-500 {
+  color: #9aa3c0;
+}
+.dark .text-ink-400 {
+  color: #818aab;
+}
+.dark .text-ink-300 {
+  color: #5d6582;
+}
+.dark .text-ink-200 {
+  color: #4a5168;
+}
+.dark .text-ink-100 {
+  color: #353c54;
+}
+.dark .text-ink-50 {
+  color: #2a3147;
+}
 
-.dark .bg-ink-50 { background-color: #181f37; }
-.dark .bg-ink-100 { background-color: #1d2440; }
-.dark .bg-ink-200 { background-color: #232a44; }
+.dark .bg-ink-50 {
+  background-color: #181f37;
+}
+.dark .bg-ink-100 {
+  background-color: #1d2440;
+}
+.dark .bg-ink-200 {
+  background-color: #232a44;
+}
 
-.dark .hover\:bg-ink-50:hover { background-color: #181f37; }
-.dark .hover\:bg-ink-100:hover { background-color: #1d2440; }
-.dark .hover\:text-ink-900:hover { color: #e7ebf5; }
-.dark .hover\:bg-white:hover { background-color: var(--bd-card); }
+.dark .hover\:bg-ink-50:hover {
+  background-color: #181f37;
+}
+.dark .hover\:bg-ink-100:hover {
+  background-color: #1d2440;
+}
+.dark .hover\:text-ink-900:hover {
+  color: #e7ebf5;
+}
+.dark .hover\:bg-white:hover {
+  background-color: var(--bd-card);
+}
 
-.dark .border-ink-100 { border-color: #2c334d; }
-.dark .border-ink-200 { border-color: #353c54; }
+.dark .border-ink-100 {
+  border-color: #2c334d;
+}
+.dark .border-ink-200 {
+  border-color: #353c54;
+}
+
+/* Brand and status tints: light shades become dark tints, their text lightens. */
+.dark .text-primary-600,
+.dark .text-\(--bd-primary-600\) {
+  color: #a5b4fc;
+}
+.dark .bg-amber-50 {
+  background-color: var(--bd-tint-amber);
+}
+.dark .bg-amber-100 {
+  background-color: #3a2c10;
+}
+.dark .bg-emerald-50 {
+  background-color: var(--bd-tint-emerald);
+}
+.dark .bg-rose-50 {
+  background-color: var(--bd-tint-rose);
+}
+.dark .text-amber-600,
+.dark .text-amber-700,
+.dark .text-amber-800 {
+  color: #fbbf24;
+}
+.dark .text-emerald-600,
+.dark .text-emerald-700,
+.dark .text-emerald-800 {
+  color: #34d399;
+}
+.dark .text-rose-600,
+.dark .text-rose-700,
+.dark .text-rose-800 {
+  color: #fb7185;
+}
+.dark .border-amber-200 {
+  border-color: #4a3a14;
+}
+.dark .border-emerald-200 {
+  border-color: #134e3a;
+}
+.dark .border-rose-200 {
+  border-color: #4c1d24;
+}
 
 /* Force-light scope — applied by (public)/layout.tsx so /login and
    /register always render in light theme even when the authenticated
@@ -103,24 +256,60 @@
   background: var(--bd-bg);
   color: var(--bd-fg);
 }
-.dark .bd-public-light .bg-white { background-color: #ffffff !important; }
-.dark .bd-public-light .from-white { --tw-gradient-from: #ffffff !important; }
-.dark .bd-public-light .to-white { --tw-gradient-to: #ffffff !important; }
-.dark .bd-public-light .text-ink-900 { color: #0B1020; }
-.dark .bd-public-light .text-ink-800 { color: #141A2E; }
-.dark .bd-public-light .text-ink-700 { color: #1E263F; }
-.dark .bd-public-light .text-ink-600 { color: #2A3350; }
-.dark .bd-public-light .text-ink-500 { color: #475069; }
-.dark .bd-public-light .text-ink-400 { color: #6B7493; }
-.dark .bd-public-light .text-ink-300 { color: #9098B5; }
-.dark .bd-public-light .text-ink-200 { color: #C5CADD; }
-.dark .bd-public-light .text-ink-100 { color: #E5E8F2; }
-.dark .bd-public-light .text-ink-50 { color: #F4F6FB; }
-.dark .bd-public-light .bg-ink-50 { background-color: #F4F6FB; }
-.dark .bd-public-light .bg-ink-100 { background-color: #E5E8F2; }
-.dark .bd-public-light .border-ink-100 { border-color: #E5E8F2; }
-.dark .bd-public-light .hover\:bg-ink-50:hover { background-color: #F4F6FB; }
-.dark .bd-public-light .hover\:bg-white:hover { background-color: #fff; }
+.dark .bd-public-light .bg-white {
+  background-color: #ffffff !important;
+}
+.dark .bd-public-light .from-white {
+  --tw-gradient-from: #ffffff !important;
+}
+.dark .bd-public-light .to-white {
+  --tw-gradient-to: #ffffff !important;
+}
+.dark .bd-public-light .text-ink-900 {
+  color: #0b1020;
+}
+.dark .bd-public-light .text-ink-800 {
+  color: #141a2e;
+}
+.dark .bd-public-light .text-ink-700 {
+  color: #1e263f;
+}
+.dark .bd-public-light .text-ink-600 {
+  color: #2a3350;
+}
+.dark .bd-public-light .text-ink-500 {
+  color: #475069;
+}
+.dark .bd-public-light .text-ink-400 {
+  color: #6b7493;
+}
+.dark .bd-public-light .text-ink-300 {
+  color: #9098b5;
+}
+.dark .bd-public-light .text-ink-200 {
+  color: #c5cadd;
+}
+.dark .bd-public-light .text-ink-100 {
+  color: #e5e8f2;
+}
+.dark .bd-public-light .text-ink-50 {
+  color: #f4f6fb;
+}
+.dark .bd-public-light .bg-ink-50 {
+  background-color: #f4f6fb;
+}
+.dark .bd-public-light .bg-ink-100 {
+  background-color: #e5e8f2;
+}
+.dark .bd-public-light .border-ink-100 {
+  border-color: #e5e8f2;
+}
+.dark .bd-public-light .hover\:bg-ink-50:hover {
+  background-color: #f4f6fb;
+}
+.dark .bd-public-light .hover\:bg-white:hover {
+  background-color: #fff;
+}
 
 html,
 body {
@@ -141,19 +330,45 @@ body {
   letter-spacing: -0.01em;
 }
 
-.bg-primary { background-color: var(--bd-primary); }
-.bg-primary-600 { background-color: var(--bd-primary-600); }
-.bg-primary-50 { background-color: var(--bd-primary-50); }
-.bg-primary-100 { background-color: var(--bd-primary-100); }
-.text-primary { color: var(--bd-primary); }
-.text-primary-600 { color: var(--bd-primary-600); }
-.text-primary-700 { color: var(--bd-primary-600); }
-.border-primary { border-color: var(--bd-primary); }
-.ring-primary { --tw-ring-color: var(--bd-primary); }
-.hover\:bg-primary-600:hover { background-color: var(--bd-primary-600); }
-.hover\:bg-primary-50:hover { background-color: var(--bd-primary-50); }
-.hover\:border-primary:hover { border-color: var(--bd-primary); }
-.hover\:text-primary-600:hover { color: var(--bd-primary-600); }
+.bg-primary {
+  background-color: var(--bd-primary);
+}
+.bg-primary-600 {
+  background-color: var(--bd-primary-600);
+}
+.bg-primary-50 {
+  background-color: var(--bd-primary-50);
+}
+.bg-primary-100 {
+  background-color: var(--bd-primary-100);
+}
+.text-primary {
+  color: var(--bd-primary);
+}
+.text-primary-600 {
+  color: var(--bd-primary-600);
+}
+.text-primary-700 {
+  color: var(--bd-primary-600);
+}
+.border-primary {
+  border-color: var(--bd-primary);
+}
+.ring-primary {
+  --tw-ring-color: var(--bd-primary);
+}
+.hover\:bg-primary-600:hover {
+  background-color: var(--bd-primary-600);
+}
+.hover\:bg-primary-50:hover {
+  background-color: var(--bd-primary-50);
+}
+.hover\:border-primary:hover {
+  border-color: var(--bd-primary);
+}
+.hover\:text-primary-600:hover {
+  color: var(--bd-primary-600);
+}
 
 .bd-card {
   background: var(--bd-card);
@@ -203,8 +418,53 @@ body {
   vertical-align: middle;
   white-space: nowrap;
 }
-.bd-table tbody tr:hover { background: var(--bd-table-head-bg); }
-.bd-table tbody tr:last-child td { border-bottom: 0; }
+.bd-table tbody tr:hover {
+  background: var(--bd-table-head-bg);
+}
+.bd-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+/* A cell holding prose (a description) wraps instead of widening the table. */
+.bd-table tbody td.bd-wrap {
+  white-space: normal;
+  min-width: 220px;
+}
+
+/* A card or row a link can point at (#id): clears the sticky mobile bar and
+   rings + flashes when it is the target, so the reader sees where they landed.
+   `.bd-anchor-on` is set from the hash by the page: client-side navigation does
+   not update `:target`. */
+.bd-anchor {
+  scroll-margin-top: 80px;
+}
+.bd-anchor:target,
+.bd-anchor-on {
+  /* Inset, so a row inside a clipped (overflow-hidden) card still shows it. */
+  box-shadow: inset 0 0 0 2px var(--bd-primary);
+  animation: bd-anchor-flash 1.6s ease-out;
+}
+@keyframes bd-anchor-flash {
+  from {
+    background: var(--bd-primary-50);
+  }
+}
+/* A table row cannot carry the inset ring reliably; its cells are tinted. */
+.bd-table tbody tr.bd-anchor-on td {
+  background: var(--bd-primary-50);
+}
+
+/* Frozen select + identity columns (dashboard participant table). Only from
+   `md` up — on a phone two frozen columns would take most of the viewport and
+   leave no room to scroll the rest into view (#793). */
+@media (min-width: 768px) {
+  .bd-table .bd-sticky-col {
+    position: sticky;
+    left: 0;
+  }
+  .bd-table .bd-sticky-col-2 {
+    left: 44px;
+  }
+}
 
 /* Gmail-style row checkbox: faint until the row is hovered, the box is
    focused/hovered, or it is checked — so the column reads as quiet by
@@ -221,9 +481,19 @@ body {
 .bd-table tbody tr:hover .bd-check {
   opacity: 1;
 }
+/* Touch screens have no hover, so the faint default would never lift. */
+@media (hover: none) {
+  .bd-check {
+    opacity: 1;
+  }
+}
 
-.scroll-x::-webkit-scrollbar { height: 10px; }
-.scroll-x::-webkit-scrollbar-track { background: transparent; }
+.scroll-x::-webkit-scrollbar {
+  height: 10px;
+}
+.scroll-x::-webkit-scrollbar-track {
+  background: transparent;
+}
 .scroll-x::-webkit-scrollbar-thumb {
   background: #dde1ee;
   border-radius: 999px;
@@ -242,10 +512,18 @@ body {
 }
 
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
-.fade-up { animation: fadeUp 0.35s ease-out both; }
+.fade-up {
+  animation: fadeUp 0.35s ease-out both;
+}
 
 .tick {
   width: 18px;
@@ -279,12 +557,60 @@ body {
   color: var(--bd-fg);
   transition: all 0.15s;
 }
-.bd-input:hover { background: var(--bd-border-soft); }
+/* Leaves room for a leading icon. A Tailwind `pl-*` utility cannot do this:
+   `.bd-input` sets the `padding` shorthand as plain CSS, which outranks the
+   layered utility, so the icon would sit on top of the text. */
+.bd-input--icon-left {
+  padding-left: 36px;
+}
+
+/* iOS Safari zooms the page on focus of any field under 16px; bump inputs
+   to 16px on phone widths so focusing a form field never zooms (#793). */
+@media (max-width: 639.98px) {
+  .bd-input {
+    font-size: 16px;
+  }
+}
+.bd-input:hover {
+  background: var(--bd-border-soft);
+}
 .bd-input:focus {
   outline: none;
   background: var(--bd-card);
   border-color: var(--bd-primary);
   box-shadow: 0 0 0 4px var(--bd-primary-50);
+}
+
+/* A native <select> honours almost none of .bd-input: the UA draws its own
+   compact control, so the field renders visibly shorter than the <input>s
+   beside it and, on macOS, picks up a system shadow and highlight that look
+   nothing like the rest of the form. Reset the appearance and draw our own
+   chevron so a select is pixel-identical to an input.
+
+   Applies to every select that already opts into .bd-input — the create-link
+   campaign type, the dashboard lifecycle filter, the public year-of-birth
+   picker, and anything RJSF renders — rather than being patched per call site.
+
+   The background-image has to be repeated on :hover and :focus because
+   .bd-input sets `background` (the shorthand), which resets background-image
+   to none, and `.bd-input:hover` outranks a bare `select.bd-input`. */
+select.bd-input,
+select.bd-input:hover,
+select.bd-input:focus {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23475069' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px;
+  cursor: pointer;
+}
+/* Muted foreground flips in dark mode, so the chevron has to follow. */
+.dark select.bd-input,
+.dark select.bd-input:hover,
+.dark select.bd-input:focus {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa3c0' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
 }
 .bd-label {
   font-size: 12.5px;
@@ -321,8 +647,12 @@ body {
   background-image:
     radial-gradient(var(--bd-fg) 35%, transparent 36%),
     radial-gradient(var(--bd-fg) 35%, transparent 36%);
-  background-size: 12px 12px, 12px 12px;
-  background-position: 0 0, 6px 6px;
+  background-size:
+    12px 12px,
+    12px 12px;
+  background-position:
+    0 0,
+    6px 6px;
 }
 
 .dropzone {
@@ -337,8 +667,15 @@ body {
 }
 
 @keyframes pulseDot {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.4); opacity: 0.5; }
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.5;
+  }
 }
 .pulse-dot::after {
   content: '';
@@ -351,11 +688,31 @@ body {
 }
 
 /* RJSF overrides — match bd-input/bd-label */
-.rjsf .form-group { margin-bottom: 1rem; }
+.rjsf .form-group {
+  margin-bottom: 1rem;
+}
 .rjsf .control-label,
-.rjsf legend { font-size: 12.5px; font-weight: 500; color: #475069; margin-bottom: 6px; display: block; }
-.rjsf .form-control { /* base inputs styled via custom widgets — keeping fallback for unstyled */ }
-.rjsf .field-description { font-size: 11.5px; color: #6B7493; margin-top: 4px; }
+.rjsf legend {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #475069;
+  margin-bottom: 6px;
+  display: block;
+}
+.rjsf .form-control {
+  /* base inputs styled via custom widgets — keeping fallback for unstyled */
+}
+.rjsf .field-description {
+  font-size: 11.5px;
+  color: #6b7493;
+  margin-top: 4px;
+}
 .rjsf .errors,
-.rjsf .text-danger { color: #EF4444; font-size: 11.5px; margin-top: 4px; }
-.rjsf .panel.errors { display: none; } /* hide top error panel; rely on inline field errors */
+.rjsf .text-danger {
+  color: #ef4444;
+  font-size: 11.5px;
+  margin-top: 4px;
+}
+.rjsf .panel.errors {
+  display: none;
+} /* hide top error panel; rely on inline field errors */

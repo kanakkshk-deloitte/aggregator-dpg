@@ -23,6 +23,18 @@
     "./paths": {
       "import": "./dist/paths.js",
       "types": "./dist/paths.d.ts"
+    },
+    "./uri-fields": {
+      "import": "./dist/uri-fields.js",
+      "types": "./dist/uri-fields.d.ts"
+    },
+    "./field-errors": {
+      "import": "./dist/field-errors.js",
+      "types": "./dist/field-errors.d.ts"
+    },
+    "./signals-cta": {
+      "import": "./dist/signals-cta.js",
+      "types": "./dist/signals-cta.d.ts"
     }
   },
   "scripts": {
@@ -33,14 +45,14 @@
   },
   "dependencies": {
     "@aggregator-dpg/shared-primitives": "workspace:*",
-    "yaml": "^2.6.0",
+    "yaml": "^2.9.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@aggregator-dpg/tsconfig": "workspace:*",
-    "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "^3.2.0",
+    "@types/node": "^26.6.3",
+    "@vitest/coverage-v8": "^4.1.12",
     "typescript": "^6.0.3",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.12"
   }
 }

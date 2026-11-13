@@ -1,8 +1,7 @@
 /**
- * Worker-side enqueue surfaces.
+ * Bulk upload queue producers for the worker app.
  *
- * Reader → enqueue per-row jobs (File Processor uses this).
- * Row Processor → enqueue Finaliser job on the last row.
+ * The file processor enqueues row jobs; the row processor enqueues the finaliser.
  */
 
 import { Queue } from 'bullmq';
@@ -37,8 +36,9 @@ function getFinaliseQueue(): Queue<BulkFinaliseJob> {
 }
 
 /**
- * Enqueue a per-row job. jobId encodes (uploadId, rowIndex) for replay
- * safety. BullMQ rejects ':' in custom jobIds — use '__' as the separator.
+ * Enqueues one row job, deduped by uploadId and rowIndex.
+ *
+ * BullMQ rejects ':' in custom jobIds, so '__' is the separator.
  */
 export async function enqueueRowProcess(payload: BulkRowProcessJob): Promise<void> {
   await getRowQueue().add(QueueName.BulkRowProcess, payload, {
@@ -47,9 +47,7 @@ export async function enqueueRowProcess(payload: BulkRowProcessJob): Promise<voi
 }
 
 /**
- * Batch-enqueue per-row jobs. Single `LPUSH+EVALSHA` BullMQ pipeline instead
- * of one round-trip per row — order is preserved and dedup `jobId` semantics
- * match `enqueueRowProcess`.
+ * Enqueues many row jobs in one call, with the same jobIds as `enqueueRowProcess`.
  */
 export async function enqueueRowProcessBulk(payloads: BulkRowProcessJob[]): Promise<void> {
   if (payloads.length === 0) return;
@@ -64,9 +62,9 @@ export async function enqueueRowProcessBulk(payloads: BulkRowProcessJob[]): Prom
 }
 
 /**
- * Enqueue the Finaliser. jobId = `${uploadId}__finalise` so BullMQ
- * deduplicates if multiple Row Processors hit the equality condition
- * concurrently — only one finaliser ever runs.
+ * Enqueues the finaliser for an upload.
+ *
+ * The jobId `${uploadId}__finalise` makes BullMQ dedup concurrent triggers.
  */
 export async function enqueueFinalise(payload: BulkFinaliseJob): Promise<void> {
   await getFinaliseQueue().add(QueueName.BulkFinalise, payload, {

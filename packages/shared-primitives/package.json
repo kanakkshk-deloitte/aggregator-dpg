@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./config": {
+      "import": "./dist/config/index.js",
+      "types": "./dist/config/index.d.ts"
+    },
     "./errors": {
       "import": "./dist/errors/index.js",
       "types": "./dist/errors/index.d.ts"
@@ -27,6 +31,34 @@
     "./aggregator": {
       "import": "./dist/aggregator/index.js",
       "types": "./dist/aggregator/index.d.ts"
+    },
+    "./phone": {
+      "import": "./dist/phone/index.js",
+      "types": "./dist/phone/index.d.ts"
+    },
+    "./url": {
+      "import": "./dist/url/index.js",
+      "types": "./dist/url/index.d.ts"
+    },
+    "./org-details": {
+      "import": "./dist/org-details/index.js",
+      "types": "./dist/org-details/index.d.ts"
+    },
+    "./contact": {
+      "import": "./dist/contact/index.js",
+      "types": "./dist/contact/index.d.ts"
+    },
+    "./person-name": {
+      "import": "./dist/person-name/index.js",
+      "types": "./dist/person-name/index.d.ts"
+    },
+    "./user-org": {
+      "import": "./dist/user-org/index.js",
+      "types": "./dist/user-org/index.d.ts"
+    },
+    "./bulk-columns": {
+      "import": "./dist/bulk-columns/index.js",
+      "types": "./dist/bulk-columns/index.d.ts"
     }
   },
   "scripts": {
@@ -40,8 +72,9 @@
   },
   "devDependencies": {
     "@aggregator-dpg/tsconfig": "workspace:*",
-    "@vitest/coverage-v8": "^3.2.0",
+    "@types/node": "^26.6.3",
+    "@vitest/coverage-v8": "^4.1.12",
     "typescript": "^6.0.3",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.12"
   }
 }

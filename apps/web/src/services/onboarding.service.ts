@@ -1,7 +1,7 @@
 /**
- * Onboarding service — calls the BFF proxies for the link + bulk-upload
- * pipelines. Lives in the browser, so it never sees API tokens directly;
- * the BFF attaches the bearer header.
+ * Onboarding service for the web app: registration links and bulk uploads.
+ *
+ * Runs in the browser and calls the BFF, which attaches the bearer token.
  */
 
 import { jsonFetch } from './http';
@@ -12,27 +12,17 @@ export interface ApiRegistrationLink {
   domain: string;
   status: 'draft' | 'live' | 'retired';
   /**
-   * Per-link admin-facing registration mode key (e.g. `voice`, `form`),
-   * set at create time and immutable thereafter. The mode → form-shape
-   * mapping lives in network config; the admin UI sources its dropdown
-   * from the live config. Optional for back-compat with older API builds.
+   * Registration mode key (e.g. `voice`, `form`), set at creation and
+   * immutable. The network config maps modes to form shapes.
    */
   registration_mode?: string;
   context: Record<string, unknown>;
   expires_at: string | null;
-  /**
-   * `null` while the link is still a draft (or after retirement). The
-   * public URL + QR are minted only at activation, so a draft response
-   * deliberately omits both — the API returns nulls and the UI hides the
-   * artifacts.
-   */
+  /** Set only while the link is live; `null` for drafts and retired links. */
   public_url: string | null;
   qr_url: string | null;
   qr_expires_at: string | null;
-  /**
-   * Optional rollup counters surfaced by the listing endpoint. Defaults
-   * to zeros when the link has no submissions yet.
-   */
+  /** Submission counters from the listing endpoint. Zero when there are none. */
   metrics?: {
     total: number;
     passed: number;
@@ -54,26 +44,19 @@ export interface CreateLinkInput {
   domain: string;
   /** Optional human-readable slug. Server falls back to random when omitted. */
   slug?: string;
-  /**
-   * Free-form display label rendered as the card title (e.g.
-   * "Dharwad Field Drive — Apr 2026"). Stored on `context.title`.
-   */
+  /** Display label shown as the card title. Stored on `context.title`. */
   title?: string;
   context?: Record<string, unknown>;
   status?: 'draft' | 'live';
   /**
-   * Per-link admin-facing registration mode key (e.g. `voice`, `form`).
-   * Validated against the live network config by the API. Omitted defaults
-   * to the network's `form` mode. Immutable after creation.
+   * Registration mode key (e.g. `voice`, `form`), checked by the API against
+   * the network config. Defaults to `form`. Immutable after creation.
    */
   registration_mode?: string;
   expires_at?: string | null;
 }
 
-/**
- * Patch shape for `PATCH /api/links/:id`. Server only honours these on
- * drafts; live + retired rows return 409.
- */
+/** Patch for `PATCH /api/links/:id`. Applies to drafts only; other links return 409. */
 export interface UpdateLinkInput {
   slug?: string;
   context?: Record<string, unknown>;
@@ -90,7 +73,7 @@ export interface OnboardingSummary {
   skipped: number;
 }
 
-/** One entry-source slice of the onboarding rollup (`source` is the API's `onboarding_source` enum — `bulk` | `link` today). */
+/** One entry-source slice of the onboarding rollup (`source` is `bulk` or `link`). */
 export interface OnboardingSourceSlice {
   source: string;
   total: number;
@@ -250,9 +233,15 @@ export const onboardingService = {
   },
 
   /**
-   * Full bulk upload flow: presign → PUT to S3 → start → poll status.
-   * `duplicate=true` when the CSV bytes match a prior upload — backend
-   * surfaces the existing run instead of creating a fresh one.
+   * Runs a bulk upload: presign, PUT to S3, then start.
+   *
+   * `duplicate` is true when the file matches a prior upload; the existing run is returned.
+   *
+   * @param file - The CSV file.
+   * @param participantType - Domain of the rows.
+   * @param attestation - Whether the coordinator accepted the attestation.
+   * @returns The upload id and status.
+   * @throws {Error} If the S3 upload or an API call fails.
    */
   async uploadCsv(
     file: File,

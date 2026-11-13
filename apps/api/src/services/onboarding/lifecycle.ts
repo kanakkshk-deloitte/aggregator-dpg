@@ -1,9 +1,8 @@
 /**
- * Back-compat aware lifecycle resolver.
+ * Lifecycle resolver for signals items (`@aggregator-dpg/api`).
  *
- * Signals may not have shipped the lifecycle column to every environment
- * yet. Any aggregator-facing read MUST go through this helper so the
- * fallback rule "absent → live" is enforced in one place.
+ * Aggregator-facing reads must use this helper so that a missing or unknown
+ * status is treated as `draft`, never `live`.
  *
  * @packageDocumentation
  * @module @aggregator-dpg/api/services/onboarding/lifecycle
@@ -12,18 +11,14 @@
 /**
  * Canonical tuple of lifecycle states a signals item can be in.
  *
- * Single source of truth for the literal list — use it to build Zod enums
- * (`z.enum(LIFECYCLE_STATUSES)`) or membership checks instead of
- * re-declaring `['draft', 'live', 'paused', 'retired']` locally.
+ * Use it for Zod enums (`z.enum(LIFECYCLE_STATUSES)`) and membership checks.
  */
 export const LIFECYCLE_STATUSES = ['draft', 'live', 'paused', 'retired'] as const;
 
 /**
  * The set of lifecycle states a signals item can be in.
  *
- * Mirrors the `lifecycle_status` column shipped by signals-stack. Kept as a
- * string literal union (not a Zod schema) because the helper must be cheap
- * to call from any hot read path.
+ * Matches the signals-stack `lifecycle_status` column.
  */
 export type LifecycleStatus = (typeof LIFECYCLE_STATUSES)[number];
 
@@ -34,12 +29,9 @@ const VALID = new Set<LifecycleStatus>(LIFECYCLE_STATUSES);
  *
  * Resolution rules, in order:
  * 1. `null` / `undefined` item → `null` (no item present).
- * 2. `lifecycle_status` missing on the item → `'live'` (back-compat default).
+ * 2. `lifecycle_status` missing → `'draft'`.
  * 3. `lifecycle_status` is a known value → returned as-is.
- * 4. `lifecycle_status` is an unknown string → `'live'` (defensive clamp).
- *
- * Always prefer this helper over reading `item.lifecycle_status` directly so
- * the fallback behaviour stays consistent across the codebase.
+ * 4. `lifecycle_status` is an unknown string → `'draft'`.
  *
  * @param item - The signals item slice; only `lifecycle_status` is read.
  *               Pass `null` or `undefined` for "no item present".
@@ -50,6 +42,6 @@ export function resolveLifecycle(
 ): LifecycleStatus | null {
   if (item == null) return null;
   const raw = item.lifecycle_status;
-  if (raw === undefined) return 'live';
-  return VALID.has(raw as LifecycleStatus) ? (raw as LifecycleStatus) : 'live';
+  if (raw === undefined) return 'draft';
+  return VALID.has(raw as LifecycleStatus) ? (raw as LifecycleStatus) : 'draft';
 }

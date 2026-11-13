@@ -3,12 +3,8 @@
  *
  *   GET /api/dashboard?domain=seeker&page&limit&status
  *
- * Forwards verbatim to the aggregator API's
- * GET /v1/dashboard endpoint. Session cookie → access token
- * swap is handled by callApi. Status is optional — the default fetch
- * (no status param) returns the full rollup so the dashboard can render
- * the totals + a local view, and the client refetches with
- * `?status=<chip>` when the user selects a server-side status filter.
+ * Forwards to the aggregator API's GET /v1/dashboard with the session's
+ * access token. Without `status`, the upstream returns the full rollup.
  */
 
 import { type NextRequest, NextResponse } from 'next/server';

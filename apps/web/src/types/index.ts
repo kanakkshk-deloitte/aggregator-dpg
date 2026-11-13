@@ -5,13 +5,13 @@ export type ProfileStatus = 'complete' | 'incomplete';
 export interface ParticipantStats {
   total: number;
   shortlisted?: number;
-  /** accept bucket — "Connected" for purple_dot. */
+  /** `accept` bucket. */
   accepted?: number;
-  /** reject bucket — "Declined" for purple_dot. */
+  /** `reject` bucket. */
   rejected: number;
-  /** create bucket — "Requested" for purple_dot. */
+  /** `create` bucket. */
   pending: number;
-  /** cancel bucket — "Cancelled". */
+  /** `cancel` bucket. */
   cancelled?: number;
 }
 
@@ -40,24 +40,20 @@ export interface ParticipantBase {
   avatar: string;
   profile: ParticipantProfile;
   applied: ParticipantStats;
-  /** Actions this profile INITIATED, by canonical action state. */
+  /** Actions this profile initiated, by action state. */
   initiated: DirectionalStats;
-  /** Actions this profile RECEIVED, by canonical action state. */
+  /** Actions this profile received, by action state. */
   received: DirectionalStats;
   status: ParticipantStatus;
   last: string;
   /**
-   * Signalstack-computed `actionable_tags` for the row, e.g.
-   * `missing_contact_phone`. Drives the Recommended Action column.
-   * Empty when signalstack returns no tags.
+   * Signals `actionable_tags` for the row (e.g. `missing_contact_phone`).
+   * Drives the Recommended Action column.
    */
   actionableTags?: string[];
   /**
-   * Onboarding lifecycle bucket for the row. Sourced from
-   * `/v1/dashboard/items` (which normalises via `resolveLifecycle` so
-   * legacy items without `lifecycle_status` surface as `'live'`).
-   * Undefined when the lifecycle fetch hasn't resolved yet or this row
-   * has no associated signals item.
+   * Lifecycle bucket for the row. Items without a lifecycle status show as
+   * `'live'`. Undefined when the row has no Signals item.
    */
   lifecycle_status?: LifecycleStatus;
 }
@@ -68,17 +64,6 @@ export interface Provider extends ParticipantBase {
   role: string;
 }
 
-export type OpportunityProvider = Provider;
-
-export type ParticipantKind = 'seeker' | 'provider' | 'opp';
-
-export interface ParticipantFilter {
-  kind?: ParticipantKind;
-  status?: ParticipantStatus;
-  city?: string;
-  search?: string;
-}
-
 export interface User {
   id: string;
   name: string;
@@ -87,32 +72,6 @@ export interface User {
   email?: string;
   /** Coordinator phone from the session, when present. Prefills the support form. */
   phone?: string;
-}
-
-export interface RegistrationLink {
-  id: string;
-  title: string;
-  desc: string;
-  slug: string;
-  kind: 'Seeker' | 'Provider';
-  regs: number;
-  verified: number;
-  last: string;
-  active: boolean;
-}
-
-export interface RegistrationFormState {
-  org: string;
-  state: string;
-  lever: string;
-  date: string;
-  location: string;
-  district: string;
-  domain: 'Seeker' | 'Provider' | 'Both';
-  signal: 'Event' | 'Outreach' | 'Partner' | 'Walk-in';
-  sub: 'On-ground' | 'Online' | 'Referral';
-  full: string;
-  type: 'Walk-in' | 'Campaign' | 'Referral' | 'Direct';
 }
 
 export interface AggregatorProfile {

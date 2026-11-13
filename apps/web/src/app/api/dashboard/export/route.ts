@@ -3,12 +3,8 @@
  *
  *   GET /api/dashboard/export?domain=seeker&status=at_risk
  *
- * Forwards verbatim to the aggregator API's
- * GET /v1/dashboard/export endpoint. Session cookie →
- * access token swap is handled by callApi. The CSV body is streamed
- * straight back to the browser with the upstream `Content-Type` and
- * `Content-Disposition` headers preserved so file-save dialogs receive
- * the same filename the API minted.
+ * Forwards to the aggregator API's GET /v1/dashboard/export and returns the
+ * CSV with the upstream `Content-Type` and `Content-Disposition` headers.
  */
 
 import { type NextRequest, NextResponse } from 'next/server';
@@ -23,13 +19,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const upstream = await callApi(path, {
       method: 'GET',
-      // Signal to the API route that the caller wants CSV. The API ignores
-      // the header today but forwarding it future-proofs the contract.
+      // The API currently ignores this header.
       headers: { accept: 'text/csv' },
     });
     const ct = upstream.headers.get('content-type') ?? '';
-    // Non-2xx responses come back as JSON error envelopes — surface them
-    // as JSON to the caller so the web service can render a toast.
+    // Errors come back as JSON so the client can show a toast.
     if (!upstream.ok) {
       if (ct.includes('application/json')) {
         const data = (await upstream.json()) as unknown;
@@ -41,7 +35,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         headers: { 'Content-Type': ct || 'text/plain' },
       });
     }
-    // 2xx CSV path — relay the body and preserve filename/charset.
+    // Success: relay the CSV and keep the filename and charset.
     const body = await upstream.text();
     const headers: Record<string, string> = {
       'Content-Type': ct || 'text/csv; charset=utf-8',

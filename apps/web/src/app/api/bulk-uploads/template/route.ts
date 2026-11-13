@@ -1,6 +1,8 @@
 /**
- * BFF proxy: CSV template / sample download.
- *   GET /api/bulk-uploads/template?participant_type=seeker[&sample=10]
+ * BFF proxy: bulk-upload template download (CSV or XLSX).
+ *   GET /api/bulk-uploads/template?participant_type=seeker[&sample=10][&format=xlsx]
+ *
+ * The body is forwarded as bytes, not text, so XLSX workbooks are not corrupted.
  */
 
 import { type NextRequest, NextResponse } from 'next/server';
@@ -17,7 +19,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       const text = await upstream.text();
       return new NextResponse(text || 'upstream error', { status: upstream.status });
     }
-    const body = await upstream.text();
+    const body = await upstream.arrayBuffer();
     const ct = upstream.headers.get('content-type') ?? 'text/csv; charset=utf-8';
     const cd = upstream.headers.get('content-disposition') ?? 'attachment; filename="template.csv"';
     return new NextResponse(body, {

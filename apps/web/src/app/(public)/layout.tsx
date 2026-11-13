@@ -1,17 +1,20 @@
 import type { ReactNode } from 'react';
 import { LanguageSwitcher } from '../../components/shell/LanguageSwitcher';
+import { ThemeToggle } from '../../components/shell/ThemeToggle';
 
 /**
- * Public-auth routes (`/login`, `/register`) ship a fixed light-theme
- * hero + card design. Wrap the subtree in `bd-public-light` so descendants
- * always read light-theme CSS variables, and expose the language switcher in
- * a top-right slot so users can choose a language before signing in.
+ * Layout for the public auth routes (`/login`, `/register`).
+ *
+ * Follows the same light/dark theme as the rest of the app. The corner slot
+ * holds the language and theme controls so a visitor can set both before
+ * signing in.
  */
 export default function PublicAuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="bd-public-light relative">
-      <div className="absolute right-4 top-4 z-50">
+    <div className="relative">
+      <div className="absolute right-4 top-4 z-50 flex items-center gap-2">
         <LanguageSwitcher />
+        <ThemeToggle />
       </div>
       {children}
     </div>

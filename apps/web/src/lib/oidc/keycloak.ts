@@ -1,15 +1,13 @@
 /**
  * Keycloak adapter for the OIDC port.
  *
- * Wraps openid-client (panva) to speak standard OIDC Authorization Code +
- * PKCE. Public client — no client secret. Discovery is cached on first use
- * so subsequent requests skip the metadata fetch.
+ * Uses openid-client for the OIDC Authorization Code + PKCE flow. Sends a
+ * client secret only when one is configured. Discovery is cached after first use.
  */
 
 import { Issuer, generators, custom, type Client, type IssuerMetadata } from 'openid-client';
 
-// Cap every IdP HTTP call so a hung Keycloak cannot exhaust the Node.js
-// thread pool. Applies to discovery, token exchange, refresh, and userinfo.
+// Timeout for every IdP HTTP call (discovery, token exchange, refresh, userinfo).
 const HTTP_TIMEOUT_MS = 10_000;
 Issuer[custom.http_options] = (_url, options) => ({ ...options, timeout: HTTP_TIMEOUT_MS });
 import {
@@ -56,9 +54,7 @@ export class KeycloakAdapter extends IdentityProviderAdapter {
       });
       return client;
     })();
-    // Cache the in-flight promise for concurrent callers, but evict on
-    // rejection so a transient KC outage doesn't permanently disable the
-    // adapter.
+    // Share the in-flight promise; clear it on failure so a later call retries.
     promise.catch(() => {
       if (this.clientPromise === promise) this.clientPromise = null;
     });
@@ -90,8 +86,7 @@ export class KeycloakAdapter extends IdentityProviderAdapter {
     let tokenSet;
     try {
       const client = await this.getClient();
-      // Pass the full set of callback params so openid-client receives `iss`
-      // (RFC 9207) and `session_state` alongside `code` + `state`.
+      // Pass all callback params so `iss` (RFC 9207) and `session_state` are included.
       const callbackParams: Record<string, string> = {
         ...(input.callbackParams ?? {}),
         code: input.code,
@@ -103,8 +98,7 @@ export class KeycloakAdapter extends IdentityProviderAdapter {
         nonce: input.expectedNonce,
       });
     } catch (err) {
-      // openid-client OPError carries the IdP's response in `.error` and
-      // `.error_description`. Surface both so logs/diagnostics are useful.
+      // OPError carries the IdP's `error` and `error_description`; log both.
       const e = err as {
         message?: string;
         name?: string;
@@ -203,7 +197,8 @@ export class KeycloakAdapter extends IdentityProviderAdapter {
   async buildLogoutUrl(input: LogoutUrlInput): Promise<string> {
     const client = await this.getClient();
     return client.endSessionUrl({
-      id_token_hint: input.idToken,
+      // Without a token, send `client_id` so Keycloak validates the redirect URI.
+      ...(input.idToken ? { id_token_hint: input.idToken } : { client_id: this.opts.clientId }),
       post_logout_redirect_uri: input.postLogoutRedirectUri,
     });
   }
@@ -226,9 +221,8 @@ export const oidcGenerators = {
 };
 
 function extractRefreshExp(refreshToken: string): number {
-  // Refresh tokens from Keycloak are JWTs. Decode payload.exp without
-  // verifying signature — we trust the token because it just came from a
-  // verified token endpoint over TLS.
+  // Reads `exp` without verifying the signature; the token came straight
+  // from the Keycloak token endpoint.
   const parts = refreshToken.split('.');
   if (parts.length !== 3) return Date.now() + 30 * 60_000;
   try {

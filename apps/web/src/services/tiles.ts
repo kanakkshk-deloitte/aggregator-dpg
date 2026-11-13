@@ -1,7 +1,7 @@
 /**
- * Dashboard tile resolution for the web app. Maps config-sourced (or
- * default) tile definitions onto the signalstack rollup so the dashboard
- * never aggregates — it only reads precomputed fields.
+ * Dashboard tile resolution for the web app.
+ *
+ * Maps tile definitions onto precomputed rollup fields; the dashboard does no aggregation.
  *
  * @module apps/web/services/tiles
  */
@@ -20,14 +20,10 @@ export interface ResolvedTile {
 }
 
 /**
- * Resolves tile defs from config (falling back to defaults) and reads each
- * tile's value from the precomputed rollup by `field`.
+ * Resolves tile defs (or the defaults) and reads each value from the rollup by `field`.
  *
- * While the rollup is still loading (`undefined`), every tile renders with
- * value 0 so the grid keeps its shape. Once the rollup is present, a tile
- * whose `field` does not resolve to a numeric value (unknown field, or an
- * object-valued field like `by_status`) is skipped with a console warning —
- * rendering it would show `[object Object]` or lie with a 0.
+ * While the rollup is loading, every tile has value 0. A tile whose field is
+ * missing or not a number is skipped with a console warning.
  *
  * @param defs - Config-sourced tile defs for this group, or undefined.
  * @param fallback - Default tiles to use when `defs` is empty/undefined.
@@ -43,8 +39,7 @@ export function resolveTiles(
   if (!rollup) {
     return source.map((d) => ({ field: d.field, label: d.label, value: 0 }));
   }
-  // Single contained widening — every read is runtime-checked below, so a
-  // non-numeric (or absent) field can never reach the UI.
+  // Every read below is type-checked at runtime.
   const byField = rollup as Record<string, unknown>;
   const out: ResolvedTile[] = [];
   for (const d of source) {

@@ -1,7 +1,5 @@
 /**
- * Serializes errors into the canonical wire envelope and the structured log
- * payload. Single source of truth for what reaches the client and what
- * reaches the log stream.
+ * Turns api errors into the response envelope and the structured log payload.
  */
 
 import { ERR } from './codes.js';
@@ -32,7 +30,7 @@ export interface ErrorLogPayload {
 /**
  * Builds the response body sent to the client.
  *
- * `hint` and `stack` are NEVER included — those are log-only.
+ * Never includes `hint` or `stack`; those are log-only.
  */
 export function toEnvelope(err: HttpError, requestId: string): ErrorEnvelope {
   const body: ErrorEnvelope['error'] = {
@@ -65,9 +63,8 @@ export function toLogPayload(err: HttpError, includeStack: boolean): ErrorLogPay
 }
 
 /**
- * Coerces any thrown value into an HttpError so the handler has a uniform
- * shape to work with. Unknown errors collapse to ERR.INTERNAL with the
- * original error preserved as `cause`.
+ * Converts any thrown value into an HttpError. Unknown errors become
+ * ERR.INTERNAL with the original as `cause`.
  */
 export function coerceToHttpError(value: unknown): HttpError {
   if (value instanceof HttpError) return value;

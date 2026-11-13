@@ -1,5 +1,5 @@
 /**
- * BFF route tests: GET /api/orgs and POST /api/org/register.
+ * BFF route tests: GET /api/orgs, GET /api/orgs/parents and POST /api/org/register.
  *
  * Both attach a Keycloak service-account token and forward to the aggregator
  * API. We stub the service token and the upstream fetch, then assert the
@@ -13,6 +13,7 @@ vi.mock('@/lib/service-token', () => ({
 
 import { GET } from '@/app/api/orgs/route';
 import { POST } from '@/app/api/org/register/route';
+import { GET as GET_PARENTS } from '@/app/api/orgs/parents/route';
 import { getServiceAccessToken } from '@/lib/service-token';
 
 type FetchInput = Parameters<typeof fetch>[0];
@@ -88,6 +89,65 @@ describe('GET /api/orgs', () => {
     expect(res.status).toBe(503);
     const body = (await res.json()) as { error?: { code?: string } };
     expect(body.error?.code).toBe('IDP_UNAVAILABLE');
+  });
+});
+
+describe('GET /api/orgs/parents', () => {
+  let originalFetch: typeof fetch;
+  let originalApiBase: string | undefined;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    originalApiBase = process.env.API_BASE_URL;
+    process.env.API_BASE_URL = 'http://api.test';
+    vi.mocked(getServiceAccessToken).mockResolvedValue('svc-token');
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    if (originalApiBase === undefined) delete process.env.API_BASE_URL;
+    else process.env.API_BASE_URL = originalApiBase;
+    vi.clearAllMocks();
+  });
+
+  it('forwards the parent list with a bearer service token, uncached', async () => {
+    const calls: { url: string; init: FetchInit }[] = [];
+    globalThis.fetch = vi.fn(async (input: FetchInput, init?: FetchInit) => {
+      calls.push({ url: input.toString(), init: init ?? null });
+      return new Response(
+        JSON.stringify({
+          accepting: true,
+          parents: [
+            {
+              id: 'r',
+              name: 'Network',
+              is_root: true,
+              known_as_name: null,
+              child_known_as_name: 'Aggregator',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as unknown as typeof fetch;
+
+    const res = await GET_PARENTS(new Request('http://localhost/api/orgs/parents') as never);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { accepting: boolean; parents: { id: string }[] };
+    expect(body.accepting).toBe(true);
+    expect(body.parents.map((p) => p.id)).toEqual(['r']);
+    expect(calls[0]!.url).toBe('http://api.test/v1/orgs/parents');
+    const init = calls[0]!.init as { headers?: Record<string, string>; cache?: string };
+    expect(init.headers?.['Authorization']).toBe('Bearer svc-token');
+    expect(init.cache).toBe('no-store');
+  });
+
+  it('returns 503 when the upstream fetch throws', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const res = await GET_PARENTS(new Request('http://localhost/api/orgs/parents') as never);
+    expect(res.status).toBe(503);
   });
 });
 

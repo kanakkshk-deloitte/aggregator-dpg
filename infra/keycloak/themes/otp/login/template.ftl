@@ -1,4 +1,21 @@
-<#macro registrationLayout displayInfo=false displayMessage=true displayRequiredFields=false showAnotherWayIfPresent=true bodyClass="">
+<#--
+    `subtitleKey` — message key for the line under the page title, or "" for
+    no line at all (the default).
+
+    It has to be per-page. This layout is the theme's ONLY template.ftl, so
+    every page rendered by this theme goes through it — not just the four
+    templates in this directory, but every page inherited from the parent
+    theme too (page-expired, error, and so on). A subtitle hardcoded here
+    therefore appeared on all of them, and it only ever described the
+    identifier step: the SMS/email code screens told the reader to "Continue
+    with email or mobile to receive a verification code" directly above the
+    boxes for a code they had already received.
+
+    Defaulting to "" rather than to the old string is deliberate: a page that
+    says nothing about how it wants to be introduced gets no subtitle, so an
+    inherited page cannot silently pick up copy written for a different step.
+-->
+<#macro registrationLayout displayInfo=false displayMessage=true displayRequiredFields=false showAnotherWayIfPresent=true bodyClass="" subtitleKey="">
     <#-- Loop variable `section` is bound by the caller's `<@layout.registrationLayout; section>` syntax. -->
 <!DOCTYPE html>
 <html lang="${locale.currentLanguageTag!'en'}">
@@ -7,7 +24,11 @@
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="robots" content="noindex,nofollow">
-    <title>${msg("loginTitle",(realm.displayName!''))}</title>
+    <#-- Prefer the theme's own brandLongName over realm.displayName: the realm
+         is shared by both DPGs, so displayName names only one of them and every
+         signals visitor was being told they were signing in to the aggregator
+         portal. Falls back to displayName when a theme sets no brandLongName. -->
+    <title>${msg("loginTitle",(properties.brandLongName!realm.displayName!''))}</title>
 
     <link rel="icon" type="image/svg+xml" href="${url.resourcesPath}/img/brand/${properties.brandLogoSlug!'blue-dot'}/favicon.svg">
 
@@ -49,9 +70,21 @@
             <canvas id="bd-hero-canvas" class="bd-hero-canvas"></canvas>
             <div class="bd-hero-glow"></div>
             <div class="bd-hero-copy">
+                <#-- Brand lockup when the brand ships one (heroLogo names a file
+                     in img/brand/<brandLogoSlug>/), otherwise the wordmark +
+                     strapline text. Opt-in because not every brand has the
+                     artwork, and a missing file would render a broken image. -->
                 <div class="bd-hero-brand">
-                    <span class="bd-hero-wordmark">${properties.brandShortName!'Aggregator'}</span>
-                    <span class="bd-hero-strapline"></span>
+                    <#if (properties.heroLogo!'')?has_content>
+                        <img class="bd-hero-logo"
+                             src="${url.resourcesPath}/img/brand/${properties.brandLogoSlug!'blue-dot'}/${properties.heroLogo}"
+                             alt="${properties.brandShortName!'Aggregator'}"/>
+                    <#else>
+                        <span class="bd-hero-wordmark">${properties.brandShortName!'Aggregator'}</span>
+                        <#if (properties.brandSeededBy!'')?has_content>
+                            <span class="bd-hero-strapline">${properties.brandSeededBy}</span>
+                        </#if>
+                    </#if>
                 </div>
             </div>
         </aside>
@@ -62,6 +95,14 @@
                     <img class="bd-brand-logo"
                          src="${url.resourcesPath}/img/brand/${properties.brandLogoSlug!'blue-dot'}/logo.png"
                          alt="${properties.brandShortName!'Aggregator'}"/>
+                    <#-- Names the app being signed in to. Both DPGs share one
+                         realm and the same logo, so this is what tells them
+                         apart — and what catches someone who arrived at the
+                         wrong door. Omitted entirely when unset, so a theme
+                         that defines no brandAppLabel renders as before. -->
+                    <#if (properties.brandAppLabel!'')?has_content>
+                        <span class="bd-app-label">${properties.brandAppLabel}</span>
+                    </#if>
                 </header>
 
                 <#if displayMessage && message?has_content && (message.type != 'warning' || !isAppInitiatedAction??)>
@@ -83,7 +124,9 @@
                 </a>
 
                 <h2 class="bd-title"><#nested "header"></h2>
-                <p class="bd-subtitle">${msg("loginAccountSubtitle")}</p>
+                <#if subtitleKey?has_content>
+                    <p class="bd-subtitle">${msg(subtitleKey)}</p>
+                </#if>
 
                 <div class="bd-form-area">
                     <#nested "form">
@@ -100,6 +143,39 @@
                         <input type="hidden" name="tryAnotherWay" value="on"/>
                         <button type="submit" class="bd-link-btn">${msg("doTryAnotherWay")}</button>
                     </form>
+                </#if>
+
+                <#-- "Owned by / Managed by" attribution, mirroring the web login
+                     page. Two rows because that is what the only brand using it
+                     needs; each is opt-in, so a theme that sets no attrOneLabel
+                     renders nothing and every other brand's page is byte-identical.
+
+                     On the CARD, not the hero, for the same reason as the web app:
+                     the hero collapses on narrow viewports, and ownership
+                     attribution that disappears on a phone is not attribution.
+
+                     The mark carries the org name as its alt text rather than
+                     repeating it as visible copy — "only the logo, not the text". -->
+                <#if (properties.attrOneLabel!'')?has_content || (properties.attrTwoLabel!'')?has_content>
+                    <div class="bd-attribution">
+                        <#list [
+                            {"label": properties.attrOneLabel!'', "name": properties.attrOneName!'', "logo": properties.attrOneLogo!''},
+                            {"label": properties.attrTwoLabel!'', "name": properties.attrTwoName!'', "logo": properties.attrTwoLogo!''}
+                        ] as row>
+                            <#if row.label?has_content>
+                                <div class="bd-attribution-row">
+                                    <span class="bd-attribution-label">${row.label}</span>
+                                    <#if row.logo?has_content>
+                                        <img class="bd-attribution-mark"
+                                             src="${url.resourcesPath}/img/brand/${properties.brandLogoSlug!'blue-dot'}/${row.logo}"
+                                             alt="${row.name}"/>
+                                    <#else>
+                                        <span class="bd-attribution-name">${row.name}</span>
+                                    </#if>
+                                </div>
+                            </#if>
+                        </#list>
+                    </div>
                 </#if>
             </div>
         </main>

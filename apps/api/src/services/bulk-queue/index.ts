@@ -41,8 +41,9 @@ function getFileProcessQueue(): Queue<BulkFileProcessJob> {
 }
 
 /**
- * Enqueues a `bulk-file-process` job. Idempotent via `jobId = uploadId` —
- * a duplicate enqueue for the same upload is silently no-op.
+ * Enqueues a `bulk-file-process` job.
+ *
+ * Idempotent: `jobId = uploadId`, so a second enqueue for the same upload does nothing.
  */
 export async function enqueueBulkFileProcess(payload: BulkFileProcessJob): Promise<void> {
   const start = Date.now();
@@ -70,7 +71,7 @@ export async function enqueueBulkFileProcess(payload: BulkFileProcessJob): Promi
 
 /**
  * Closes the BullMQ enqueue queue and its Redis connection. Idempotent; call
- * from process shutdown so the queue + connection are not leaked on SIGTERM.
+ * on process shutdown.
  */
 export async function closeBulkQueue(): Promise<void> {
   await fileProcessQueue?.close();

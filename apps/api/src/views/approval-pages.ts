@@ -1,16 +1,12 @@
 /**
- * Server-rendered HTML pages for the admin approval flow.
+ * Server-rendered HTML pages for the admin approval flow in `@aggregator-dpg/api`.
  *
- * Plain inlined HTML — no template engine, no client-side framework. Styles
- * mirror the Blue Dots portal palette so the admin's confirmation flow feels
- * like part of the same product even though it is served by the Fastify API.
+ * Plain inlined HTML with no template engine or client framework. Styles follow
+ * the portal palette.
  */
 
 /**
- * Network-driven brand surface for the admin-approval pages. Sourced
- * from `getNetworkConfig().aggregator.brand` at render time so the
- * blue_dot / purple_dot / yellow_dot deployments each get their own
- * label + palette without code changes.
+ * Brand values for the approval pages, from `getNetworkConfig().aggregator.brand`.
  */
 export interface PageBrand {
   short_name: string;
@@ -26,13 +22,7 @@ const DEFAULT_BRAND: PageBrand = {
   portal_url: 'http://localhost:3000',
 };
 
-/**
- * Module-level brand seeded from the resolved network config at server
- * boot. Render functions read this when the caller doesn't pass an
- * explicit `brand` override — keeps the call sites churn-free while
- * driving the whole admin-decision flow from the active deployment's
- * aggregator.config.yaml.
- */
+/** Brand set at boot from network config; used when a caller passes no `brand`. */
 let runtimeBrand: PageBrand | null = null;
 
 /** Called once from the server boot path after network config resolves. */
@@ -47,7 +37,7 @@ function pickBrand(override: PageBrand | undefined): PageBrand {
 function shade(hex: string, percent: number): string {
   const m = /^#([0-9a-f]{6})$/i.exec(hex);
   if (!m || !m[1]) return hex;
-  const num = parseInt(m[1], 16);
+  const num = Number.parseInt(m[1], 16);
   const r = (num >> 16) & 0xff;
   const g = (num >> 8) & 0xff;
   const b = num & 0xff;
@@ -76,6 +66,17 @@ const SUCCESS_BG = '#dcfce7';
 const INFO = '#1e40af';
 const INFO_BG = '#dbeafe';
 
+/** Inline decision icons, so the page is one self-contained response. */
+const ICON_CHECK =
+  '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+  'stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polyline points="20 6 9 17 4 12"></polyline></svg>';
+
+const ICON_X =
+  '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+  'stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+
 interface ShellOptions {
   title: string;
   brand: PageBrand;
@@ -84,7 +85,7 @@ interface ShellOptions {
 function hexToRgba(hex: string, alpha: number): string {
   const m = /^#([0-9a-f]{6})$/i.exec(hex);
   if (!m || !m[1]) return `rgba(79, 70, 229, ${alpha})`;
-  const num = parseInt(m[1], 16);
+  const num = Number.parseInt(m[1], 16);
   return `rgba(${(num >> 16) & 0xff}, ${(num >> 8) & 0xff}, ${num & 0xff}, ${alpha})`;
 }
 
@@ -209,6 +210,54 @@ function shell(opts: ShellOptions, body: string): string {
     background: #fff; color: ${INK_900}; border: 1px solid ${BORDER};
   }
   .btn-secondary:hover { background: ${SURFACE_SOFT}; }
+  /* Decision row: the two outcomes sit side by side so the page offers exactly
+     two choices. The reason field lives in the reject dialog, not inline —
+     rendering a textarea next to Approve made the page read as a form to fill
+     in before either action.
+
+     A 2-column grid rather than flex, with display:contents on the wrapping
+     form, so both buttons are direct grid items. Otherwise Approve sits inside
+     its own form box and Reject doesn't, which is what made the two sit at
+     different widths and heights. Equal columns also mirrors the review
+     email's full-width CTA instead of two differently-sized pills. */
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    align-items: stretch;
+    margin-top: 22px;
+  }
+  .actions form { margin: 0; display: contents; }
+  /* Icon + label centred as one unit, so the two buttons read as a matched
+     pair however different the label widths are. */
+  .actions button {
+    width: 100%; padding: 14px 20px; border-radius: 12px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+    font-size: 15px;
+  }
+  .actions button svg { flex: none; }
+  /* Reject is outlined rather than solid: destructive, but not the visual
+     equal of the primary action on a page where approve is the common case. */
+  .btn-danger-outline {
+    background: #fff; color: ${DANGER};
+    border: 1px solid ${DANGER_BORDER};
+  }
+  .btn-danger-outline:hover { background: ${DANGER_BG}; border-color: ${DANGER}; }
+  @media (max-width: 420px) {
+    .actions { grid-template-columns: 1fr; }
+  }
+  dialog.modal {
+    border: 0; border-radius: 16px; padding: 26px;
+    max-width: 460px; width: calc(100% - 40px);
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+    color: ${INK_900};
+  }
+  dialog.modal::backdrop { background: rgba(15, 23, 42, 0.45); }
+  dialog.modal h2 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+  dialog.modal .modal-lead { margin: 8px 0 0; font-size: 13.5px; color: ${INK_500}; }
+  dialog.modal label { margin-top: 16px; }
+  dialog.modal textarea { margin: 0; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
   .pill {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 4px 10px; border-radius: 999px;
@@ -275,45 +324,50 @@ function shell(opts: ShellOptions, body: string): string {
 
 export interface ConfirmPageVars {
   aggregatorId: string;
-  intent: 'approve' | 'reject';
   token: string;
   applicantEmail: string;
   association: string;
   aggregatorType: string;
+  /** Noun for the heading/title, e.g. `organisation`. Defaults to `aggregator`. */
+  entityLabel?: string;
   postUrl: string;
   /**
-   * Human-readable link lifetime (e.g. "7 days"), derived from the
-   * configured approval-token TTL via `formatApprovalTtl`. Must match the
-   * wording in the admin review email.
+   * The email the coordinator was invited at.
+   * When it differs from `applicantEmail`, the page flags it for the approver.
+   */
+  invitedEmail?: string | undefined;
+  /**
+   * Human-readable link lifetime (e.g. "7 days") from `formatApprovalTtl`.
+   * Must match the wording in the admin review email.
    */
   expiresInText: string;
   brand?: PageBrand;
+  /** A rejection must carry a reason; the reason field becomes required. */
+  reasonRequired?: boolean;
+  /** The longest reason the form takes; 2000 when absent. */
+  reasonMaxLength?: number;
 }
 
 export function renderConfirmPage(v: ConfirmPageVars): string {
   const brand = pickBrand(v.brand);
-  const isApprove = v.intent === 'approve';
-  const verb = isApprove ? 'Approve' : 'Reject';
-  const accentClass = isApprove ? 'accent-primary' : 'accent-danger';
-  const submitClass = isApprove ? 'btn-primary' : 'btn-danger';
-  const pillClass = isApprove ? 'pill-info' : 'pill-error';
-  const pillText = isApprove ? 'Pending approval' : 'Pending rejection';
-  const description = isApprove
-    ? 'Confirm to enable this aggregator account. The applicant receives a welcome email with sign-in instructions.'
-    : 'Confirm to decline this application. The applicant receives a courteous notification with the reason you provide below.';
-
-  const reasonField = !isApprove
-    ? `<label for="reason-input">Reason (sent to the applicant)</label>
-       <textarea id="reason-input" name="reason" placeholder="A brief explanation helps the applicant understand the decision."></textarea>`
-    : '';
+  const reasonAttr = v.reasonRequired ? ' required' : '';
+  const reasonMax = String(v.reasonMaxLength ?? 2000);
+  const entity = v.entityLabel ?? 'aggregator';
+  const invitedRow =
+    v.invitedEmail && v.invitedEmail !== v.applicantEmail
+      ? `<div class="meta-row">
+            <div class="meta-label" style="color:#b45309;">Invited email</div>
+            <div class="meta-value" style="color:#b45309;">${escape(v.invitedEmail)} — registering with a different email</div>
+          </div>`
+      : '';
 
   const body = `
     <div class="card">
-      <div class="accent-bar ${accentClass}"></div>
+      <div class="accent-bar accent-primary"></div>
       <div class="card-header">
-        <span class="pill ${pillClass}">${escape(pillText)}</span>
-        <h1 style="margin-top:14px;">${escape(verb)} aggregator application</h1>
-        <p class="lead">${escape(description)}</p>
+        <span class="pill pill-info">Pending review</span>
+        <h1 style="margin-top:14px;text-transform:capitalize;">Review ${escape(entity)} application</h1>
+        <p class="lead">Approve to enable this account (the applicant gets a welcome email), or reject with a brief reason (sent to the applicant).</p>
       </div>
       <div class="card-body">
         <div class="meta">
@@ -321,6 +375,7 @@ export function renderConfirmPage(v: ConfirmPageVars): string {
             <div class="meta-label">Email</div>
             <div class="meta-value">${escape(v.applicantEmail)}</div>
           </div>
+          ${invitedRow}
           <div class="meta-row">
             <div class="meta-label">Name</div>
             <div class="meta-value">${escape(v.association)}</div>
@@ -334,39 +389,74 @@ export function renderConfirmPage(v: ConfirmPageVars): string {
             <div class="meta-value mono">${escape(v.aggregatorId)}</div>
           </div>
         </div>
-        <form method="POST" action="${escape(v.postUrl)}">
-          <input type="hidden" name="token" value="${escape(v.token)}" />
-          <input type="hidden" name="decision" value="${escape(v.intent)}" />
-          ${reasonField}
-        </form>
-      </div>
-      <div class="card-footer">
-        <form method="POST" action="${escape(v.postUrl)}" style="margin:0;display:inline;">
-          <input type="hidden" name="token" value="${escape(v.token)}" />
-          <input type="hidden" name="decision" value="${escape(v.intent)}" />
-          ${!isApprove ? `<input type="hidden" name="reason" id="reason-mirror" />` : ''}
-          <button type="submit" class="${submitClass}">${escape(verb)}</button>
-        </form>
+
+        <!--
+          Two outcomes, two buttons. Approve posts straight away; Reject opens a
+          dialog that collects the reason, so the reason field is only present
+          when it is relevant. Each decision keeps its own form and its own
+          hidden token, so nothing is shared or mirrored between them.
+        -->
+        <div class="actions">
+          <form method="POST" action="${escape(v.postUrl)}">
+            <input type="hidden" name="token" value="${escape(v.token)}" />
+            <input type="hidden" name="decision" value="approve" />
+            <button type="submit" class="btn-primary">${ICON_CHECK}Approve</button>
+          </form>
+          <button type="button" class="btn-danger-outline" id="reject-open" hidden>${ICON_X}Reject</button>
+        </div>
+
+        <dialog class="modal" id="reject-modal" aria-labelledby="reject-title">
+          <form method="POST" action="${escape(v.postUrl)}">
+            <input type="hidden" name="token" value="${escape(v.token)}" />
+            <input type="hidden" name="decision" value="reject" />
+            <h2 id="reject-title">Reject this application?</h2>
+            <p class="modal-lead">This is final once submitted. The reason below is emailed to the applicant.</p>
+            <label for="reason-input">Reason (sent to the applicant)</label>
+            <textarea id="reason-input" name="reason" maxlength="${reasonMax}"${reasonAttr}
+              placeholder="A brief explanation helps the applicant understand the decision."></textarea>
+            <div class="modal-actions">
+              <button type="button" class="btn-secondary" id="reject-cancel">Cancel</button>
+              <button type="submit" class="btn-danger">Reject application</button>
+            </div>
+          </form>
+        </dialog>
+
+        <!--
+          Without JS the dialog can never be opened, so reject has to stay
+          reachable inline. The scripted button starts hidden and the script
+          un-hides it, which means exactly one reject affordance is ever
+          visible — no duplicate buttons if the script fails to run.
+        -->
+        <noscript>
+          <form method="POST" action="${escape(v.postUrl)}" style="margin:20px 0 0;">
+            <input type="hidden" name="token" value="${escape(v.token)}" />
+            <input type="hidden" name="decision" value="reject" />
+            <label for="reason-input-nojs">Reason (sent to the applicant)</label>
+            <textarea id="reason-input-nojs" name="reason" maxlength="${reasonMax}"${reasonAttr}
+              placeholder="A brief explanation helps the applicant understand the decision."></textarea>
+            <button type="submit" class="btn-danger" style="margin-top:10px;">Reject</button>
+          </form>
+        </noscript>
       </div>
     </div>
     <p class="footer-note">
-      This decision is final once submitted. Approval links are single-use and expire in ${escape(v.expiresInText)}.
+      This decision is final once submitted. The review link is single-use and expires in ${escape(v.expiresInText)}.
     </p>
-    ${
-      !isApprove
-        ? `<script>
-             // Mirror the textarea value into the actual submitting form so the
-             // visible textarea inside the card body reaches the server.
-             document.querySelector('form[action$="decision"]').addEventListener('submit', function (e) {
-               var ta = document.getElementById('reason-input');
-               var mirror = document.getElementById('reason-mirror');
-               if (ta && mirror) mirror.value = ta.value;
-             });
-           </script>`
-        : ''
-    }
+    <script>
+      (function () {
+        var dialog = document.getElementById('reject-modal');
+        var open = document.getElementById('reject-open');
+        var cancel = document.getElementById('reject-cancel');
+        // Only take over if the browser actually supports <dialog>; otherwise
+        // leave the button hidden and let the <noscript> path stand in.
+        if (!dialog || !open || typeof dialog.showModal !== 'function') return;
+        open.hidden = false;
+        open.addEventListener('click', function () { dialog.showModal(); });
+        if (cancel) cancel.addEventListener('click', function () { dialog.close(); });
+      })();
+    </script>
   `;
-  return shell({ title: `${verb} aggregator`, brand }, body);
+  return shell({ title: `Review ${entity}`, brand }, body);
 }
 
 export interface ResultPageVars {
@@ -374,9 +464,8 @@ export interface ResultPageVars {
   title: string;
   message: string;
   /**
-   * Optional secondary action rendered as a POST form button (e.g. the
-   * "resend approval link" affordance on the expired-link page). Posts a
-   * single hidden `token` field to `url`.
+   * Optional secondary action rendered as a POST form button, e.g. "resend approval link".
+   * Posts a single hidden `token` field to `url`.
    */
   action?: { url: string; token: string; label: string };
   brand?: PageBrand;
@@ -395,8 +484,7 @@ export function renderResultPage(v: ResultPageVars): string {
   const iconSvg = resultIconSvg(v.status);
   const portalUrl = brand.portal_url;
   const decidedAt = new Date().toLocaleString('en-IN', {
-    // Render in IST regardless of the server's clock (the API container runs in
-    // UTC); without this the timestamp showed UTC despite the en-IN locale.
+    // Always render in IST; the server clock is UTC.
     timeZone: 'Asia/Kolkata',
     day: '2-digit',
     month: 'short',
@@ -447,9 +535,9 @@ function resultIconSvg(status: 'success' | 'error' | 'info'): string {
 
 function escape(s: string): string {
   return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }

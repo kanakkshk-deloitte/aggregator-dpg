@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Backfill the Keycloak `aggregator_type` user attribute from the Postgres
-# `aggregators.type` column for any approved aggregator whose KC user is
+# `users.serves` column (its first domain; `type` before migration 0029) for
+# any approved aggregator whose KC user is
 # missing the attribute. One-shot helper — run once per environment.
 #
 # Auto-reads the project `.env` (repo root or CWD) so the same vars the API
@@ -37,7 +38,7 @@ set -euo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 _KEYS="KEYCLOAK_URL KEYCLOAK_REALM KEYCLOAK_ADMIN_CLIENT_ID KEYCLOAK_ADMIN_CLIENT_SECRET KC_BOOTSTRAP_ADMIN_USERNAME KC_BOOTSTRAP_ADMIN_PASSWORD POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB DATABASE_URL PG_CONTAINER"
 for _envfile in "$_SCRIPT_DIR/../.env" "$PWD/.env"; do
-  if [ -f "$_envfile" ]; then
+  if [[ -f "$_envfile" ]]; then
     _exports=$(KEYS="$_KEYS" ENVFILE="$_envfile" python3 -c '
 import os, re, shlex, sys
 keys = set(os.environ["KEYS"].split())
@@ -53,7 +54,7 @@ with open(os.environ["ENVFILE"]) as fh:
         if k not in os.environ:
             print("export {}={}".format(k, shlex.quote(v)))
 ')
-    if [ -n "$_exports" ]; then eval "$_exports"; fi
+    if [[ -n "$_exports" ]]; then eval "$_exports"; fi
     echo "Loaded env: $_envfile"
     break
   fi
@@ -73,10 +74,11 @@ PG_CONTAINER="${PG_CONTAINER:-aggregator-postgres}"
 PG_USER="${PG_USER:-${POSTGRES_USER:-aggregator}}"
 PG_DB="${PG_DB:-${POSTGRES_DB:-aggregator}}"
 
-SQL="SELECT id, type::text FROM aggregators WHERE type IS NOT NULL AND type IN ('seeker','provider');"
+# Coordinators are `users` rows since migration 0027 (was `aggregators`).
+SQL="SELECT id, serves[1] FROM users WHERE user_type = 'coordinator' AND serves[1] IN ('seeker','provider');"
 
 # ─── Read aggregators from Postgres ─────────────────────────────────────────
-if [ -n "${DATABASE_URL:-}" ]; then
+if [[ -n "${DATABASE_URL:-}" ]]; then
   command -v psql >/dev/null || { echo "psql not found on PATH"; exit 1; }
   rows=$(psql "$DATABASE_URL" -t -A -F '|' -c "$SQL")
 else
@@ -88,7 +90,7 @@ fi
 # Prefer the service-account credentials the API already uses (cleaner audit,
 # no master-realm shell creds floating around). Fall back to password grant
 # for local dev where the service-account secret may be blank.
-if [ -n "$KC_CLIENT_ID" ] && [ -n "$KC_CLIENT_SECRET" ]; then
+if [[ -n "$KC_CLIENT_ID" ]] && [[ -n "$KC_CLIENT_SECRET" ]]; then
   echo "Auth: service-account ${KC_CLIENT_ID} on realm ${KC_REALM}"
   TOKEN=$(curl -fsS -X POST "${KC_URL}/realms/${KC_REALM}/protocol/openid-connect/token" \
     -H 'Content-Type: application/x-www-form-urlencoded' \
@@ -102,18 +104,18 @@ else
     | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
 fi
 
-if [ -z "$rows" ]; then
+if [[ -z "$rows" ]]; then
   echo "No typed aggregators found."; exit 0
 fi
 
 while IFS='|' read -r AGG_ID AGG_TYPE; do
-  [ -z "$AGG_ID" ] && continue
+  [[ -z "$AGG_ID" ]] && continue
   echo "→ ${AGG_ID} (${AGG_TYPE})"
 
   user_payload=$(curl -fsS -H "Authorization: Bearer $TOKEN" \
     "${KC_URL}/admin/realms/${KC_REALM}/users?q=aggregator_id:${AGG_ID}&exact=true")
   user_id=$(printf '%s' "$user_payload" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d[0]['id'] if d else '')")
-  if [ -z "$user_id" ]; then
+  if [[ -z "$user_id" ]]; then
     echo "   no KC user — skip"; continue
   fi
 
@@ -128,7 +130,7 @@ print(json.dumps({'attributes': attrs}))
   http=$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
     "${KC_URL}/admin/realms/${KC_REALM}/users/${user_id}" -d "$merged")
-  if [ "$http" = "204" ]; then
+  if [[ "$http" = "204" ]]; then
     echo "   ✓ set aggregator_type=${AGG_TYPE} on KC user ${user_id}"
   else
     echo "   ✗ KC update failed (HTTP ${http})"

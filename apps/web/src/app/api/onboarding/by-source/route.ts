@@ -2,7 +2,7 @@
  * BFF proxy: onboarding metrics grouped by entry source.
  *   GET /api/onboarding/by-source?from=&to=
  *
- * Forwards verbatim to the aggregator API's GET /v1/onboarding/by-source.
+ * Forwards to the aggregator API's GET /v1/onboarding/by-source.
  */
 
 import { type NextRequest, NextResponse } from 'next/server';

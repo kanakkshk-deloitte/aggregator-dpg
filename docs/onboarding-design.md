@@ -2,6 +2,21 @@
 
 Design reference for the two onboarding paths an aggregator uses to bring participants (seekers/providers) into the system.
 
+> **Superseded in part — the local `participants` table has been removed.**
+>
+> This document describes the design as originally built, when both onboarding
+> paths UPSERTed into a local `participants` roster. That table was a mirror of
+> data Signals already held: it had no reader, and it did not actually prevent
+> duplicates — both writers pushed to Signals regardless of the local UPSERT
+> result, so a repeat bulk row reported `skipped`/`duplicate` while a second
+> Signals profile was created.
+>
+> Signals is now the sole store of record for participants. Every reference below
+> to writing, UPSERTing or deduplicating `participants` — and the
+> `link_submissions.participant_id` column — no longer applies. `link_submissions`
+> itself is unchanged and still feeds the `link-metrics-rollup` cron. There is
+> currently **no deduplication** on either path; adding it is Signals-side work.
+
 ```
                               ┌─────────────────┐
                               │   AGGREGATOR    │
@@ -363,24 +378,25 @@ Constraints:
 
 ### `link_submissions` — one row per public POST
 
-| Column              | Type           | Notes                                                                                                            |
-| ------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `id`                | uuid PK        | gen_random_uuid()                                                                                                |
-| `link_id`           | uuid NN FK     | → registration_links.id (CASCADE)                                                                                |
-| `aggregator_id`     | uuid NN FK     | → aggregators.id (CASCADE) — denormalised for tenant scope queries                                               |
-| `participant_id`    | uuid FK        | → participants.id (SET NULL). Populated synchronously by the submit handler — NULL only when `outcome='failed'`. |
-| `metadata_snapshot` | jsonb NN       | default `{}` — snapshot of `registration_links.context` at submit time                                           |
-| `submitted_data`    | jsonb NN       | default `{}` — raw form payload                                                                                  |
-| `outcome`           | enum NN        | `passed` / `skipped` / `failed`. Set synchronously by the submit handler based on participants UPSERT result.    |
-| `rolled_up_at`      | timestamptz    | Set by `link-metrics-rollup` cron when consumed into `onboarding`                                                |
-| `created_at`        | timestamptz NN | now()                                                                                                            |
+| Column              | Type           | Notes                                                                                    |
+| ------------------- | -------------- | ---------------------------------------------------------------------------------------- |
+| `id`                | uuid PK        | gen_random_uuid()                                                                        |
+| `link_id`           | uuid NN FK     | → registration_links.id (CASCADE)                                                        |
+| `aggregator_id`     | uuid NN FK     | → aggregators.id (CASCADE) — denormalised for tenant scope queries                       |
+| `metadata_snapshot` | jsonb NN       | default `{}` — snapshot of `registration_links.context` at submit time                   |
+| `submitted_data`    | jsonb NN       | default `{}` — raw form payload                                                          |
+| `outcome`           | enum NN        | `passed` / `skipped` / `failed`. Set by the submit handler from the Signals push result. |
+| `rolled_up_at`      | timestamptz    | Set by `link-metrics-rollup` cron when consumed into `onboarding`                        |
+| `created_at`        | timestamptz NN | now()                                                                                    |
 
 Indexes:
 
 - `(rolled_up_at, created_at)` — rollup pickup, NULLs first.
 - `(link_id)` and `(aggregator_id, created_at)` for read paths.
 
-### `participants` — deduplicated roster (bulk-only)
+### `participants` — REMOVED (was: deduplicated roster)
+
+> Dropped in migration `0024_drop_participants.sql`. Retained below for historical reference only.
 
 | Column                  | Type           | Notes                                                                                               |
 | ----------------------- | -------------- | --------------------------------------------------------------------------------------------------- |

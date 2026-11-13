@@ -9,6 +9,7 @@ name: aggregator-dpg
 #   Infra    postgres (3 DBs), signals-redis, aggregator-redis,
 #            keycloak, minio (+init), mailpit
 #   signals-dpg   signals-bootstrap (one-shot: migrate+seed) -> signals-api -> signals-ui
+#   search        NOT here — add docker-compose.search.yml (api + worker + TEI)
 #   aggregator-dpg   aggregator-api (auto-migrates) -> aggregator-web + aggregator-worker
 #
 # This file is for LOCAL DEV ONLY. It intentionally does NOT use the
@@ -30,12 +31,26 @@ name: aggregator-dpg
 # Always run compose FROM this directory so the relative build contexts and
 # volume mounts resolve:
 #     cd aggregator-dpg/local-setup
-#     cp .env.example .env    # then set ADMIN_EMAILS (see LOCAL_SETUP.md §2)
+#     cp .env.example .env    # then ./gen-secrets.sh (see LOCAL_SETUP.md §2)
 #     docker compose up -d --build
+#   with signals-search (that file includes this one):
+#     docker compose -f docker-compose.search.yml up -d --build
+#
+# ── Build from source vs. pull prebuilt (signals-api/ui, aggregator-api/web/worker) ──
+# These five services declare both `build:` and `image:`. The `--build` flag is
+# the toggle:
+#     docker compose up -d --build   builds from your checked-out source (validating
+#                                     local changes — this is what the flag has always done)
+#     docker compose up -d           skips the build and PULLS the image tag below from
+#                                     GHCR instead — much faster, but runs whatever that
+#                                     tag was last published as, not your local source
+# Override any single image (e.g. to pin a release tag) via <SERVICE>_IMAGE in .env,
+# e.g. AGGREGATOR_API_IMAGE=ghcr.io/blue-dots-economy/aggregator-dpg/api:202609-s1-rc3.
 #
 # ── Host ports ──────────────────────────────────────────────────────────────
 #   Aggregator portal (web)  http://localhost:3100
-#   Aggregator API           http://localhost:4000        /health/live
+#   Aggregator API           http://localhost:4000        /health/live  (through aggregator-envoy, the edge)
+#   Edge (Envoy) admin       http://127.0.0.1:9901        /ready
 #   Signals API              http://localhost:2742        (Swagger at /reference)
 #   Signals UI               http://localhost:5173        (must be 5173 — see note)
 #   Keycloak admin           http://localhost:8080/admin  (admin / KC_ADMIN_PASSWORD)
@@ -44,6 +59,7 @@ name: aggregator-dpg
 #   MinIO S3 API             http://localhost:9000
 #   Postgres                 localhost:5432               (dbs: aggregator, signals, keycloak)
 #   signals-redis            localhost:5555               (password-protected)
+#   Signals Search API       http://localhost:3110        (only with docker-compose.search.yml)
 #   aggregator-redis         localhost:6379
 #
 # Ports match each project's own setup guide (signals-dpg/SETUP.md,
@@ -147,7 +163,8 @@ services:
 
   # S3-compatible object storage for aggregator bulk uploads + QR PNGs.
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # minio/minio is no longer public on Docker Hub or quay.io; DHI publishes it.
+    image: dhi.io/minio:latest
     container_name: sd-minio
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
@@ -161,7 +178,8 @@ services:
     volumes:
       - sd-minio-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1"]
+      # No curl or grep in the DHI image: ask /minio/health/live over bash's /dev/tcp.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /minio/health/live HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && read -r l <&3 && [[ $$l == *' 200'* ]]"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -169,7 +187,8 @@ services:
 
   # Creates the aggregator upload bucket once MinIO is healthy. Idempotent.
   minio-init:
-    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    # minio/mc is no longer public; Chainguard's -dev variant has mc and a shell.
+    image: cgr.dev/chainguard/minio-client:latest-dev
     container_name: sd-minio-init
     depends_on:
       minio:
@@ -178,6 +197,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       S3_BUCKET: ${S3_BUCKET:-aggregator-bulk-uploads}
+      MC_CONFIG_DIR: /tmp/.mc
     entrypoint:
       - sh
       - -c
@@ -187,6 +207,24 @@ services:
         mc mb --ignore-existing "local/$$S3_BUCKET"
         echo "minio-init: bucket '$$S3_BUCKET' ready"
     restart: "no"
+
+  # Serves signals-dpg's network.json for AGGREGATOR_NETWORK over HTTP, so the
+  # Aggregator reads the same file as Signals (its loader only fetches
+  # network.json from a URL). Replace the file in
+  # signals-dpg/examples/schemas/<network>/ and both sides pick it up.
+  # Override with AGGREGATOR_NETWORK_SOURCE to use another URL.
+  schema-server:
+    image: python:3.12-alpine
+    container_name: sd-schema-server
+    restart: unless-stopped
+    command: ["python", "-m", "http.server", "8765", "--directory", "/schemas"]
+    volumes:
+      - ../../signals-dpg/examples/schemas/${AGGREGATOR_NETWORK:-blue_dot}:/schemas:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/network.json')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # ───────────────────────────────────────────────────────────────────────
   # Keycloak — identity for aggregator-dpg (OIDC + email/phone OTP)
@@ -223,7 +261,12 @@ services:
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_FROM: ${SMTP_FROM:-no-reply@bluedots.local}
-      SMTP_FROM_DISPLAY: ${SMTP_FROM_DISPLAY:-Blue Dots Aggregator}
+      # Neutral, not "Blue Dots Aggregator": this Keycloak serves both DPGs, and
+      # `emailTheme` is realm-level with no per-client override — so every OTP
+      # mail, signals' included, is sent under this one display name. Keep it
+      # app-agnostic. (aggregator's own standalone compose serves only
+      # aggregator, so its value can stay branded.)
+      SMTP_FROM_DISPLAY: ${SMTP_FROM_DISPLAY:-Blue Dots}
       SMTP_AUTH: "false"
       SMTP_STARTTLS: "false"
       SMTP_SSL: "false"
@@ -235,6 +278,16 @@ services:
       AGGREGATOR_API_SECRET: ${OIDC_API_CLIENT_SECRET:-aggregator-api-local-dev-secret}
       AGGREGATOR_PORTAL_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-aggregator-portal-local-dev-secret}
       AGGREGATOR_BFF_SECRET: ${OIDC_BFF_CLIENT_SECRET:-aggregator-bff-local-dev-secret}
+      # Signals-side client secrets (Phase B realm merge). signals-api's must
+      # match KEYCLOAK_API_CLIENT_SECRET below; aggregator-dpg's must match
+      # SIGNALSTACK_CLIENT_SECRET on aggregator-api/worker (same var).
+      SIGNALS_API_SECRET: ${SIGNALS_API_CLIENT_SECRET:-signals-api-local-dev-secret}
+      SIGNALSTACK_CLIENT_SECRET: ${SIGNALSTACK_CLIENT_SECRET:-aggregator-dpg-signals-local-dev-secret}
+      VOICE_DPG_SIGNALS_SECRET: ${VOICE_DPG_SIGNALS_SECRET:-voice-dpg-signals-local-dev-secret}
+      # Realm name substituted into the realm JSON's "realm" field by
+      # render-realm.sh. Per-deployment identity value, same as
+      # AGGREGATOR_NETWORK below — not a fixed constant across networks.
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-bluedots}
     env_file:
       # Brand strings (BRAND_*, HERO_*) for the login theme.
       - ../config/${AGGREGATOR_NETWORK:-blue_dot}/keycloak.env
@@ -273,23 +326,39 @@ services:
         condition: service_healthy
     environment:
       KC_URL: http://keycloak:8080          # root path (no /auth) in this stack
-      KC_REALM: ${KEYCLOAK_REALM:-aggregator}
+      KC_REALM: ${KEYCLOAK_REALM:-bluedots}
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USERNAME:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?KC_ADMIN_PASSWORD must be set in .env}
       UNMANAGED_POLICY: ENABLED
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_FROM: ${SMTP_FROM:-no-reply@bluedots.local}
-      SMTP_FROM_DISPLAY: ${SMTP_FROM_DISPLAY:-Blue Dots Aggregator}
+      # Must match the keycloak service's value above — this sidecar re-applies
+      # the realm's SMTP config, so a divergence here would silently overwrite it.
+      SMTP_FROM_DISPLAY: ${SMTP_FROM_DISPLAY:-Blue Dots}
       SMTP_SECURE: "false"
       SMTP_USER: ""
       SMTP_PASSWORD: ""
       # Reconcile the portal client secret to match the web BFF config.
       OIDC_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-aggregator-portal-local-dev-secret}
       PORTAL_CLIENT_ID: aggregator-portal
+      # apply-portal-gate.py reads these names (KC_ADMIN_*, not KC_BOOTSTRAP_*).
+      KC_ADMIN_USERNAME: ${KC_ADMIN_USERNAME:-admin}
+      KC_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?KC_ADMIN_PASSWORD must be set in .env}
     volumes:
       - ../infra/keycloak/init:/init:ro
-    entrypoint: ["sh", "-c", "apk add --no-cache curl jq > /dev/null && sh /init/apply-user-profile.sh"]
+    # apply-portal-gate.py runs on EVERY boot. This is the SHARED realm, so a
+    # signals-only account is a valid portal login as far as Keycloak is
+    # concerned; without the gate it completes OTP before being refused. Realm
+    # import only applies to an empty realm, so a re-`up` on an existing realm
+    # needs the REST path. The script verifies first (no-op when already
+    # correct) and exits non-zero if it cannot apply the gate.
+    entrypoint:
+      [
+        'sh',
+        '-c',
+        'apk add --no-cache curl jq python3 > /dev/null && sh /init/apply-user-profile.sh && python3 /init/apply-portal-gate.py',
+      ]
     restart: "no"
 
   # ───────────────────────────────────────────────────────────────────────
@@ -331,6 +400,11 @@ services:
       AUTH_SECRET: ${SIGNALS_AUTH_SECRET:?SIGNALS_AUTH_SECRET must be set in .env}
       AUTH_MIDDLEWARE_ENABLED: "true"
       CREATE_TEST_OTP: "true"
+      # Matches signals-dpg's own local-setup default (signals-dpg/local-setup/docker-compose.yml).
+      # Without this it falls back to the packages/config default ('gated'), which
+      # rejects first-login provisioning for any Keycloak identity without a
+      # pre-existing local `user` row ("Self sign-up is disabled on this instance").
+      SELF_SIGNUP_MODE: ${SELF_SIGNUP_MODE:-allowed}
       SERVED_DOMAINS: ${SIGNALS_SERVED_DOMAINS:-blue_dot/seeker,blue_dot/provider}
       NETWORK_CONFIG_SOURCE: local
       NETWORK_CONFIG_LOCAL_FILE: examples/schemas/blue_dot/network.json
@@ -345,6 +419,33 @@ services:
       REDIS_PASSWORD: ${SIGNALS_REDIS_PASSWORD}
       REDIS_URL: redis://:${SIGNALS_REDIS_PASSWORD}@signals-redis:6379
       SIGNALS_PII_KEY: ${SIGNALS_PII_KEY:?SIGNALS_PII_KEY must be a base64-encoded 32-byte key}
+      INSTANCE_SHARED_SECRET: ${INSTANCE_SHARED_SECRET:-local-dev-instance-shared-secret-change-me}
+      PEER_AUTH_MODE: ${PEER_AUTH_MODE:-permissive}
+      # ─── Keycloak (Phase B realm merge) ──────────────────────────────
+      # Must be 'keycloak': signals-dpg REMOVED the transitional 'dual' mode,
+      # and its assertAuthProviderSupported guard now hard-fails at boot on any
+      # other value. The old `-dual` default only appeared to work because a
+      # local .env overrode it — a fresh clone would not boot.
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-keycloak}
+      KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-bluedots}
+      KEYCLOAK_API_CLIENT_ID: signals-api
+      KEYCLOAK_API_CLIENT_SECRET: ${SIGNALS_API_CLIENT_SECRET:-signals-api-local-dev-secret}
+      # Phase C: client-credentials clients allowed on the SERVICE (not
+      # human-login) path — separate allowlist from KEYCLOAK_ACCEPTED_CLIENT_IDS
+      # (which defaults to signals-ui,signals-api and is left alone). Without
+      # this, aggregator-dpg's bearer token is signature/iss-valid but signals
+      # rejects it with SERVICE_CLIENT_NOT_ALLOWED ("client is not allowlisted
+      # for service access") before even checking for a seeded service org.
+      # Matches signals-bootstrap's seed_service_users.ts slug ('aggregator-dpg').
+      KEYCLOAK_SERVICE_CLIENT_IDS: ${KEYCLOAK_SERVICE_CLIENT_IDS:-aggregator-dpg}
+      # Seeded as the aggregator-dpg org id and the signals-search apikey, so
+      # aggregator-api and signals-api use them without copying anything from
+      # the seed output.
+      AGGREGATOR_DPG_ORG_ID: ${AGGREGATOR_DPG_ORG_ID:?AGGREGATOR_DPG_ORG_ID must be set in .env}
+      SIGNALS_SEARCH_API_KEY: ${SIGNALS_SEARCH_API_KEY:?SIGNALS_SEARCH_API_KEY must be set in .env (run ./gen-secrets.sh)}
+      # What the seed stores; signals-api sends the raw key above.
+      SIGNALS_SEARCH_API_KEY_HASH: ${SIGNALS_SEARCH_API_KEY_HASH:?SIGNALS_SEARCH_API_KEY_HASH must be set in .env (run ./gen-secrets.sh)}
     depends_on:
       postgres:
         condition: service_healthy
@@ -356,11 +457,19 @@ services:
     build:
       context: ../../signals-dpg
       dockerfile: apps/api/Dockerfile
-    image: signals-dpg/api:local
+    image: ${SIGNALS_API_IMAGE:-ghcr.io/blue-dots-economy/signals-dpg/api:main}
     container_name: sd-signals-api
     restart: unless-stopped
-    # Inherits the exact same env as the bootstrap step.
-    environment: *signals-env
+    # Same env as the bootstrap step, plus signals-search wiring. Discover and
+    # match score read the same URL under two names; both must be set. The
+    # search containers come from docker-compose.search.yml — without them the
+    # URL does not resolve and signals-api falls back to native discover
+    # (recency/distance order) and match score is unavailable.
+    environment:
+      <<: *signals-env
+      SIGNALS_SEARCH_URL: http://signals-search-api:3100
+      MATCH_SCORE_PROVIDER: signals_search
+      SIGNALS_SEARCH_ENDPOINT: http://signals-search-api:3100
     ports:
       - "2742:2742"
     depends_on:
@@ -370,6 +479,16 @@ services:
         condition: service_healthy
       signals-redis:
         condition: service_healthy
+      # signals-api runs AUTH_PROVIDER=keycloak, so it cannot verify a single
+      # token until the realm is imported AND keycloak-init has applied the
+      # user-profile/mapper fixups. Without these it boots and serves, and the
+      # first JWKS fetch races an unready Keycloak — surfacing as
+      # 503 IDENTITY_PROVIDER_UNAVAILABLE rather than an obvious startup error.
+      # aggregator-api already waits on both; this keeps the two symmetric.
+      keycloak:
+        condition: service_healthy
+      keycloak-init:
+        condition: service_completed_successfully
 
   signals-ui:
     build:
@@ -378,7 +497,7 @@ services:
       args:
         VITE_API_URL: http://localhost:2742
         VITE_NETWORK_NAME: blue_dot
-    image: signals-dpg/ui:local
+    image: ${SIGNALS_UI_IMAGE:-ghcr.io/blue-dots-economy/signals-dpg/ui:main}
     container_name: sd-signals-ui
     restart: unless-stopped
     environment:
@@ -398,14 +517,11 @@ services:
     build:
       context: ..
       dockerfile: apps/api/Dockerfile
-    image: aggregator-dpg/api:local
+    image: ${AGGREGATOR_API_IMAGE:-ghcr.io/blue-dots-economy/aggregator-dpg/api:main}
     container_name: sd-aggregator-api
     restart: unless-stopped
-    ports:
-      # Published to the host so email links built from PUBLIC_API_URL
-      # (http://localhost:4000 — e.g. the registration approve/reject pages,
-      # which the API renders as HTML) open from the browser.
-      - "4000:4000"
+    # Not published: every request reaches the API through aggregator-envoy,
+    # which owns host port 4000 (docs/rbac/rbac-edge-enforcement.md §7.1).
     environment:
       NODE_ENV: production
       PORT: "4000"
@@ -414,12 +530,22 @@ services:
       CORS_ORIGINS: http://localhost:3100
       DATABASE_URL: postgres://${POSTGRES_USER:-dpg}:${POSTGRES_PASSWORD}@postgres:5432/${AGGREGATOR_DB:-aggregator}
       RUN_MIGRATIONS_ON_BOOT: "true"
+      # Dev / e2e only: lets a local database WITH data apply the user & org
+      # instance upgrade at boot (apps/api/src/db/migration-guards.ts). Never set
+      # in a deployment; existing instances use the instance-upgrade tool.
+      ALLOW_TRAIN_ON_BOOT: ${ALLOW_TRAIN_ON_BOOT:-false}
       REDIS_URL: redis://aggregator-redis:6379
       # Keycloak (root path, localhost mode)
       KEYCLOAK_URL: http://keycloak:8080
-      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-aggregator}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-bluedots}
       KEYCLOAK_ADMIN_CLIENT_ID: aggregator-api
       KEYCLOAK_ADMIN_CLIENT_SECRET: ${OIDC_API_CLIENT_SECRET:-aggregator-api-local-dev-secret}
+      # Client-scoped token check (access-token.ts). REQUIRED on the shared
+      # realm: signals' clients issue tokens with the same issuer, and
+      # authenticateAny's service-account path would otherwise admit any valid
+      # bluedots token as isUser:false. The allow-list is off when unset, so a
+      # shared-realm deployment must set it explicitly.
+      KEYCLOAK_ALLOWED_AZP: ${KEYCLOAK_ALLOWED_AZP:-aggregator-portal,aggregator-api,aggregator-bff}
       # Mail -> Mailpit
       MAIL_PROVIDER: smtp
       SMTP_HOST: mailpit
@@ -431,13 +557,18 @@ services:
       # Approval flow — where new-aggregator approval emails go.
       APPROVAL_TOKEN_SECRET: ${APPROVAL_TOKEN_SECRET:?APPROVAL_TOKEN_SECRET must be set in .env (>=32 chars)}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@bluedots.local}
+      DEFAULT_ORG_OWNER_EMAIL: ${DEFAULT_ORG_OWNER_EMAIL:-}
       PUBLIC_API_URL: http://localhost:4000
       PUBLIC_PORTAL_URL: http://localhost:3100
       PUBLIC_LINK_BASE_URL: http://localhost:3100
       # Bulk-upload + QR onboarding tuning (match aggregator-dpg/docker-compose.yml).
       BULK_UPLOAD_URL_TTL_SECONDS: ${BULK_UPLOAD_URL_TTL_SECONDS:-900}
       BULK_UPLOAD_MAX_BYTES: ${BULK_UPLOAD_MAX_BYTES:-10485760}
-      QR_DOWNLOAD_URL_TTL_SECONDS: ${QR_DOWNLOAD_URL_TTL_SECONDS:-900}
+      # Must match the aggregator-worker's CAMPAIGN_EXPORT_FIELDS below
+      # (#617): the API derives the export audit row's `pii_fields` from this
+      # same variable, so a mismatched value here understates what the worker
+      # actually releases.
+      CAMPAIGN_EXPORT_FIELDS: ${CAMPAIGN_EXPORT_FIELDS:-contact}
       # Object storage -> MinIO (S3-compatible). Internal calls hit minio:9000;
       # browser-facing presigned URLs use localhost:9000.
       S3_REGION: ${S3_REGION:-us-east-1}
@@ -450,18 +581,39 @@ services:
       # Per-network config (schemas + aggregator.config.yaml).
       SCHEMA_ROOT_DIR: /app/config/${AGGREGATOR_NETWORK:-blue_dot}/schemas
       AGGREGATOR_CONFIG_PATH: /app/config/${AGGREGATOR_NETWORK:-blue_dot}/aggregator.config.yaml
+      AGGREGATOR_NETWORK_SOURCE: ${AGGREGATOR_NETWORK_SOURCE:-http://schema-server:8765/network.json}
       # ── Cross-DPG push into signals (optional; see LOCAL_SETUP.md) ────────
-      # SIGNALSTACK_ADMIN_KEY + SIGNALSTACK_ACTING_ORG_ID come from the
-      # signals-bootstrap seed output. Leave blank to run aggregator standalone.
+      # The org id signals-bootstrap seeds for aggregator-dpg.
       SIGNALSTACK_BASE_URL: ${SIGNALSTACK_BASE_URL:-http://signals-api:2742}
-      SIGNALSTACK_ADMIN_KEY: ${SIGNALSTACK_ADMIN_KEY:-}
-      SIGNALSTACK_ACTING_ORG_ID: ${SIGNALSTACK_ACTING_ORG_ID:-}
+      SIGNALSTACK_ACTING_ORG_ID: ${AGGREGATOR_DPG_ORG_ID}
       SIGNALSTACK_ITEM_NETWORK: ${AGGREGATOR_NETWORK:-blue_dot}
       SIGNALSTACK_TIMEOUT_MS: ${SIGNALSTACK_TIMEOUT_MS:-10000}
+      # Keycloak client-credentials token for the aggregator-dpg client; signals
+      # maps the client id to the seeded org of the same slug.
+      # SIGNALSTACK_CLIENT_SECRET must equal the value the `keycloak` service
+      # rendered into the aggregator-dpg client's secret (see that service's
+      # environment block above) — same var, same value, both read from .env.
+      SIGNALSTACK_AUTH_MODE: ${SIGNALSTACK_AUTH_MODE:-bearer}
+      SIGNALSTACK_CLIENT_ID: ${SIGNALSTACK_CLIENT_ID:-aggregator-dpg}
+      SIGNALSTACK_CLIENT_SECRET: ${SIGNALSTACK_CLIENT_SECRET:-aggregator-dpg-signals-local-dev-secret}
+      # RBAC, one switch for the API and its edge (docs/rbac/rbac-edge-enforcement.md).
+      # The API publishes the role catalogue to the `opa` service and keeps the
+      # token `roles` claim in step; aggregator-envoy asks OPA about every
+      # request. `enforce`: the edge refuses a missing route permission before
+      # the API, and the API's per-organisation checks refuse. `log`: nothing is
+      # refused, would-denies are recorded. `off`: no RBAC (then remove
+      # aggregator-envoy, which refuses protected routes without a catalogue).
+      RBAC_MODE: ${RBAC_MODE:-enforce}
+      OPA_URL: http://opa:8181
     volumes:
       - ../config:/app/config:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health/ready || exit 1"]
+      # CMD, not CMD-SHELL, and node rather than wget: the api image is a Docker
+      # Hardened Image with no /bin/sh and no wget, so CMD-SHELL fails with
+      # `exec: "/bin/sh": no such file or directory` and the container never
+      # reports healthy — which blocks every service that waits on it.
+      # node is PID 1 here and has global fetch (v24), so it needs nothing extra.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 3s
       retries: 15
@@ -477,16 +629,84 @@ services:
       # API can create users — otherwise aggregator_id attributes are dropped.
       keycloak-init:
         condition: service_completed_successfully
+      # So the first requests are not denied because OPA is still starting.
+      opa:
+        condition: service_healthy
+      schema-server:
+        condition: service_healthy
+
+  # OPA (RBAC decisions) for aggregator-api, from ../policy/rbac. Deployments
+  # run it as a sidecar in the api pod (bluedots-automation).
+  opa:
+    # The opa-envoy-plugin build of the same OPA version: besides the REST API
+    # on 8181 (the api's decisions and catalogue push) it answers Envoy's
+    # ext_authz check on 9191 (infra/opa/edge-config.yaml). The static variant
+    # is the multi-arch one.
+    image: openpolicyagent/opa:1.21.1-envoy-1-static@sha256:c1f40d815a15c4ca0ccbdf300e0a3515fccf1d30fbd92e69917ab96bad83811d
+    container_name: sd-aggregator-opa
+    restart: unless-stopped
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level=error", "--config-file=/config/edge-config.yaml", "--ignore=*_test.rego", "--ignore=vectors.json", "/policy"]
+    ports:
+      - "127.0.0.1:8181:8181"
+    volumes:
+      - ../policy/rbac:/policy:ro
+      - ../infra/opa:/config:ro
+    healthcheck:
+      test: ["CMD", "/opa", "eval", "--fail", "--data", "/policy", "--ignore", "*_test.rego", "--ignore", "vectors.json", "data.rbac.not_through_root"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Edge in front of aggregator-api (docs/rbac/rbac-edge-enforcement.md): verifies
+  # the Keycloak token, asks OPA whether the caller holds the route's permission,
+  # and forwards only allowed requests. Owns host port 4000, so email links built
+  # from PUBLIC_API_URL (http://localhost:4000, e.g. the approve/reject pages the
+  # API renders) still open from the browser, now through the edge.
+  aggregator-envoy:
+    image: envoyproxy/envoy:v1.34.1@sha256:007da57c2c328a90bd4e6d99b70bd899132f1b4a9426ccafe25437cf84a60c14
+    container_name: sd-aggregator-envoy
+    restart: unless-stopped
+    # infra/envoy/render.sh fills in envoy.yaml's placeholders from the
+    # environment below, then starts Envoy. The access log is flushed every second (stdout is buffered
+    # otherwise), so each edge decision shows next to the API's log line.
+    environment:
+      ADMIN_ADDRESS: 0.0.0.0
+      LISTEN_PORT: "4000"
+      API_HOST: aggregator-api
+      API_PORT: "4000"
+      OPA_HOST: opa
+      KEYCLOAK_HOST: keycloak
+      KEYCLOAK_PORT: "8080"
+      JWT_ISSUER: http://keycloak:8080/realms/bluedots
+      JWKS_URI: http://keycloak:8080/realms/bluedots/protocol/openid-connect/certs
+    command: ["sh", "/etc/envoy/render.sh", "--log-level", "warn", "--file-flush-interval-msec", "1000"]
+    ports:
+      - "4000:4000"
+      - "127.0.0.1:9901:9901"
+    volumes:
+      - ../infra/envoy/envoy.yaml:/etc/envoy/envoy.template.yaml:ro
+      - ../infra/envoy/render.sh:/etc/envoy/render.sh:ro
+    healthcheck:
+      # HTTP/1.1 with a Host header: Envoy's admin port refuses HTTP/1.0 (426).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9901 && printf 'GET /ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q LIVE <&3"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    depends_on:
+      aggregator-api:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
 
   aggregator-web:
     build:
       context: ..
       dockerfile: apps/web/Dockerfile
-      args:
-        # NEXT_PUBLIC_* are inlined into the client bundle at build time.
-        NEXT_PUBLIC_API_URL: http://localhost:4000
-        NEXT_PUBLIC_ENABLED_LANGUAGES: ${NEXT_PUBLIC_ENABLED_LANGUAGES:-en,kn,hi}
-    image: aggregator-dpg/web:local
+    image: ${AGGREGATOR_WEB_IMAGE:-ghcr.io/blue-dots-economy/aggregator-dpg/web:main}
     container_name: sd-aggregator-web
     restart: unless-stopped
     environment:
@@ -494,13 +714,19 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
-      NEXT_PUBLIC_API_URL: http://localhost:4000
-      NEXT_PUBLIC_ENABLED_LANGUAGES: ${NEXT_PUBLIC_ENABLED_LANGUAGES:-en,kn,hi}
-      API_BASE_URL: http://aggregator-api:4000
+      API_BASE_URL: http://aggregator-envoy:4000
+      # Switchable UI languages — resolved server-side per request, so a restart
+      # is enough to change them (no image rebuild). No literal defaults: they
+      # would mask the legacy-name fallback below. See the root compose file.
+      ENABLED_LANGUAGES: ${ENABLED_LANGUAGES:-}
+      INVITE_MAX_RECIPIENTS: ${INVITE_MAX_RECIPIENTS:-}
+      # Transitional, for a `.env` still using the pre-rename names.
+      NEXT_PUBLIC_ENABLED_LANGUAGES: ${NEXT_PUBLIC_ENABLED_LANGUAGES:-}
+      NEXT_PUBLIC_INVITE_MAX_RECIPIENTS: ${NEXT_PUBLIC_INVITE_MAX_RECIPIENTS:-}
       # OIDC issuer must resolve identically for the browser AND this container.
       # Both reach Keycloak at http://keycloak:8080 (browser via the /etc/hosts
       # entry, container via docker DNS) so the token `iss` claim always matches.
-      OIDC_ISSUER: http://keycloak:8080/realms/${KEYCLOAK_REALM:-aggregator}
+      OIDC_ISSUER: http://keycloak:8080/realms/${KEYCLOAK_REALM:-bluedots}
       OIDC_CLIENT_ID: aggregator-portal
       OIDC_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-aggregator-portal-local-dev-secret}
       OIDC_REDIRECT_URI: http://localhost:3100/api/auth/callback
@@ -523,7 +749,7 @@ services:
     volumes:
       - ../config:/app/config:ro
     depends_on:
-      aggregator-api:
+      aggregator-envoy:
         condition: service_healthy
       keycloak:
         condition: service_healthy
@@ -532,7 +758,7 @@ services:
     build:
       context: ..
       dockerfile: apps/worker/Dockerfile
-    image: aggregator-dpg/worker:local
+    image: ${AGGREGATOR_WORKER_IMAGE:-ghcr.io/blue-dots-economy/aggregator-dpg/worker:main}
     container_name: sd-aggregator-worker
     restart: unless-stopped
     environment:
@@ -547,23 +773,57 @@ services:
       S3_PUBLIC_ENDPOINT: http://localhost:9000
       S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # Mailer — the campaign PII export (#579) emails the download link from the
+      # worker, so it needs the same mailer config as aggregator-api (Mailpit here).
+      MAIL_PROVIDER: smtp
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURE: "false"
+      SMTP_FROM: ${SMTP_FROM:-no-reply@bluedots.local}
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      # Campaign PII export tunables (#579).
+      EXPORT_URL_TTL_SECONDS: ${EXPORT_URL_TTL_SECONDS:-86400}
+      CAMPAIGN_CONCURRENCY: ${CAMPAIGN_CONCURRENCY:-2}
+      CAMPAIGN_EXPORT_MAX_ITEMS: ${CAMPAIGN_EXPORT_MAX_ITEMS:-500}
+      CAMPAIGN_EXPORT_SUBMIT_WINDOW_SECONDS: ${CAMPAIGN_EXPORT_SUBMIT_WINDOW_SECONDS:-60}
+      CAMPAIGN_EXPORT_SUBMIT_MAX: ${CAMPAIGN_EXPORT_SUBMIT_MAX:-10}
+      CAMPAIGN_EXPORT_MAX_ACTIVE_PER_ORG: ${CAMPAIGN_EXPORT_MAX_ACTIVE_PER_ORG:-3}
+      CAMPAIGN_EXPORT_ATTEMPTS: ${CAMPAIGN_EXPORT_ATTEMPTS:-3}
+      # Campaign email channel tunable (#578).
+      EMAIL_SEND_CONCURRENCY: ${EMAIL_SEND_CONCURRENCY:-5}
+      CAMPAIGN_DECRYPT_CHUNK: ${CAMPAIGN_DECRYPT_CHUNK:-500}
+      CAMPAIGN_EXPORT_FIELDS: ${CAMPAIGN_EXPORT_FIELDS:-contact}
+      CAMPAIGN_STALL_SECONDS: ${CAMPAIGN_STALL_SECONDS:-900}
+      CAMPAIGN_EXPORT_RECIPIENT: ${CAMPAIGN_EXPORT_RECIPIENT:-requester}
+      EXPORT_NETWORK_ADMIN_EMAIL: ${EXPORT_NETWORK_ADMIN_EMAIL:-}
       SCHEMA_ROOT_DIR: /app/config/${AGGREGATOR_NETWORK:-blue_dot}/schemas
       AGGREGATOR_CONFIG_PATH: /app/config/${AGGREGATOR_NETWORK:-blue_dot}/aggregator.config.yaml
+      AGGREGATOR_NETWORK_SOURCE: ${AGGREGATOR_NETWORK_SOURCE:-http://schema-server:8765/network.json}
       # Bulk-file processor caps + cron intervals (match aggregator-dpg/docker-compose.yml).
       BULK_MAX_ROWS: ${BULK_MAX_ROWS:-10000}
       BULK_MAX_ROW_BYTES: ${BULK_MAX_ROW_BYTES:-65536}
       LINK_METRICS_ROLLUP_INTERVAL_MS: ${LINK_METRICS_ROLLUP_INTERVAL_MS:-300000}
       WATCHDOG_INTERVAL_MS: ${WATCHDOG_INTERVAL_MS:-3600000}
       SIGNALSTACK_BASE_URL: ${SIGNALSTACK_BASE_URL:-http://signals-api:2742}
-      SIGNALSTACK_ADMIN_KEY: ${SIGNALSTACK_ADMIN_KEY:-}
       SIGNALSTACK_ITEM_NETWORK: ${AGGREGATOR_NETWORK:-blue_dot}
       SIGNALSTACK_TIMEOUT_MS: ${SIGNALSTACK_TIMEOUT_MS:-10000}
+      # Keycloak client-credentials token — see aggregator-api's env block
+      # above. Worker has no OIDC login of its own; KEYCLOAK_URL
+      # / KEYCLOAK_REALM here exist solely to mint this service token.
+      SIGNALSTACK_AUTH_MODE: ${SIGNALSTACK_AUTH_MODE:-bearer}
+      SIGNALSTACK_CLIENT_ID: ${SIGNALSTACK_CLIENT_ID:-aggregator-dpg}
+      SIGNALSTACK_CLIENT_SECRET: ${SIGNALSTACK_CLIENT_SECRET:-aggregator-dpg-signals-local-dev-secret}
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-bluedots}
     volumes:
       - ../config:/app/config:ro
     depends_on:
       postgres:
         condition: service_healthy
       aggregator-redis:
+        condition: service_healthy
+      schema-server:
         condition: service_healthy
 
 volumes:

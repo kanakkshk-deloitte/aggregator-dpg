@@ -86,7 +86,7 @@ describe('OpenAPI spec generation', () => {
   });
 
   it('documents error envelopes on the dashboard + config routes', () => {
-    for (const path of ['/v1/dashboard', '/v1/dashboard/items', '/v1/aggregator-config']) {
+    for (const path of ['/v1/dashboard', '/v1/aggregator-config']) {
       const op = spec.paths[path]?.['get'];
       expect(op, `GET ${path} missing`).toBeTruthy();
       const codes = Object.keys(op?.responses ?? {});

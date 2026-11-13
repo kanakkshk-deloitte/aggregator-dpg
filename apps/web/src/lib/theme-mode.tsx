@@ -21,26 +21,24 @@ interface ThemeModeContextValue {
 const ThemeModeContext = createContext<ThemeModeContextValue | null>(null);
 
 /**
- * localStorage key for the user's chosen theme. Read by the inline
- * no-flash script in `app/layout.tsx` BEFORE React hydrates so the
- * initial paint matches the stored preference without a flash of
- * light theme on a dark-preferring user.
+ * localStorage key for the user's chosen theme.
+ *
+ * Also read by the inline script in `app/layout.tsx` before hydration, so the
+ * first paint uses the stored theme.
  */
 export const THEME_STORAGE_KEY = 'bd:theme-mode';
 
 /**
- * Applies the chosen mode to `<html>` (`class="dark"` or no class) and
- * persists the choice to localStorage. Provides `useThemeMode()` to
- * any client component that needs to read or toggle the active theme.
+ * Applies the light/dark mode to `<html>` and saves it to localStorage.
  *
- * Default: `light`. Honours a previously-stored preference on mount.
+ * Defaults to `light`; loads a stored preference on mount.
+ *
+ * @param children - Subtree that may call `useThemeMode`.
  */
 export function ThemeModeProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>('light');
 
-  // Hydrate from localStorage on first client render. SSR markup is
-  // always light to match the static no-flash script's default — once
-  // we hit the client, sync with the persisted choice.
+  // Server markup is always light; load the stored choice on the client.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -49,7 +47,6 @@ export function ThemeModeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Mirror the active mode into a class on <html> + persist.
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
@@ -58,8 +55,7 @@ export function ThemeModeProvider({ children }: { children: ReactNode }) {
     try {
       window.localStorage.setItem(THEME_STORAGE_KEY, mode);
     } catch {
-      // Storage may be disabled (private mode, quota). Theme still
-      // applies in-memory for the session; we just can't persist it.
+      // Storage may be unavailable; the theme still applies for this session.
     }
   }, [mode]);
 
@@ -75,8 +71,10 @@ export function ThemeModeProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * Read or change the active light/dark theme. Throws if used outside
- * the {@link ThemeModeProvider}.
+ * Reads or changes the active light/dark theme.
+ *
+ * @returns The mode and its setters.
+ * @throws {Error} If used outside {@link ThemeModeProvider}.
  */
 export function useThemeMode(): ThemeModeContextValue {
   const ctx = useContext(ThemeModeContext);

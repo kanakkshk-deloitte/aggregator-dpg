@@ -1,6 +1,6 @@
 /**
- * Process-local fake IdP admin adapter. Used by tests so they never hit a
- * real Keycloak — the same call surface, in-memory user table.
+ * In-memory fake of the IdP admin adapter (`@aggregator-dpg/api`). Tests use it
+ * instead of a real Keycloak.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -12,6 +12,7 @@ import {
 } from './interface.js';
 import { KC_ATTR } from './attributes.js';
 
+/** {@link IdpAdminAdapter} backed by in-memory users, groups and roles. */
 export class IdpAdminFake extends IdpAdminAdapter {
   private users = new Map<string, IdpUser & { attributes: Record<string, string[]> }>();
   private groups = new Map<
@@ -25,7 +26,7 @@ export class IdpAdminFake extends IdpAdminAdapter {
     message: string;
   } | null = null;
 
-  /** Force the next operation (any) to fail. */
+  /** Makes the next operation fail. */
   failOnce(error: {
     code: 'AUTH_FAILED' | 'IDP_UNAVAILABLE' | 'BAD_REQUEST';
     message: string;
@@ -33,7 +34,7 @@ export class IdpAdminFake extends IdpAdminAdapter {
     this.failNext = error;
   }
 
-  /** Test helper — wipes the user table + group/role state. */
+  /** Clears all users, groups and roles. */
   _reset(): void {
     this.users.clear();
     this.groups.clear();
@@ -42,17 +43,17 @@ export class IdpAdminFake extends IdpAdminAdapter {
     this.failNext = null;
   }
 
-  /** Test inspector — group ids a user belongs to. */
+  /** Returns the group ids a user belongs to. */
   groupsOf(userId: string): string[] {
     return [...(this.memberships.get(userId) ?? [])];
   }
 
-  /** Test inspector — realm roles assigned to a user. */
+  /** Returns the realm roles assigned to a user. */
   rolesOf(userId: string): string[] {
     return [...(this.roles.get(userId) ?? [])];
   }
 
-  /** Test inspector — a created group by id (name + attributes), or undefined. */
+  /** Returns a created group by id, or undefined. */
   getGroup(
     groupId: string,
   ): { id: string; name: string; attributes?: Record<string, string | string[]> } | undefined {
@@ -189,9 +190,46 @@ export class IdpAdminFake extends IdpAdminAdapter {
       this.failNext = null;
       return { ok: false, error: e };
     }
+    // A duplicate top-level name fails with BAD_REQUEST, like Keycloak's 409.
+    if ([...this.groups.values()].some((g) => g.name === name)) {
+      return { ok: false, error: { code: 'BAD_REQUEST', message: `group exists: ${name}` } };
+    }
     const id = `grp-${this.groups.size + 1}`;
     this.groups.set(id, { id, name, ...(attributes ? { attributes } : {}) });
     return { ok: true, value: { id } };
+  }
+
+  findGroupByName(
+    name: string,
+  ): Promise<IdpResult<{ id: string; attributes: Record<string, string[]> } | null>> {
+    return Promise.resolve(this.lookupGroupByName(name));
+  }
+
+  /** Synchronous lookup used by {@link findGroupByName}. */
+  private lookupGroupByName(
+    name: string,
+  ): IdpResult<{ id: string; attributes: Record<string, string[]> } | null> {
+    if (this.failNext) {
+      const e = this.failNext;
+      this.failNext = null;
+      return { ok: false, error: e };
+    }
+    const g = [...this.groups.values()].find((x) => x.name === name);
+    if (!g) return { ok: true, value: null };
+    const attributes = Object.fromEntries(
+      Object.entries(g.attributes ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v : [v]]),
+    );
+    return { ok: true, value: { id: g.id, attributes } };
+  }
+
+  removeUserFromGroup(userId: string, groupId: string): Promise<IdpResult<void>> {
+    if (this.failNext) {
+      const e = this.failNext;
+      this.failNext = null;
+      return Promise.resolve({ ok: false, error: e });
+    }
+    this.memberships.get(userId)?.delete(groupId);
+    return Promise.resolve({ ok: true, value: undefined });
   }
 
   async deleteGroup(groupId: string): Promise<IdpResult<void>> {
@@ -234,6 +272,46 @@ export class IdpAdminFake extends IdpAdminAdapter {
     const set = this.roles.get(userId) ?? new Set<string>();
     set.add(role);
     this.roles.set(userId, set);
+    return { ok: true, value: undefined };
+  }
+  async listRealmRoles(/* NOSONAR */ userId: string): Promise<IdpResult<string[]>> {
+    if (this.failNext) {
+      const e = this.failNext;
+      this.failNext = null;
+      return { ok: false, error: e };
+    }
+    if (!this.users.has(userId)) {
+      return { ok: false, error: { code: 'USER_NOT_FOUND', message: userId } };
+    }
+    return { ok: true, value: this.rolesOf(userId) };
+  }
+
+  async removeRealmRole(/* NOSONAR */ userId: string, role: string): Promise<IdpResult<void>> {
+    if (this.failNext) {
+      const e = this.failNext;
+      this.failNext = null;
+      return { ok: false, error: e };
+    }
+    if (!this.users.has(userId)) {
+      return { ok: false, error: { code: 'USER_NOT_FOUND', message: userId } };
+    }
+    this.roles.get(userId)?.delete(role);
+    return { ok: true, value: undefined };
+  }
+
+  /** How many times each user's sessions were ended. */
+  readonly logouts = new Map<string, number>();
+
+  async logoutSessions(/* NOSONAR typescript:S7503 */ userId: string): Promise<IdpResult<void>> {
+    if (this.failNext) {
+      const e = this.failNext;
+      this.failNext = null;
+      return { ok: false, error: e };
+    }
+    if (!this.users.has(userId)) {
+      return { ok: false, error: { code: 'USER_NOT_FOUND', message: userId } };
+    }
+    this.logouts.set(userId, (this.logouts.get(userId) ?? 0) + 1);
     return { ok: true, value: undefined };
   }
 }

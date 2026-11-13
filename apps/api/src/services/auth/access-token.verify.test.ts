@@ -44,7 +44,11 @@ describe('azp allow-list gate', () => {
     const req = makeReq({ sub: 'service-account-x', azp: 'attacker-client' });
     const result = await authenticateAny(req);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('INVALID_TOKEN');
+    // #692: authenticateAny now surfaces a distinct AZP_NOT_ALLOWED code so
+    // callers can map a wrong-client token to 403 while a bad signature stays
+    // 401 — see AzpNotAllowedError. authenticate() (the user path, below)
+    // keeps the prior INVALID_TOKEN mapping unchanged.
+    if (!result.ok) expect(result.error.code).toBe('AZP_NOT_ALLOWED');
   });
 
   it('rejects a token with no azp when the allow-list is configured', async () => {
@@ -52,7 +56,7 @@ describe('azp allow-list gate', () => {
     const req = makeReq({ sub: 'service-account-x' });
     const result = await authenticateAny(req);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('INVALID_TOKEN');
+    if (!result.ok) expect(result.error.code).toBe('AZP_NOT_ALLOWED');
   });
 
   it('also gates the user path (authenticate): disallowed azp is rejected before aggregator_id is read', async () => {

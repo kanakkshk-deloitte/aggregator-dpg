@@ -12,7 +12,12 @@ aggregator:
     # Pin to a tag in production; develop is fine for local iteration.
     # Sourced from the signals-dpg `feature` branch until orange_dot/network.json
     # lands on `develop`. Update to `refs/heads/develop` once merged.
-    source: https://raw.githubusercontent.com/Blue-Dots-Economy/Signals-DPG/refs/heads/develop/examples/schemas/orange_dot/network.json
+    source: https://raw.githubusercontent.com/Blue-Dots-Economy/bluedots-schemas/refs/heads/main/orange_dot/network.json
+    # Participant registration-link consent (Terms/Privacy/profile-creation),
+    # fetched the same cache-backed way as network.json (sibling in the schemas
+    # repo). Env AGGREGATOR_PARTICIPANT_CONSENT_SOURCE overrides; absent ⇒ web app uses the
+    # on-disk schemas/participant/consent.json copy.
+    consent_source: https://raw.githubusercontent.com/Blue-Dots-Economy/bluedots-schemas/refs/heads/main/orange_dot/consent.json
     # Mirror the purple_dot bulk-CSV array-delimiter for now — adjust
     # if orange_dot's schemas use a different separator.
     csv_array_delimiter: '|'
@@ -36,6 +41,18 @@ aggregator:
     primary_color: '#ff7a00'
     accent_color: '#ffa54d'
 
+  # Realm roles that mark a Signals participant. One Keycloak realm serves this
+  # portal and the Signals app, so signing into either creates an SSO session the
+  # other silently reuses; this portal then correctly refuses the token (no
+  # aggregator_id) and uses this list to tell the visitor WHICH account they are
+  # signed in as rather than showing everyone the org-owner message (#753).
+  #
+  # Must name the roles Signals actually stamps — its KEYCLOAK_REQUIRED_REALM_ROLES.
+  # Unset ⇒ the classifier reports "unknown" and the login screen falls back to
+  # generic copy. Overridable per-deployment with SIGNALS_REALM_ROLES.
+  signals:
+    realm_roles: [signals_participant, signals_admin]
+
   domain_labels:
     tourist:
       singular: Tourist
@@ -47,8 +64,24 @@ aggregator:
       tab_label: Practitioners
 
   onboarding:
-    presume_consent: true
+    # Bulk-upload only: when true, an adult bulk row is pushed to Signals with
+    # user_terms / user_privacy / profile_creation asserted on the participant's
+    # behalf, satisfying the consent_required go-live gate and publishing the
+    # profile immediately. false => compliance omitted, rows stay draft until the
+    # participant accepts. Minors are never presumed either way. The interactive
+    # registration-link flow always captures real consent.
+    presume_consent: false
     bulk_max_rows: 10000
 
   admin_emails:
     - abhishekg@sanketika.in
+
+  # ── Organisation tree ──────────────────────────────────────────────────────
+  # Omit the block for a flat tree: every organisation sits directly under the
+  # network and at most 50 organisations. Every organisation is "Aggregator"
+  # until its parent's owner defines "known as" values in the console.
+  organisation:
+    hierarchy:
+      max_depth: 10 # Deepest allowed aggregator org; 1 is directly under the network.
+      max_children: 100 # Direct children of any org, the network included.
+      max_total_orgs: 200 # Aggregator orgs in the instance (root and Default org not counted).

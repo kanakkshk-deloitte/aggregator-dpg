@@ -26,15 +26,14 @@ export default function OnboardingPage() {
             onClick={() => window.location.reload()}
             title={t('refresh')}
             aria-label={t('refresh')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] border border-[var(--bd-border)] bg-white text-[12.5px] font-semibold text-ink-700 hover:text-primary-600 hover:bg-[var(--bd-primary-50)] transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] border border-(--bd-border) bg-white text-[12.5px] font-semibold text-ink-700 hover:text-primary-600 hover:bg-(--bd-primary-50) transition-colors"
           >
             <I.refresh size={14} />
             {t('refresh')}
           </button>
         }
       />
-      {/* Onboarding summary + joins-by-entry-mode at the top of the page,
-          above the per-flow cards. */}
+      {/* Onboarding summary and joins by entry mode. */}
       <OnboardingMetrics />
       <BulkUploadCard />
       <RegistrationLinkCard />
@@ -43,8 +42,9 @@ export default function OnboardingPage() {
 }
 
 /**
- * Summary card for the bulk upload sub-flow. Counts come from the recent
- * uploads list (same hook the detail page uses). Click → /onboarding/bulk-uploads.
+ * Summary card for bulk uploads, linking to /onboarding/bulk-uploads.
+ *
+ * Counts come from the recent uploads list.
  */
 function BulkUploadCard() {
   const t = useTranslations('onboarding');
@@ -93,17 +93,16 @@ function BulkUploadCard() {
 }
 
 /**
- * Summary card for the registration link sub-flow. Counts come from the
- * existing links list (scoped to the aggregator's type). Click →
- * /onboarding/links.
+ * Summary card for registration links, linking to /onboarding/links.
+ *
+ * Counts come from the links list for the aggregator's type.
  */
 function RegistrationLinkCard() {
   const t = useTranslations('onboarding');
   const router = useRouter();
   const rawProfile = useProfileRaw();
   const { data: cfg = DEFAULT_AGGREGATOR_CONFIG } = useAggregatorConfig();
-  // Default to the network's first declared domain (networks.json order)
-  // until the profile's scoped type loads.
+  // Use the network's first domain until the profile's type loads.
   const aggregatorType: string = rawProfile.data?.type ?? cfg.domains[0]?.id ?? '';
   const links = useRegistrationLinks(aggregatorType);
   const metrics = useMemo(() => {
@@ -162,8 +161,8 @@ const ACCENT_BG: Record<Accent, string> = {
 };
 
 const ACCENT_ICON_RING: Record<Accent, string> = {
-  primary: 'bg-[var(--bd-card)] border border-[var(--bd-primary-100)] text-primary-600',
-  amber: 'bg-[var(--bd-card)] border border-[var(--bd-border)] text-amber-500',
+  primary: 'bg-(--bd-card) border border-(--bd-primary-100) text-primary-600',
+  amber: 'bg-(--bd-card) border border-(--bd-border) text-amber-500',
 };
 
 interface SummaryCardProps {
@@ -219,7 +218,7 @@ function SummaryCard({
           ))}
         </div>
 
-        <div className="pt-2 border-t border-[var(--bd-border-soft)] flex items-center justify-between gap-3 flex-wrap">
+        <div className="pt-2 border-t border-(--bd-border-soft) flex items-center justify-between gap-3 flex-wrap">
           <span className="text-[11.5px] text-ink-400">{footnote}</span>
           <Button onClick={onCta} icon={<I.arrowR size={14} />}>
             {ctaLabel}
@@ -227,7 +226,7 @@ function SummaryCard({
         </div>
 
         {body && (
-          <div className="pt-3 border-t border-[var(--bd-border-soft)] bg-[var(--bd-card)] -mx-5 -mb-4 px-5 pb-4 mt-1">
+          <div className="pt-3 border-t border-(--bd-border-soft) bg-(--bd-card) -mx-5 -mb-4 px-5 pb-4 mt-1">
             {body}
           </div>
         )}
@@ -240,7 +239,7 @@ function MetricTile({ label, value, tone, loading }: MetricItem & { loading: boo
   const toneCls =
     tone === 'emerald' ? 'text-emerald-600' : tone === 'rose' ? 'text-rose-600' : 'text-ink-900';
   return (
-    <div className="bg-[var(--bd-card)] border border-[var(--bd-border)] rounded-[10px] px-3 py-2 flex flex-col gap-0.5">
+    <div className="bg-(--bd-card) border border-(--bd-border) rounded-[10px] px-3 py-2 flex flex-col gap-0.5">
       <div
         className={`font-display font-bold text-[18px] tabular-nums leading-none tracking-tight ${toneCls}`}
       >

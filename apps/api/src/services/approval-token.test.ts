@@ -166,6 +166,103 @@ describe('verifyApprovalToken org claim', () => {
   });
 });
 
+describe('verifyApprovalToken malformed/invalid claim paths', () => {
+  beforeEach(() => {
+    _resetTokenKey();
+    process.env.APPROVAL_TOKEN_SECRET = 'k'.repeat(48);
+  });
+
+  function key(): Uint8Array {
+    return new TextEncoder().encode(process.env.APPROVAL_TOKEN_SECRET);
+  }
+
+  it('rejects a well-signed token with no sub claim', async () => {
+    const token = await new SignJWT({ intent: 'approve' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuer('aggregator-api')
+      .setAudience('aggregator-admin')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(key());
+    const v = await verifyApprovalToken(token);
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.error.code).toBe('INVALID');
+      expect(v.error.message).toBe('missing sub claim');
+    }
+  });
+
+  it('rejects a well-signed token with a bad intent claim', async () => {
+    const token = await new SignJWT({ intent: 'delete' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('agg-1')
+      .setIssuer('aggregator-api')
+      .setAudience('aggregator-admin')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(key());
+    const v = await verifyApprovalToken(token);
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.error.code).toBe('INVALID');
+      expect(v.error.message).toBe('bad intent claim');
+    }
+  });
+
+  it('rejects an expired token (allowExpired) that has no sub claim', async () => {
+    const token = await new SignJWT({ intent: 'approve' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuer('aggregator-api')
+      .setAudience('aggregator-admin')
+      .setIssuedAt(Math.floor(Date.now() / 1000) - 7200)
+      .setExpirationTime(Math.floor(Date.now() / 1000) - 3600)
+      .sign(key());
+    const v = await verifyApprovalToken(token, { allowExpired: true });
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.error.code).toBe('INVALID');
+      expect(v.error.message).toBe('bad claims in expired token');
+    }
+  });
+
+  it('rejects an expired token (allowExpired) with a bad intent claim', async () => {
+    const token = await new SignJWT({ intent: 'nope' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('agg-1')
+      .setIssuer('aggregator-api')
+      .setAudience('aggregator-admin')
+      .setIssuedAt(Math.floor(Date.now() / 1000) - 7200)
+      .setExpirationTime(Math.floor(Date.now() / 1000) - 3600)
+      .sign(key());
+    const v = await verifyApprovalToken(token, { allowExpired: true });
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.error.code).toBe('INVALID');
+      expect(v.error.message).toBe('bad claims in expired token');
+    }
+  });
+
+  it('returns MALFORMED for a dot-containing string that is not a valid JWS', async () => {
+    const v = await verifyApprovalToken('not.a.jws');
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error.code).toBe('MALFORMED');
+  });
+
+  it('returns INVALID for a token whose audience does not match (generic catch-all)', async () => {
+    const token = await new SignJWT({ intent: 'approve' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('agg-1')
+      .setIssuer('aggregator-api')
+      .setAudience('some-other-audience')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(key());
+    const v = await verifyApprovalToken(token);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error.code).toBe('INVALID');
+  });
+});
+
 describe('formatApprovalTtl', () => {
   it.each([
     [7 * 24 * 60 * 60, '7 days'],

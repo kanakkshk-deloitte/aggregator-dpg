@@ -13,6 +13,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { getOidcAdapter } from '@/lib/oidc';
 import { getSessionStore, type SessionData } from '@/lib/session';
+import { resolveSignalsRealmRoles } from '@/lib/signals-roles';
 import {
   OIDC_FLOW_COOKIE,
   SESSION_COOKIE,
@@ -21,7 +22,7 @@ import {
   verifyFlowState,
 } from '@/lib/cookies';
 import { logger, pickRequestId } from '@/lib/logger';
-import { tokenAggregatorId } from '@/lib/jwt';
+import { PORTAL_GATE_REASON, classifyNonCoordinator, tokenAggregatorId } from '@/lib/jwt';
 
 export const runtime = 'nodejs';
 
@@ -95,21 +96,28 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const { tokens, claims } = exchanged.value;
 
-  // Portal access is coordinator-only. A coordinator's token carries an
-  // `aggregator_id` claim (mapped from the KC user attribute); org owners and
-  // the network admin do not. Block anyone without it at the door so an org
-  // owner who is a valid KC user cannot land in the (data-less, broken)
-  // coordinator portal. Org-owner console login is a separate, future feature.
-  if (!tokenAggregatorId(tokens.accessToken)) {
+  // A coordinator (token has `aggregator_id`) lands in the portal. An org owner
+  // or the network admin (realm role `org_owner`) lands in the console.
+  // Anyone else is refused.
+  const isCoordinator = Boolean(tokenAggregatorId(tokens.accessToken));
+  const population = isCoordinator
+    ? null
+    : classifyNonCoordinator(tokens.accessToken, await resolveSignalsRealmRoles());
+  if (population !== null && population !== 'org_owner') {
+    // One Keycloak realm serves this portal and the Signals app, so a valid
+    // token may belong to the other app. The reason tells the login page which.
+    const reason = PORTAL_GATE_REASON[population];
     log.warn(
       {
         code: 'NO_AGGREGATOR_ID',
         sub: claims.sub,
-        hint: 'Authenticated KC user has no aggregator_id claim (org owner / network admin). Portal is coordinator-only.',
+        population,
+        reason,
+        hint: 'Authenticated KC user has no aggregator_id claim. Portal is coordinator-only; see reason for which account type.',
       },
       'blocking non-coordinator portal login',
     );
-    return failure(req, 'org_no_portal');
+    return failure(req, reason);
   }
 
   const now = Date.now();
@@ -128,10 +136,24 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   };
   const sid = await getSessionStore().create(sessionData);
 
-  const res = NextResponse.redirect(absoluteUrl(req, flow.returnTo), { status: 302 });
+  const res = NextResponse.redirect(absoluteUrl(req, landingPath(flow.returnTo, isCoordinator)), {
+    status: 302,
+  });
   res.cookies.set(SESSION_COOKIE, sid, sessionCookieOptions());
   res.cookies.set(OIDC_FLOW_COOKIE, '', clearCookieOptions());
   return res;
+}
+
+/**
+ * Picks where a new session lands.
+ *
+ * Returns the requested path, except a coordinator never lands on `/console`
+ * and an admin never lands on the coordinator portal.
+ */
+function landingPath(returnTo: string, isCoordinator: boolean): string {
+  const inConsole = returnTo === '/console' || returnTo.startsWith('/console/');
+  if (isCoordinator) return inConsole ? '/dashboard' : returnTo;
+  return inConsole ? returnTo : '/console';
 }
 
 function failure(req: NextRequest, reason: string): NextResponse {

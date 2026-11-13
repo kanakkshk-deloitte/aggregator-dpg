@@ -143,15 +143,15 @@ make rebuild-web
 
 ## 6. Troubleshooting
 
-| Symptom                                            | Fix                                                                                                                                                                       |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `make up` fails: `port already in use`             | Stop local Postgres/Redis or change host port in `docker-compose.yml`.                                                                                                    |
-| `keycloak` container restarts                      | Bad `KC_BOOTSTRAP_ADMIN_PASSWORD` or stale volume. `make reset` then `make up`.                                                                                           |
-| Browser can't reach <http://keycloak:8080>         | Hosts entry missing. Re-run `make setup` (or `pnpm stack:setup`); on Windows, re-paste the printed lines into `C:\Windows\System32\drivers\etc\hosts` as Administrator.   |
-| `403 MISSING_AGGREGATOR_ID` on profile             | Realm mappers missing — re-import realm. Verify `infra/keycloak/realms/aggregator-realm.json` has `aggregator_id` + `phone_number` mappers on `aggregator-portal` client. |
-| Login: "user does not exist" with registered email | KC user has empty email — re-register or edit user in KC admin.                                                                                                           |
-| Approval link "Already approved" first click       | Leftover user state. Delete user in KC admin or pick different aggregator id.                                                                                             |
-| No mail arrives                                    | Check <http://localhost:8025> first; real SMTP requires `MAIL_PROVIDER=smtp` + creds in `.env`.                                                                           |
+| Symptom                                            | Fix                                                                                                                                                                     |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make up` fails: `port already in use`             | Stop local Postgres/Redis or change host port in `docker-compose.yml`.                                                                                                  |
+| `keycloak` container restarts                      | Bad `KC_BOOTSTRAP_ADMIN_PASSWORD` or stale volume. `make reset` then `make up`.                                                                                         |
+| Browser can't reach <http://keycloak:8080>         | Hosts entry missing. Re-run `make setup` (or `pnpm stack:setup`); on Windows, re-paste the printed lines into `C:\Windows\System32\drivers\etc\hosts` as Administrator. |
+| `403 MISSING_AGGREGATOR_ID` on profile             | Realm mappers missing — re-import realm. Verify `infra/keycloak/realms/realm.json` has `aggregator_id` + `phone_number` mappers on `aggregator-portal` client.          |
+| Login: "user does not exist" with registered email | KC user has empty email — re-register or edit user in KC admin.                                                                                                         |
+| Approval link "Already approved" first click       | Leftover user state. Delete user in KC admin or pick different aggregator id.                                                                                           |
+| No mail arrives                                    | Check <http://localhost:8025> first; real SMTP requires `MAIL_PROVIDER=smtp` + creds in `.env`.                                                                         |
 
 ---
 

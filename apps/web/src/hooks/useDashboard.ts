@@ -1,98 +1,42 @@
 'use client';
 
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import {
-  dashboardService,
-  type DashboardQuery,
-  type DashboardItemsQuery,
-} from '../services/dashboard.service';
-import type { ParticipantFilter } from '../types';
-
-export function useSeekers(filter?: ParticipantFilter) {
-  return useQuery({
-    queryKey: ['dashboard', 'seekers', filter],
-    queryFn: () => dashboardService.seekers(filter),
-  });
-}
-
-export function useProviders(filter?: ParticipantFilter) {
-  return useQuery({
-    queryKey: ['dashboard', 'providers', filter],
-    queryFn: () => dashboardService.providers(filter),
-  });
-}
-
-export function useOppProviders(filter?: ParticipantFilter) {
-  return useQuery({
-    queryKey: ['dashboard', 'opp-providers', filter],
-    queryFn: () => dashboardService.oppProviders(filter),
-  });
-}
+import { dashboardService, type DashboardQuery } from '../services/dashboard.service';
 
 /**
- * Reads the signalstack-backed aggregator dashboard payload.
+ * Reads the aggregator dashboard payload from Signals.
  *
- * Default mount call carries no `status` so the rollup is full and the
- * items list is unfiltered — the page renders by-status totals from
- * `rollup.by_status` and lets the user click a chip. When the user
- * selects a server-side status filter, pass `status` and the query-key
- * change triggers a refetch with `?status=…` applied upstream.
+ * Omit `status` for the full rollup and unfiltered items. Pass
+ * `refresh: true` to bypass the rollup cache upstream.
  *
- * Pass `refresh: true` to bypass the rollup TTL cache and force a
- * synchronous recompute on signalstack. `refresh` is included in the
- * query key so the forced refresh lands in a fresh React Query cache
- * entry rather than serving stale data from the prior key.
+ * @param query - Domain (required to run), filters and paging.
+ * @returns The React Query result for the dashboard page.
  */
-/**
- * Reads the lifecycle-aware items endpoint (`/v1/dashboard/items`).
- *
- * Sources the lifecycle tile counts (`meta.tiles`) and the per-item
- * `lifecycle_status` the page needs to render the
- * lifecycle column. Pass `lifecycle` to narrow the items list to a
- * single bucket; tiles always reflect totals regardless.
- *
- * `enabled` gates the call on `domain` so cold mount stays quiet until
- * the network config resolves.
- */
-export function useDashboardItems(query?: DashboardItemsQuery) {
-  const domain = query?.domain;
-  const lifecycle = query?.lifecycle ?? null;
-  const limit = query?.limit ?? 200;
-  const offset = query?.offset ?? 0;
-  return useQuery({
-    queryKey: ['dashboard', 'items', domain ?? '(no-domain)', lifecycle, limit, offset],
-    queryFn: () =>
-      dashboardService.dashboardItems({
-        domain: domain as string,
-        limit,
-        offset,
-        ...(lifecycle ? { lifecycle } : {}),
-      }),
-    enabled: Boolean(domain),
-    staleTime: 0,
-  });
-}
-
 export function useDashboard(query?: DashboardQuery) {
-  // Domain must come from the network config (cfg.domains[N].id) so the
-  // tab works for any network. Callers always pass it; we no longer
-  // default to 'seeker' which silently broke orange_dot.
+  // Domain comes from the network config; there is no default.
   const domain = query?.domain;
   const status = query?.status ?? null;
+  const lifecycle = query?.lifecycle ?? null;
   const page = query?.page ?? 1;
   const limit = query?.limit ?? 50;
   const refresh = query?.refresh ?? false;
   return useQuery({
-    // refresh is in the queryKey so a forced refresh gets a fresh cache
-    // entry rather than serving stale data from the prior key.
-    queryKey: ['dashboard', 'dashboard', domain ?? '(no-domain)', status, page, limit, refresh],
+    // Every filter, including refresh, is part of the key so a change refetches.
+    queryKey: [
+      'dashboard',
+      'dashboard',
+      domain ?? '(no-domain)',
+      status,
+      lifecycle,
+      page,
+      limit,
+      refresh,
+    ],
     queryFn: () => dashboardService.dashboard(query),
     enabled: Boolean(domain),
     staleTime: 0,
-    // Keep the previous page's data rendered while the next page loads, so
-    // `isLoading` stays false on pagination. Without this the LoadingCard swap
-    // unmounts ParticipantTable on every page change, discarding the
-    // cross-page bulk selection (and flashing a spinner each flip).
+    // Keep the previous page shown while the next loads, so the table stays
+    // mounted and keeps its cross-page selection.
     placeholderData: keepPreviousData,
   });
 }

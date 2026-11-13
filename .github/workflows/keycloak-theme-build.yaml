@@ -11,7 +11,12 @@ name: Keycloak Theme
 # <slug>-<branch>, <slug>-sha-xxxxxxx, and <slug>-latest on the default branch.
 #
 # Mirrors infra/keycloak/build-theme-image.sh.
-# Server image lives in keycloak-image-build.yaml.
+#
+# The Keycloak SERVER image is NOT built here anymore — it moved to the
+# bluedots-automation repo (`dockerfiles/keycloak/`, workflow "Build Keycloak
+# image", published as ghcr.io/<owner>/keycloak-server), because Keycloak is a
+# shared common service for both DPGs. Only the theme image stays in this repo,
+# since its brand strings come from this repo's config/<network>/keycloak.env.
 
 on:
   workflow_dispatch:
@@ -33,7 +38,10 @@ on:
         options:
           - none
           - upsdm
+          - up-gzb
+          - ka-dhwd
           - onetac
+          - alimco
 
 concurrency:
   group: keycloak-theme-${{ github.ref }}-${{ inputs.network }}-${{ inputs.brand }}
@@ -50,15 +58,27 @@ jobs:
       contents: read
       packages: write
       id-token: write
+      security-events: write # Trivy image scan uploads SARIF to code-scanning
 
     steps:
-      - uses: actions/checkout@v7
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Do not leave the job token in .git/config for later steps.
+          persist-credentials: false
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The theme image's base (infra/keycloak/themes.Dockerfile) is a Docker
+      # Hardened Image pulled from dhi.io, which refuses anonymous pulls even for
+      # the free Apache-2.0 catalog. Without this the build fails at the FROM.
+      - name: Log in to dhi.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: dhi.io
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -105,7 +125,7 @@ jobs:
 
       - name: Compute image tags & labels
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}/keycloak-theme
           flavor: |
@@ -121,7 +141,7 @@ jobs:
 
       - name: Build & push
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: infra/keycloak/themes.Dockerfile
@@ -144,3 +164,40 @@ jobs:
           SLUG: ${{ steps.resolve.outputs.slug }}
           DIGEST: ${{ steps.build.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
+
+      # Image scanning (Sec-Audit A2 — Blue-Dots-Economy/signals-dpg#300).
+      # Built on the same third-party Keycloak base as keycloak-server, so it
+      # inherits that base's CVEs regardless of the brand assets layered on top.
+      #
+      # `github.repository` preserves the org's capitalisation, which
+      # docker/metadata-action normalises for its own tag outputs; a ref assembled
+      # by hand must be normalised too or Trivy rejects it as invalid.
+      - name: Resolve scanned image ref
+        id: scanref
+        if: steps.build.outputs.digest != ''
+        run: echo "ref=${IMAGE,,}@${DIGEST}" >> "$GITHUB_OUTPUT"
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository }}/keycloak-theme
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      # Scanned by digest: buildx pushes to the registry without loading into the
+      # local docker image store, so `imageid` is not resolvable by Trivy.
+      - name: Trivy image scan
+        if: steps.scanref.outputs.ref != ''
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.scanref.outputs.ref }}
+          format: sarif
+          output: trivy-image.sarif
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: '0' # Phase A: report-only, never fails the build
+
+      - name: Upload Trivy image SARIF
+        if: always() && steps.scanref.outputs.ref != ''
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-image.sarif
+          # Per-brand category: this workflow builds one image per network/brand,
+          # so a shared category would have each run overwrite the last.
+          category: trivy-image-keycloak-theme-${{ steps.resolve.outputs.slug }}

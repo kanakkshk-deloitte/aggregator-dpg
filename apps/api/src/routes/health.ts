@@ -1,10 +1,8 @@
 /**
- * Liveness and readiness probes consumed by container orchestrators and the
- * compose healthcheck.
+ * Liveness and readiness probes of the aggregator API (`@aggregator-dpg/api`).
  *
- * `/health/live` is pure process-liveness. `/health/ready` actively probes the
- * backing Postgres and Redis so an orchestrator does not route traffic to (or
- * mark healthy) an instance that cannot actually serve requests.
+ * `/health/live` checks only that the process is up. `/health/ready` also
+ * probes Postgres and Redis.
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -21,10 +19,7 @@ const NotReadyResponseSchema = z.object({
 });
 
 /**
- * Runs a dependency check with a hard timeout, collapsing any failure
- * (rejection or timeout) to `'error'`. Keeps the readiness probe from hanging on
- * a wedged Postgres/Redis connection — satisfies the repo's external-call
- * timeout rule.
+ * Runs a dependency check with a timeout; any failure or timeout is `'error'`.
  *
  * @param fn - The dependency call to run (e.g. a `select 1` or a Redis `ping`).
  * @param ms - Timeout in milliseconds (default 2000).
@@ -51,6 +46,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/health/live',
     {
+      config: { rbac: { access: 'public' } },
       schema: {
         tags: ['health'],
         summary: 'Liveness probe',
@@ -64,6 +60,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/health/ready',
     {
+      config: { rbac: { access: 'public' } },
       schema: {
         tags: ['health'],
         summary: 'Readiness probe',

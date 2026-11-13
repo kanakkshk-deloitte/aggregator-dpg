@@ -25,8 +25,8 @@
   },
   "devDependencies": {
     "@aggregator-dpg/tsconfig": "workspace:*",
-    "@vitest/coverage-v8": "^3.2.0",
+    "@vitest/coverage-v8": "^4.1.12",
     "typescript": "^6.0.3",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.12"
   }
 }

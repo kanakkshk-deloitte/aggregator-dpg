@@ -1,14 +1,8 @@
 /**
- * Shared client-side HTTP wrapper.
+ * Client-side HTTP wrapper for BFF calls from the browser (web app).
  *
- * Every BFF call from the browser goes through `jsonFetch`. It transparently:
- *   - sets the JSON content-type / Accept headers
- *   - includes credentials so the `sid` cookie travels
- *   - intercepts 401 `NO_ACTIVE_SESSION` responses and force-logs out the
- *     user (so a stale tab cannot keep showing pre-cached data after the
- *     refresh token has died)
- *
- * Standardised 401 body — see apps/web/src/lib/bff-errors.ts.
+ * `jsonFetch` sets JSON headers, sends the session cookie, and logs the
+ * user out on a 401 `NO_ACTIVE_SESSION` response (see `lib/bff-errors.ts`).
  */
 
 let redirecting = false;
@@ -28,10 +22,7 @@ function isSessionExpired(body: unknown): body is UnauthorizedBody {
   return code === 'NO_ACTIVE_SESSION';
 }
 
-/**
- * Force a logout flow. Idempotent within the page lifetime — concurrent
- * 401s race once, then no-op until the redirect actually navigates away.
- */
+/** Redirects to logout. Runs once per page, even with concurrent 401s. */
 function forceLogout(): void {
   if (redirecting) return;
   redirecting = true;
@@ -47,12 +38,14 @@ function forceLogout(): void {
 }
 
 /**
- * Fetch a BFF endpoint and parse JSON. Auto-redirects to logout when the
- * server reports `NO_ACTIVE_SESSION`.
+ * Fetches a BFF endpoint and parses the JSON response.
  *
- * @throws When the response status is not OK (non-401, or 401 that isn't
- *   our standard session-expired body). The thrown Error contains the
- *   upstream status + text.
+ * Redirects to logout when the server reports `NO_ACTIVE_SESSION`.
+ *
+ * @param input - The request URL or object.
+ * @param init - Extra fetch options; headers are merged.
+ * @returns The parsed JSON body.
+ * @throws {Error} When the response is not OK, with the status and body text.
  */
 export async function jsonFetch<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const res = await fetch(input, {
@@ -66,8 +59,7 @@ export async function jsonFetch<T>(input: RequestInfo, init?: RequestInit): Prom
   });
 
   if (res.status === 401) {
-    // Try to parse body to confirm it's our session-expired shape; if so,
-    // hand off to forceLogout. If not, surface as a normal error.
+    // Log out only for the session-expired body; other 401s fall through as errors.
     const body = (await res
       .clone()
       .json()
@@ -84,26 +76,4 @@ export async function jsonFetch<T>(input: RequestInfo, init?: RequestInit): Prom
   }
 
   return (await res.json()) as T;
-}
-
-/**
- * Raw fetch for callers that need the `Response` object (e.g. binary
- * downloads). Still intercepts 401 NO_ACTIVE_SESSION.
- */
-export async function fetchWithAuth(input: RequestInfo, init?: RequestInit): Promise<Response> {
-  const res = await fetch(input, {
-    ...init,
-    credentials: 'include',
-  });
-  if (res.status === 401) {
-    const body = (await res
-      .clone()
-      .json()
-      .catch(() => null)) as unknown;
-    if (isSessionExpired(body)) {
-      forceLogout();
-      throw new Error('session expired');
-    }
-  }
-  return res;
 }

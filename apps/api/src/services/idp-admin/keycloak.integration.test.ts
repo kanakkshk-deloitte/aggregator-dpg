@@ -4,7 +4,7 @@
  *
  * Run locally with the compose stack up:
  *   KEYCLOAK_URL=http://localhost:8080 \
- *   KEYCLOAK_REALM=aggregator \
+ *   KEYCLOAK_REALM=bluedots \
  *   KEYCLOAK_ADMIN_CLIENT_ID=aggregator-api \
  *   KEYCLOAK_ADMIN_CLIENT_SECRET=aggregator-api-local-dev-secret \
  *   pnpm --filter @aggregator-dpg/api test

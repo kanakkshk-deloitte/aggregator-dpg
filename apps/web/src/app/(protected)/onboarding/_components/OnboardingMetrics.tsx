@@ -1,13 +1,11 @@
 'use client';
 
 /**
- * Aggregator-wide onboarding metrics section for the Onboarding page.
+ * Coordinator-wide onboarding metrics section for the Onboarding page (`web` app).
  *
- * Renders the onboarding summary (Total / Verified / Failed / Skipped stat
- * cards) and the joins-by-entry-mode share bar. Data comes from the
- * aggregator's own rollup (`/v1/onboarding/summary` + `/v1/onboarding/by-source`),
- * NOT signalstack. Lives at the top of the Onboarding page so the operator sees
- * the rollup before the per-flow cards. Part of the `web` app.
+ * Renders the Total / Verified / Failed / Skipped stat cards and the
+ * joins-by-entry-mode bar. Data comes from `/v1/onboarding/summary` and
+ * `/v1/onboarding/by-source`, not signalstack.
  */
 import { useTranslations } from 'next-intl';
 import { Button } from '../../../../components/ui/Button';
@@ -17,7 +15,7 @@ import { useOnboardingSummary, useOnboardingBySource } from '../../../../hooks/u
 /** Tone classes per onboarding outcome card (colored chip + value). */
 const ONBOARDING_TONES = {
   total: {
-    chip: 'bg-[var(--bd-primary-50)] text-[var(--bd-primary-600)]',
+    chip: 'bg-(--bd-primary-50) text-(--bd-primary-600)',
     value: 'text-ink-900',
   },
   passed: { chip: 'bg-emerald-50 text-emerald-600', value: 'text-emerald-700' },
@@ -28,13 +26,10 @@ const ONBOARDING_TONES = {
 type OnboardingTone = keyof typeof ONBOARDING_TONES;
 
 /**
- * Display registry for onboarding entry sources (the API's
- * `onboarding_source` enum). The joins-by-mode card renders whatever
- * sources the `/v1/onboarding/by-source` response carries, in order.
+ * Display settings for each `onboarding_source` value.
  *
- * Adding a new registration mode is: backend enum + rollup rows, ONE entry
- * here (icon, colour, label key), and a `dashboard.onboardingGroup.mode_<source>`
- * i18n string. A source missing from the registry still renders safely.
+ * A new source needs an entry here and a `dashboard.onboardingGroup.mode_<source>`
+ * i18n string. Sources missing here still render with a fallback.
  */
 const ONBOARDING_MODES: Record<string, { icon: IconName; color: string; labelKey: string }> = {
   bulk: { icon: 'upload', color: '#10B981', labelKey: 'onboardingGroup.mode_bulk' },
@@ -42,12 +37,11 @@ const ONBOARDING_MODES: Record<string, { icon: IconName; color: string; labelKey
   qr: { icon: 'qr', color: '#F59E0B', labelKey: 'onboardingGroup.mode_qr' },
 };
 
-/** Distinct colours for unregistered sources so two unknowns stay tellable apart. */
+/** Fallback colours for sources missing from the registry. */
 const ONBOARDING_FALLBACK_COLORS = ['#8B91A3', '#0EA5E9', '#EC4899', '#8B5CF6'];
 
 /**
- * Resolves the display meta for one entry source, falling back to a neutral
- * icon + cycled colour (and `null` labelKey → title-cased source).
+ * Resolves the display settings for one entry source, with a fallback for unknown sources.
  *
  * @param source - The `onboarding_source` value from the API.
  * @param index - The slice's position, used to cycle fallback colours.
@@ -69,7 +63,7 @@ function onboardingModeMeta(
 /**
  * Title-cases an entry-source key for display when no i18n label exists.
  *
- * @param key - Raw source key (e.g. `whatsapp`).
+ * @param key - Raw source key (e.g. `partner_referral`).
  * @returns The key with separators stripped and each word capitalised.
  */
 function statusLabel(key: string): string {
@@ -77,7 +71,7 @@ function statusLabel(key: string): string {
     .replace(/[_-]+/g, ' ')
     .split(' ')
     .filter(Boolean)
-    .map((w) => (w.length ? w[0]!.toUpperCase() + w.slice(1) : ''))
+    .map((w) => w[0]!.toUpperCase() + w.slice(1))
     .join(' ');
 }
 
@@ -125,7 +119,7 @@ function OnboardingStatCard({
 }
 
 /**
- * Aggregator-wide onboarding metrics: summary stat cards + joins-by-mode bar.
+ * Coordinator-wide onboarding metrics: summary stat cards + joins-by-mode bar.
  *
  * @returns The onboarding metrics section for the Onboarding page.
  */

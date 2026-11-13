@@ -60,7 +60,6 @@ fi
 
 append_if_missing "BULK_UPLOAD_URL_TTL_SECONDS" "900" ""
 append_if_missing "BULK_UPLOAD_MAX_BYTES" "10485760" ""
-append_if_missing "QR_DOWNLOAD_URL_TTL_SECONDS" "900" ""
 append_if_missing "PUBLIC_LINK_BASE_URL" "" ""
 append_if_missing "BULK_MAX_ROWS" "10000" ""
 append_if_missing "BULK_MAX_ROW_BYTES" "65536" ""

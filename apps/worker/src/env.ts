@@ -1,10 +1,7 @@
 /**
- * Loads `apps/worker/.env` into `process.env` before any other module reads
- * config. Imported with side-effects as the first import of `main.ts` so a
- * vanilla `pnpm dev` works without shell exports (mirrors apps/api/src/env.ts).
+ * Loads `apps/worker/.env` into `process.env` before config is read.
  *
- * Production should rely on the orchestrator's environment injection — this
- * loader is a no-op when the file is absent.
+ * Must be the first import of `main.ts`. No-op when no `.env` file exists.
  */
 
 import path from 'node:path';

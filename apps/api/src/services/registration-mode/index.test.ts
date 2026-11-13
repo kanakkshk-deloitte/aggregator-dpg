@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveSubmissionShape, isModeDeclared } from './index.js';
+import { resolveSubmissionShape, isModeDeclared, signalsCtaEnabled } from './index.js';
 import type { ResolvedNetworkConfig } from '@aggregator-dpg/network-config/interface';
 
 const cfg = {
@@ -37,5 +37,35 @@ describe('isModeDeclared', () => {
   });
   it('false for unknown keys', () => {
     expect(isModeDeclared('kiosk', cfg)).toBe(false);
+  });
+});
+
+describe('signalsCtaEnabled', () => {
+  it('defaults to true for an account_and_profile mode with no explicit flag', () => {
+    expect(signalsCtaEnabled('form', cfg)).toBe(true);
+  });
+
+  it('defaults to false for an account_only mode with no explicit flag', () => {
+    expect(signalsCtaEnabled('voice', cfg)).toBe(false);
+  });
+
+  it('honours an explicit flag in either direction', () => {
+    const explicit = {
+      aggregator: {
+        registration_modes: {
+          voice: { submission_shape: 'account_only', signals_cta: true },
+          form: { submission_shape: 'account_and_profile', signals_cta: false },
+        },
+      },
+    } as unknown as ResolvedNetworkConfig;
+    expect(signalsCtaEnabled('voice', explicit)).toBe(true);
+    expect(signalsCtaEnabled('form', explicit)).toBe(false);
+  });
+
+  it('falls back to the resolved shape for an undeclared mode', () => {
+    // An undeclared mode already renders the full profile form via
+    // resolveSubmissionShape's account_and_profile fallback, so it gets the
+    // same hand-off that `form` would.
+    expect(signalsCtaEnabled('kiosk', cfg)).toBe(true);
   });
 });

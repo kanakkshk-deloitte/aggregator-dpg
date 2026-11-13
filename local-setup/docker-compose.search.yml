@@ -1,0 +1,133 @@
+# The unified local stack WITH signals-search.
+#
+# docker-compose.yml alone runs the stack without search (signals-api falls
+# back to native discover; match score is unavailable). This file includes it
+# and adds the three search services:
+#
+#     docker compose -f docker-compose.search.yml up -d --build
+#
+# signals-search itself is built from its main branch on GitHub (see
+# signals-search-api below), so the first start takes a few minutes longer.
+#
+# Use the same -f flag for later commands (ps, logs, down), or set
+# COMPOSE_FILE=docker-compose.search.yml in .env. Needs ~4 GB more Docker
+# memory (≥10 GB total).
+name: aggregator-dpg
+
+include:
+  - docker-compose.yml
+
+services:
+  # ───────────────────────────────────────────────────────────────────────
+  # signals-search — relevance-ranked discover + match score for signals-api.
+  #
+  # Same services as signals-dpg/local-setup's `search` profile; see that
+  # repo's LOCAL_SETUP.md §7 for the full explanation of every setting here.
+  # ───────────────────────────────────────────────────────────────────────
+
+  # BAAI/bge-m3 baked into the image — no ~2.3 GB runtime download, no HF
+  # dependency. Public on GHCR, so no login. Same model production runs.
+  tei-embeddings:
+    image: ghcr.io/blue-dots-economy/tei-bge-m3:cpu-1.7-bge-m3
+    # This image is amd64-only: upstream HuggingFace TEI publishes no arm64
+    # cpu-* tag at all. Without this
+    # line, `docker pull` on an arm64 machine (Apple Silicon) fails outright with
+    # "no matching manifest for linux/arm64/v8" and search cannot start.
+    #
+    # Emulation is viable, and measured, not assumed: on an M-series host this
+    # image loads bge-m3 and serves a 1024-dim embedding ~35s after start, and is
+    # not OOM-killed. Expect embeddings to be slower than on amd64 — fine for
+    # local development, and there is no native alternative to switch to.
+    platform: linux/amd64
+    container_name: sd-tei-embeddings
+    restart: unless-stopped
+    command:
+      - "--model-id"
+      - "BAAI/bge-m3"
+      # MUST match the revision baked into the image (it runs HF_HUB_OFFLINE=1,
+      # loading snapshots/<revision> from disk); a mismatch fails to boot.
+      - "--revision"
+      - "${BGE_M3_REVISION:-5617a9f61b028005a4858fdac845db406aefb181}"
+      - "--port"
+      - "80"
+      # Required on CPU: at TEI's default 16384 bge-m3's fp32 warmup is
+      # OOM-killed even with 8 GB free, and the container just dies at startup.
+      - "--max-batch-tokens"
+      - "4096"
+    expose:
+      - "80"
+
+  signals-search-api:
+    # Built from signals-search's main branch on GitHub: no checkout and no
+    # registry tag to keep current, since only release tags publish images.
+    # The build is native, so arm64 hosts need no emulation. Its base image is
+    # on dhi.io, which needs the same `docker login dhi.io` as the rest of the
+    # stack. To run a published image instead, set in .env:
+    #   SIGNALS_SEARCH_IMAGE=ghcr.io/blue-dots-economy/signals-search:<release-tag>
+    #   SIGNALS_SEARCH_PULL_POLICY=missing
+    # (published images are amd64-only; on arm64 also set
+    # DOCKER_DEFAULT_PLATFORM=linux/amd64). SIGNALS_SEARCH_GIT points the build
+    # at another branch or fork, e.g. `...signals-search.git#feature`.
+    build:
+      context: ${SIGNALS_SEARCH_GIT:-https://github.com/Blue-Dots-Economy/signals-search.git#main}
+    image: ${SIGNALS_SEARCH_IMAGE:-signals-search:local}
+    pull_policy: ${SIGNALS_SEARCH_PULL_POLICY:-build}
+    container_name: sd-signals-search-api
+    restart: unless-stopped
+    environment: &search-env
+      # The `signals` database specifically — this Postgres also hosts
+      # `aggregator` and `keycloak`. signals-search reads `apikey`, `items` and
+      # `item_search`; the wrong database gives 401s and an empty index.
+      DATABASE_URL: postgres://${POSTGRES_USER:-dpg}:${POSTGRES_PASSWORD}@postgres:5432/signals
+      REDIS_URL: redis://:${SIGNALS_REDIS_PASSWORD}@signals-redis:6379
+      # Must end in /v1 — the client requests `${EMBEDDING_BASE_URL}/embeddings`.
+      EMBEDDING_BASE_URL: http://tei-embeddings:80/v1
+      EMBEDDING_MODEL: BAAI/bge-m3
+      # Must equal the model's native dim AND item_search.embedding's
+      # vector(1024); the worker refuses to start otherwise.
+      EMBEDDING_DIM: "1024"
+      # A file, not a directory: directory mode resolves a duplicated `id`
+      # last-one-wins and can shadow the good config.
+      NETWORK_CONFIG_PATH: /networks/network.json
+      # item_search's DDL belongs to signals-dpg and signals-bootstrap has
+      # already created it; the worker only asserts it exists.
+      RUN_MIGRATIONS: "false"
+      API_PORT: "3100"
+      RERANK_DEFAULT: "false"
+    volumes:
+      # From the signals-dpg sibling checkout, so both services agree on which
+      # domains exist and which interactions are permitted.
+      - ../../signals-dpg/examples/schemas/blue_dot/network.json:/networks/network.json:ro
+    ports:
+      # 3110, NOT 3100 — the aggregator portal already owns 3100 on the host.
+      # The container still listens on 3100, so in-compose URLs are unaffected.
+      - "${SEARCH_API_PORT:-3110}:3100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      signals-redis:
+        condition: service_healthy
+      signals-bootstrap:
+        condition: service_completed_successfully
+
+  signals-search-worker:
+    # Same build and image as signals-search-api; see the note there.
+    build:
+      context: ${SIGNALS_SEARCH_GIT:-https://github.com/Blue-Dots-Economy/signals-search.git#main}
+    image: ${SIGNALS_SEARCH_IMAGE:-signals-search:local}
+    pull_policy: ${SIGNALS_SEARCH_PULL_POLICY:-build}
+    container_name: sd-signals-search-worker
+    restart: unless-stopped
+    command: ["node", "dist/worker/main.js"]
+    environment:
+      <<: *search-env
+      WORKER_HEALTH_PORT: "3101"
+    volumes:
+      - ../../signals-dpg/examples/schemas/blue_dot/network.json:/networks/network.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      signals-redis:
+        condition: service_healthy
+      signals-bootstrap:
+        condition: service_completed_successfully

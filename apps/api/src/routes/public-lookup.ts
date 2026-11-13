@@ -1,23 +1,19 @@
 /**
- * Public identity-probe endpoint for the registration form.
+ * Public identity-probe endpoint for the registration form, in the aggregator
+ * API (`@aggregator-dpg/api`).
  *
  *   GET /public/v1/aggregators/:orgSlug/lookup?email&phone_number&network&domain
  *
- * No JWT — same anonymous access model as the public registration link
- * resolve route. Aggregator scope comes from the `orgSlug` path segment;
- * the signalstack probe runs under that aggregator's `signalstack_org_id`
- * (no item ever created — signals' `submit_mode: account_only` path).
- *
- * Reshapes the writer's `SignalStackProbeUserResult` into the wire payload
- * the BFF consumes to decide between "open the form fresh" / "resume
- * lifecycle" / "show already-registered-elsewhere" branches.
+ * Anonymous. The probe runs under the `orgSlug` coordinator's signalstack org
+ * and creates no item. The BFF uses the result to open a fresh form, resume a
+ * profile, or show "already registered elsewhere".
  */
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getAggregatorStore } from '../services/aggregator-store/index.js';
+import { getUserStore } from '../services/user-store/index.js';
 import { getSignalStackWriter } from '../services/signalstack.js';
-import { normalisePhone } from '../services/phone.js';
+import { normalisePhone } from '@aggregator-dpg/shared-primitives/phone';
 import { httpError } from '../errors/http-error.js';
 import { errorResponses } from '../errors/openapi.js';
 import { consume } from '../services/rate-limiter/index.js';
@@ -62,18 +58,19 @@ const LookupResponseSchema = z
   .passthrough();
 
 /**
- * Registers the public lookup route on the Fastify instance.
+ * Registers the public lookup route.
  *
- * Idempotent and anonymous. Returns 200 with the canonical probe payload
- * on success, 400 when neither identity is supplied, 404 when the
- * aggregator slug is unknown (or has not completed the signalstack
- * handshake), 429 when the per-org rate limit trips, and 502 when
- * signalstack returns an error.
+ * Returns 200 with the probe payload, 400 when no identity is given, 404 for an
+ * unknown slug or one with no signalstack org, 429 on rate limit, and 502 when
+ * signalstack fails.
+ *
+ * @param app - Fastify instance.
  */
 export async function registerPublicLookupRoute(app: FastifyInstance): Promise<void> {
   app.get(
     '/public/v1/aggregators/:orgSlug/lookup',
     {
+      config: { rbac: { access: 'public' } },
       schema: {
         tags: ['public-registration'],
         summary: 'Probe an identity before opening the registration form',
@@ -95,9 +92,7 @@ export async function registerPublicLookupRoute(app: FastifyInstance): Promise<v
       const log = req.log.child({ operation: 'public.lookup', org_slug: orgSlug });
       const start = Date.now();
 
-      // Reuse the same window/max as the link-submit limiter — the lookup is
-      // a cheaper read but still exposed unauthenticated, so we keep a
-      // coarse fallback in case the BFF Turnstile gate is misconfigured.
+      // Same limit as link submit; a fallback if the BFF Turnstile check is off.
       const ip = (req.ip ?? '0.0.0.0').toString();
       const rate = await consume({
         namespace: 'public-lookup',
@@ -113,18 +108,15 @@ export async function registerPublicLookupRoute(app: FastifyInstance): Promise<v
         });
       }
 
-      // Validated by the route's `querystring` zod schema, including the
-      // either-email-or-phone refine (refinements run in route validation).
+      // Validated by the route's `querystring` schema, including email-or-phone.
       const q = req.query as z.infer<typeof QuerySchema>;
 
-      // Resolve the aggregator's signalstack org id by slug. Absent slug or
-      // missing signalstack_org_id both surface as 404 — the lookup
-      // endpoint is opaque about whether a given slug exists yet, by
-      // design (anonymous enumeration prevention).
-      const aggLookup = await getAggregatorStore().findBySlug(orgSlug);
+      // Unknown slug and missing signalstack org both answer 404, so slugs
+      // cannot be enumerated.
+      const aggLookup = await getUserStore().findBySlug(orgSlug);
       if (!aggLookup.ok) {
         throw httpError('DB_UNAVAILABLE', {
-          fields: { sub_operation: 'aggregatorStore.findBySlug' },
+          fields: { sub_operation: 'userStore.findBySlug' },
         });
       }
       if (!aggLookup.value || !aggLookup.value.signalstackOrgId) {
@@ -133,9 +125,7 @@ export async function registerPublicLookupRoute(app: FastifyInstance): Promise<v
       }
       const actingOrgId = aggLookup.value.signalstackOrgId;
 
-      // Normalise phone to E.164 before forwarding so signals matches the
-      // same canonical form the onboard path writes. Empty/invalid input
-      // falls through as a 400 rather than a silent miss.
+      // Normalise to E.164, the form onboarding writes. Invalid input is a 400.
       let phoneNumber: string | undefined;
       if (q.phone_number) {
         const normalised = normalisePhone(q.phone_number);
@@ -147,9 +137,7 @@ export async function registerPublicLookupRoute(app: FastifyInstance): Promise<v
 
       const ss = getSignalStackWriter();
       if (!ss) {
-        // Operator hasn't configured signalstack — without it we can't
-        // answer the probe truthfully. Surface as 503 so the BFF can
-        // distinguish from a 404 "unknown aggregator".
+        // Signalstack not configured: 503, distinct from a 404 unknown slug.
         log.error({ status: 'failure', sub: 'signalstack.disabled' });
         throw httpError('SIGNALSTACK_ORG_NOT_REGISTERED', {
           detail: 'Signalstack integration is not configured.',

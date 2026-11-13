@@ -114,7 +114,6 @@ export async function discoverPackages(
 
     const packageName = readPackageName(packageJsonPath, entry);
 
-    // Validate configKey presence
     if (!mod.configKey || typeof mod.configKey !== 'string') {
       throw new ConfigError(
         `Package "${packageName}" exports config.schema but is missing a non-empty configKey string export.`,
@@ -122,7 +121,6 @@ export async function discoverPackages(
       );
     }
 
-    // Validate configSchema presence
     if (!mod.configSchema) {
       throw new ConfigError(
         `Package "${packageName}" exports config.schema but is missing configSchema export.`,
@@ -130,7 +128,6 @@ export async function discoverPackages(
       );
     }
 
-    // Duplicate configKey check
     if (registry.has(mod.configKey)) {
       const existing = registry.get(mod.configKey)!;
       throw new ConfigError(

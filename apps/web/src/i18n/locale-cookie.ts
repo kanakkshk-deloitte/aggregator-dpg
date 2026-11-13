@@ -4,11 +4,9 @@ import { cookies } from 'next/headers';
 import { DEFAULT_LOCALE, isEnabledLocale, LOCALE_COOKIE } from './config';
 
 /**
- * Persists the chosen UI locale to the `NEXT_LOCALE` cookie.
+ * Saves the chosen UI locale to the `NEXT_LOCALE` cookie.
  *
- * Invoked from the language switcher. Falls back to the default locale if
- * the requested value is not an enabled locale, so a tampered value can never
- * pin the UI to an unsupported language.
+ * A locale that is not enabled is saved as the default locale.
  *
  * @param next - Requested locale code.
  */

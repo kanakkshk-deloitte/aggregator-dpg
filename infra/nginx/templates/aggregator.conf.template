@@ -61,6 +61,10 @@ server {
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
 
+    # Force HTTPS on every response, including subdomains. `always` ensures
+    # the header is sent on error responses too (4xx/5xx), not just 2xx.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+
     # Health probe for any external load balancer in front of this proxy.
     location = /healthz {
         access_log off;

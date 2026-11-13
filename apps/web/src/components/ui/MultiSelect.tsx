@@ -1,11 +1,9 @@
 'use client';
 
 /**
- * Multi-select popover for array-of-enum form fields. shadcn ships a
- * single-select Select; this component pairs a Radix Popover trigger
- * (styled like our `bd-input`) with a scrollable checkbox list inside
- * a portal-rendered popup. Selected values render as chips on the
- * trigger; click a chip's × to remove without opening the popover.
+ * Multi-select popover for array-of-enum form fields. A Radix Popover trigger
+ * styled like `bd-input` opens a checkbox list. Selected values show as chips
+ * on the trigger; a chip's × removes it.
  */
 
 import * as React from 'react';
@@ -30,9 +28,8 @@ export interface MultiSelectProps {
 }
 
 /**
- * Toggles `option` membership inside `selected`. Order is preserved
- * for additions (appended at end) so the chip order reflects user
- * intent rather than the original option ordering.
+ * Toggles `option` in `selected`. New values are appended, so chip order
+ * follows the order the user picked them.
  */
 function toggle(selected: string[], option: string): string[] {
   return selected.includes(option) ? selected.filter((v) => v !== option) : [...selected, option];
@@ -65,19 +62,19 @@ export function MultiSelect({
           disabled={disabled}
           aria-haspopup="listbox"
           className={cn(
-            'flex min-h-[42px] w-full flex-wrap items-center gap-1.5 rounded-[10px] border border-[var(--bd-border)] bg-[var(--bd-bg)] px-3 py-2 text-left text-[14px] text-[var(--bd-fg)] transition-colors',
-            'hover:bg-[var(--bd-border-soft)] focus:outline-none focus-visible:border-[var(--bd-primary)] focus-visible:bg-[var(--bd-card)] focus-visible:ring-4 focus-visible:ring-[var(--bd-primary-50)]',
+            'flex min-h-[42px] w-full flex-wrap items-center gap-1.5 rounded-[10px] border border-(--bd-border) bg-(--bd-bg) px-3 py-2 text-left text-[14px] text-(--bd-fg) transition-colors',
+            'hover:bg-(--bd-border-soft) focus:outline-hidden focus-visible:border-(--bd-primary) focus-visible:bg-(--bd-card) focus-visible:ring-4 focus-visible:ring-(--bd-primary-50)',
             'disabled:cursor-not-allowed disabled:opacity-50',
             className,
           )}
         >
           {value.length === 0 ? (
-            <span className="text-[var(--bd-fg-muted)]">{placeholder}</span>
+            <span className="text-(--bd-fg-muted)">{placeholder}</span>
           ) : (
             value.map((v) => (
               <span
                 key={v}
-                className="inline-flex items-center gap-1 rounded-full bg-[var(--bd-primary-50)] px-2 py-0.5 text-[12px] font-medium text-[var(--bd-primary-600)]"
+                className="inline-flex items-center gap-1 rounded-full bg-(--bd-primary-50) px-2 py-0.5 text-[12px] font-medium text-(--bd-primary-600)"
               >
                 {labelFor(v)}
                 <button
@@ -86,7 +83,7 @@ export function MultiSelect({
                     e.stopPropagation();
                     onChange(value.filter((x) => x !== v));
                   }}
-                  className="rounded-full p-0.5 hover:bg-[var(--bd-primary-100)]"
+                  className="rounded-full p-0.5 hover:bg-(--bd-primary-100)"
                   aria-label={`Remove ${labelFor(v)}`}
                 >
                   <X className="h-3 w-3" />
@@ -101,10 +98,10 @@ export function MultiSelect({
         <PopoverPrimitive.Content
           align="start"
           sideOffset={4}
-          className="z-50 max-h-[280px] w-[var(--radix-popover-trigger-width)] overflow-y-auto rounded-[10px] border border-[var(--bd-border)] bg-[var(--bd-card)] p-1 shadow-lg"
+          className="z-50 max-h-[280px] w-(--radix-popover-trigger-width) overflow-y-auto rounded-[10px] border border-(--bd-border) bg-(--bd-card) p-1 shadow-lg"
         >
           {options.length === 0 ? (
-            <div className="px-3 py-2 text-[13px] text-[var(--bd-fg-muted)]">No options.</div>
+            <div className="px-3 py-2 text-[13px] text-(--bd-fg-muted)">No options.</div>
           ) : (
             options.map((opt) => {
               const checked = selectedSet.has(opt.value);
@@ -114,17 +111,17 @@ export function MultiSelect({
                   type="button"
                   onClick={() => onChange(toggle(value, opt.value))}
                   className={cn(
-                    'flex w-full items-center gap-2 rounded-[8px] px-2 py-2 text-left text-[14px] outline-none transition-colors',
-                    'hover:bg-[var(--bd-primary-50)] focus-visible:bg-[var(--bd-primary-50)] focus-visible:text-[var(--bd-primary-600)]',
-                    checked && 'font-semibold text-[var(--bd-primary-600)]',
+                    'flex w-full items-center gap-2 rounded-[8px] px-2 py-2 text-left text-[14px] outline-hidden transition-colors',
+                    'hover:bg-(--bd-primary-50) focus-visible:bg-(--bd-primary-50) focus-visible:text-(--bd-primary-600)',
+                    checked && 'font-semibold text-(--bd-primary-600)',
                   )}
                 >
                   <span
                     className={cn(
-                      'flex h-4 w-4 items-center justify-center rounded border',
+                      'flex h-4 w-4 items-center justify-center rounded-sm border',
                       checked
-                        ? 'border-[var(--bd-primary)] bg-[var(--bd-primary)] text-white'
-                        : 'border-[var(--bd-border)] bg-[var(--bd-card)]',
+                        ? 'border-(--bd-primary) bg-(--bd-primary) text-white'
+                        : 'border-(--bd-border) bg-(--bd-card)',
                     )}
                     aria-hidden
                   >

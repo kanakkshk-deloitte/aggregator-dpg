@@ -28,15 +28,14 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@aggregator-dpg/shared-primitives": "workspace:*",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@aggregator-dpg/tsconfig": "workspace:*",
     "@types/js-yaml": "^4.0.9",
-    "@vitest/coverage-v8": "^3.2.0",
-    "js-yaml": "^4.1.0",
+    "@vitest/coverage-v8": "^4.1.12",
+    "js-yaml": "^5.5.0",
     "typescript": "^6.0.3",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.12"
   }
 }

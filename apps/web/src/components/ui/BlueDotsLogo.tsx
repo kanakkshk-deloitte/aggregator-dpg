@@ -1,16 +1,11 @@
 /**
- * Brand-agnostic dots logo. The SVG geometry stays constant across
- * deployments (a network of dots) — only the colors change. The fill /
- * stroke / glow values reference the CSS variables set by
- * `ThemeProvider` from the active aggregator config, so blue_dot,
- * purple_dot, yellow_dot, and future networks all reuse this mark.
+ * Brand-neutral dots logo. The shape is fixed; colours come from CSS
+ * variables set by `ThemeProvider` from the aggregator config.
  *
- * `dark` keeps the inverted palette for use on dark surfaces (the
- * brand panel hero card on the public login page).
+ * `dark` uses the inverted palette for dark surfaces.
  *
- * NOTE: CSS variables in SVG must live on `style`, not on the bare
- * `fill`/`stroke` attribute — Chrome rejects `fill="var(...)"` as a
- * literal string. Every fill below routes through inline style.
+ * CSS variables must be set through `style`, not the `fill`/`stroke`
+ * attributes, because Chrome does not resolve `fill="var(...)"`.
  */
 interface BlueDotsLogoProps {
   size?: number;

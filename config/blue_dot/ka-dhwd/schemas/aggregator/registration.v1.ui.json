@@ -1,0 +1,100 @@
+{
+  "ui:layout": "stack",
+  "ui:order": ["name", "type", "sub_org_name", "url", "contact", "locations", "consent"],
+  "locations": {
+    "ui:options": {
+      "addable": true,
+      "removable": true,
+      "orderable": false,
+      "itemLabel": "Location"
+    },
+    "items": {
+      "ui:title": "",
+      "ui:layout": "stack",
+      "ui:order": ["address", "geo"],
+      "geo": {
+        "ui:widget": "hidden",
+        "ui:title": "",
+        "type": {
+          "ui:widget": "hidden"
+        },
+        "coordinates": {
+          "ui:widget": "hidden"
+        },
+        "geometries": {
+          "ui:widget": "hidden"
+        },
+        "bbox": {
+          "ui:widget": "hidden"
+        }
+      },
+      "address": {
+        "ui:title": "",
+        "streetAddress": {
+          "ui:widget": "location-autocomplete",
+          "ui:placeholder": "Start typing and pick your address",
+          "ui:options": {
+            "isPrimaryLocation": true
+          }
+        },
+        "ui:layout": "stack"
+      }
+    }
+  },
+  "name": {
+    "ui:placeholder": "e.g. SkillBridge Network",
+    "ui:autofocus": true
+  },
+  "type": {
+    "ui:widget": "select",
+    "ui:placeholder": "Select aggregator type",
+    "ui:enumNames": ["Seeker", "Provider", "Service Provider"]
+  },
+  "sub_org_name": {
+    "ui:placeholder": "e.g. GarvSe Centre, Ghaziabad"
+  },
+  "url": {
+    "ui:placeholder": "https://yourorg.in",
+    "ui:options": {
+      "inputType": "url"
+    }
+  },
+  "contact": {
+    "ui:layout": "grid",
+    "ui:order": ["name", "phone", "email"],
+    "name": {
+      "ui:placeholder": "Full name of the primary contact"
+    },
+    "phone": {
+      "ui:placeholder": "+91 98765 43210",
+      "ui:options": {
+        "inputType": "tel"
+      }
+    },
+    "email": {
+      "ui:placeholder": "admin@yourorg.in",
+      "ui:options": {
+        "inputType": "email"
+      }
+    }
+  },
+  "consent": {
+    "ui:layout": "stack",
+    "ui:order": ["value", "given_at", "valid_till"],
+    "value": {
+      "ui:widget": "ConsentCheckbox"
+    },
+    "given_at": {
+      "ui:widget": "hidden",
+      "ui:options": {
+        "label": false
+      }
+    },
+    "valid_till": {
+      "ui:widget": "hidden",
+      "ui:options": {
+        "label": false
+      }
+    }
+  }
+}

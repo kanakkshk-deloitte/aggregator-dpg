@@ -16,10 +16,9 @@ import {
 import type { BulkUploadStatus } from '../../../../services/onboarding.service';
 import { onboardingService } from '../../../../services/onboarding.service';
 import type { BulkAttestationContent } from '../../../../lib/bulk-attestation.server';
+import { useCan } from '../../../../lib/auth-context';
 
-// Module-level so its identity is stable across CSVUpload re-renders. Defining
-// it inline re-created the component every render, remounting the toast and
-// restarting its timer — which read as the message flickering/switching fast.
+// Defined at module level so re-renders of CSVUpload do not remount the toast.
 function UploadToast({ message, onDone }: { message: string; onDone: () => void }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -29,13 +28,12 @@ function UploadToast({ message, onDone }: { message: string; onDone: () => void 
   }, [onDone]);
   if (!mounted) return null;
   return createPortal(
-    <div
-      role="status"
+    <output
       aria-live="polite"
-      className="fixed top-4 right-4 z-[100] max-w-sm rounded-[10px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-700 shadow-lg inline-flex items-start gap-2"
+      className="fixed top-4 left-4 right-4 sm:left-auto z-100 sm:max-w-sm rounded-[10px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-700 shadow-lg inline-flex items-start gap-2"
     >
       <I.check size={14} className="mt-0.5 shrink-0" /> <span>{message}</span>
-    </div>,
+    </output>,
     document.body,
   );
 }
@@ -43,10 +41,10 @@ function UploadToast({ message, onDone }: { message: string; onDone: () => void 
 /** Props for {@link CSVUpload}. */
 export interface CSVUploadProps {
   /**
-   * Operator attestation copy (#522 Task 1), loaded server-side. `null` ⇒ the
-   * checkbox shows a generic label. When present, the statement is shown and
-   * the aggregator must tick it before Upload is enabled; `attestation: true`
-   * is sent to `/start`, which validates + records it.
+   * Operator attestation text, loaded on the server.
+   *
+   * `null` shows a generic checkbox label. The checkbox must be ticked before
+   * Upload is enabled; `attestation: true` is sent to `/start`.
    */
   attestation?: BulkAttestationContent | null;
 }
@@ -56,10 +54,8 @@ export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
   const [attested, setAttested] = useState(false);
   const rawProfile = useProfileRaw();
   const { data: cfg = DEFAULT_AGGREGATOR_CONFIG } = useAggregatorConfig();
-  // Aggregator registered participant focus, mirrored from the
-  // `aggregator_type` KC claim. Falls back to the network's first declared
-  // domain (networks.json order) while the profile loads — the upload submit
-  // path is gated by the API anyway, so a transient mismatch is harmless.
+  // Participant type from the `aggregator_type` claim. Uses the network's first
+  // domain while the profile loads; the API checks the type on upload.
   const aggregatorType: string = rawProfile.data?.type ?? cfg.domains[0]?.id ?? '';
   // Plural label for the scoped domain, sourced from network config.
   const aggregatorTypeLabel =
@@ -79,7 +75,13 @@ export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
 
   const acceptFile = (f: File) => {
     if (!/\.csv$/i.test(f.name)) {
-      setUploadError('Only .csv files are accepted.');
+      // Tell the user how to fix it; uploading the .xlsx template directly is a
+      // common mistake.
+      setUploadError(
+        /\.xlsx?$/i.test(f.name)
+          ? 'This is an Excel file. Open it and use File → Save As (or Export) → CSV, then upload the .csv.'
+          : 'Only .csv files are accepted.',
+      );
       return;
     }
     setPickedFile(f);
@@ -116,15 +118,10 @@ export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
         recent.refetch();
         return;
       }
-      // Stay on the page so the success note is readable and the just-uploaded
-      // run appears in the recent-uploads list below. Processing continues in
-      // the worker. (Previously navigated to /onboarding immediately, which
-      // unmounted the toast before it could be read.)
+      // Show the success note and refresh the list. Processing continues in the worker.
       setToast(t('csv.success_note'));
       recent.refetch();
-      // Let the success toast be read, then return to the onboarding overview.
-      // A short delay (not an immediate push) avoids unmounting the toast the
-      // instant it appears — the bug the previous "navigate immediately" had.
+      // Return to the onboarding overview after the toast has been shown.
       setTimeout(() => router.push('/onboarding'), 2500);
     } catch (err) {
       setUploadError((err as Error).message);
@@ -132,7 +129,9 @@ export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
   };
 
   const downloadTemplate = () => {
-    window.location.href = `/api/bulk-uploads/template?participant_type=${participantType}`;
+    // Offer only the workbook: it has dropdowns and required-column marks.
+    // The API template endpoint still defaults to CSV.
+    window.location.href = `/api/bulk-uploads/template?participant_type=${participantType}&format=xlsx`;
   };
 
   return (
@@ -143,19 +142,9 @@ export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
           <div className="text-[12.5px] text-ink-400 mt-0.5">{t('csv.subtitle')}</div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          {/*
-           * Aggregators are scoped to a single participant type (seeker OR
-           * provider). The opposite button is omitted, not just disabled, so
-           * the UI matches what the API enforces: one tile per aggregator.
-           */}
-          {/*
-           * Render as a passive label, not a button — aggregators are
-           * scoped to one participant type so the chip is informational
-           * only. Plain <div> avoids hover/cursor cues that suggest
-           * the value is changeable.
-           */}
+          {/* Aggregators have one participant type, so this is a read-only label. */}
           <div
-            className="flex items-center bg-ink-50 border border-[var(--bd-border)] rounded-[10px] p-0.5"
+            className="flex items-center bg-ink-50 border border-(--bd-border) rounded-[10px] p-0.5"
             aria-label={`Participant type: ${aggregatorTypeLabel}`}
           >
             {aggregatorTypeLabel && (
@@ -169,7 +158,7 @@ export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
             onClick={downloadTemplate}
             className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-primary-600 hover:underline"
           >
-            <I.download size={14} /> {t('csv.download_template')}
+            <I.download size={14} /> {t('csv.download_template_xlsx')}
           </button>
         </div>
       </div>
@@ -184,10 +173,10 @@ export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
           id="csv-file-input"
         />
         {pickedFile ? (
-          // Selected-file chip with explicit × dismissal. Cleared state +
-          // resets the file input so the same filename can be re-picked.
+          // Selected-file chip. Dismissing it also resets the input so the same
+          // file can be picked again.
           <div className="flex items-center justify-center gap-2">
-            <div className="inline-flex items-center gap-2 max-w-full px-3 py-2 rounded-[10px] bg-[var(--bd-primary-50)] border border-[var(--bd-primary-100)]">
+            <div className="inline-flex items-center gap-2 max-w-full px-3 py-2 rounded-[10px] bg-(--bd-primary-50) border border-(--bd-primary-100)">
               <I.upload size={14} className="text-primary-600 shrink-0" />
               <span className="text-[13.5px] font-semibold text-primary-700 truncate">
                 {pickedFile.name}
@@ -215,7 +204,7 @@ export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
           </div>
         ) : (
           <label htmlFor="csv-file-input" className="cursor-pointer block text-center">
-            <div className="w-12 h-12 mx-auto rounded-full bg-white border border-[var(--bd-border)] flex items-center justify-center text-primary-600 mb-3 bd-shadow">
+            <div className="w-12 h-12 mx-auto rounded-full bg-white border border-(--bd-border) flex items-center justify-center text-primary-600 mb-3 bd-shadow">
               <I.upload size={20} />
             </div>
             <div className="text-[14px] font-semibold text-ink-700">
@@ -229,21 +218,18 @@ export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
         )}
       </Dropzone>
 
-      <label className="mt-4 flex items-start gap-2.5 rounded-[10px] border border-[var(--bd-border)] px-3.5 py-3 text-[13px] text-ink-800 cursor-pointer">
+      <label className="mt-4 flex items-start gap-2.5 rounded-[10px] border border-(--bd-border) px-3.5 py-3 text-[13px] text-ink-800 cursor-pointer">
         <input
           type="checkbox"
           checked={attested}
           onChange={(e) => setAttested(e.target.checked)}
-          className="mt-0.5 h-4 w-4 shrink-0 rounded border-[var(--bd-border)] accent-[var(--bd-primary-600)]"
+          className="mt-0.5 h-4 w-4 shrink-0 rounded-sm border-(--bd-border) accent-(--bd-primary-600)"
           aria-required
         />
         <span>{attestation ? attestation.content : t('csv.attestation_fallback')}</span>
       </label>
 
-      <div className="flex items-center justify-between mt-4">
-        <div className="text-[12px] text-ink-400 flex items-center gap-2">
-          <I.shield size={14} className="text-emerald-500" /> {t('csv.security_note')}
-        </div>
+      <div className="flex items-center justify-end mt-4">
         <Button onClick={onUpload} disabled={!pickedFile || upload.isPending || !attested}>
           {upload.isPending ? t('csv.uploading') : t('csv.upload_button')}
         </Button>
@@ -265,9 +251,9 @@ export function CSVUpload({ attestation = null }: CSVUploadProps = {}) {
 }
 
 /**
- * Body-only "Recent uploads" table. Designed to be rendered INSIDE another
- * card shell (the merged Bulk Upload section on the onboarding landing).
- * No outer card padding/border — the parent owns the chrome.
+ * "Recent uploads" table body, without an outer card.
+ *
+ * Render it inside a parent card.
  */
 export function RecentUploadsBody() {
   const t = useTranslations('onboarding');
@@ -335,6 +321,7 @@ export function RecentUploadsBody() {
 function UploadRow({ upload }: { upload: BulkUploadStatus }) {
   const t = useTranslations('onboarding');
   const format = useFormatter();
+  const can = useCan();
   const [downloading, setDownloading] = useState(false);
 
   const onDownloadErrors = async () => {
@@ -391,21 +378,26 @@ function UploadRow({ upload }: { upload: BulkUploadStatus }) {
       </td>
       <td className="text-[12px]">
         {upload.status === 'completed' && upload.failed > 0 && upload.errors_csv_s3_key ? (
-          <button
-            type="button"
-            onClick={onDownloadErrors}
-            disabled={downloading}
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-[8px] bg-[var(--bd-primary-50)] text-primary-600 font-semibold hover:bg-[var(--bd-primary-100)] disabled:opacity-60"
-          >
-            <I.download size={12} />
-            {downloading ? t('csv.recent.signing') : 'errors.csv'}
-          </button>
+          // The report carries submitted contact data: PII Access only.
+          can('profiles.view_pii') ? (
+            <button
+              type="button"
+              onClick={onDownloadErrors}
+              disabled={downloading}
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-[8px] bg-(--bd-primary-50) text-primary-600 font-semibold hover:bg-(--bd-primary-100) disabled:opacity-60"
+            >
+              <I.download size={12} />
+              {downloading ? t('csv.recent.signing') : 'errors.csv'}
+            </button>
+          ) : (
+            <span className="text-ink-300">—</span>
+          )
         ) : upload.status === 'completed' ? (
           <span className="text-emerald-600">{t('csv.recent.all_rows_passed')}</span>
         ) : upload.status_reason ? (
           <span
             title={upload.status_reason}
-            className="text-rose-600 block whitespace-pre-line break-words max-w-[240px] align-middle leading-snug"
+            className="text-rose-600 block whitespace-pre-line wrap-break-word max-w-[240px] align-middle leading-snug"
           >
             {upload.status_reason.replace(/,\s*/g, ',\n')}
           </span>

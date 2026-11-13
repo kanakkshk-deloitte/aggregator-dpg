@@ -1,15 +1,14 @@
 /**
  * Keycloak service-account token client.
  *
- * Some BFF routes proxy upstream calls on behalf of an anonymous browser
- * (e.g. POST /api/aggregator/register). The aggregator API requires a
- * Bearer token on every endpoint, so the BFF authenticates to Keycloak
- * with the `aggregator-bff` confidential client (client_credentials grant)
- * and attaches the resulting service-account access token to those calls.
+ * Used only by anonymous, pre-session BFF routes (e.g. registration). Gets a
+ * `client_credentials` token for the `aggregator-bff` client. Never use it for
+ * routes that act for a signed-in user; use `callApi` there.
  *
- * Tokens are cached in-process until ~30s before expiry to avoid one
- * round-trip per upstream call.
+ * Tokens are cached in-process until 30s before expiry.
  */
+
+import { stripTrailingSlashes } from '@aggregator-dpg/shared-primitives/url';
 
 interface CachedToken {
   accessToken: string;
@@ -27,7 +26,7 @@ interface ServiceTokenConfig {
 }
 
 function readConfig(): ServiceTokenConfig {
-  const issuer = mustEnv('OIDC_ISSUER').replace(/\/+$/, '');
+  const issuer = stripTrailingSlashes(mustEnv('OIDC_ISSUER'));
   return {
     tokenUrl: `${issuer}/protocol/openid-connect/token`,
     clientId: mustEnv('BFF_SERVICE_CLIENT_ID'),
@@ -36,8 +35,11 @@ function readConfig(): ServiceTokenConfig {
 }
 
 /**
- * Returns a fresh service-account access token, fetching one if the cached
- * value is missing or near expiry.
+ * Returns a service-account access token, fetching a new one when the cached
+ * token is missing or near expiry.
+ *
+ * @returns The access token.
+ * @throws {Error} If config is missing or Keycloak returns an error.
  */
 export async function getServiceAccessToken(): Promise<string> {
   if (cached && Date.now() < cached.expiresAt - REFRESH_LEAD_MS) {

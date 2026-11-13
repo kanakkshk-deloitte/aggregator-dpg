@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { RJSFSchema } from '@rjsf/utils';
 import { isFieldVisible, resolveVisibleSchema, stripShowIf } from '../../lib/show-if';
 
@@ -136,6 +138,78 @@ describe('stripShowIf', () => {
     expect(stripShowIf(null)).toBe(null);
     expect(stripShowIf([{ 'x-show-if': { a: ['b'] }, type: 'string' }])).toEqual([
       { type: 'string' },
+    ]);
+  });
+});
+
+// ─── Real UP-GZB org-registration schema ────────────────────────────────────
+// Locks the wiring end to end: the shipped schema file, the shipped resolver.
+// Both sub-type fields deliberately carry the SAME title ("Organisation
+// Sub-Type", as the sheet does) — safe only because they are never visible at
+// the same time, which is exactly what these assertions pin down.
+describe('up-gzb org-registration organisation sub-type', () => {
+  const schema = JSON.parse(
+    readFileSync(
+      path.resolve(
+        process.cwd(),
+        '../../config/blue_dot/up-gzb/schemas/aggregator/org-registration.v1.json',
+      ),
+      'utf8',
+    ),
+  ) as RJSFSchema;
+
+  const visible = (formData: Record<string, unknown>): string[] =>
+    Object.keys(resolveVisibleSchema(schema, formData).schema.properties ?? {});
+
+  it('hides both sub-types until an organisation type is chosen', () => {
+    const props = visible({});
+    expect(props).not.toContain('organisation_sub_type_educational');
+    expect(props).not.toContain('organisation_sub_type_non_educational');
+  });
+
+  it('shows only the educational sub-type for Educational', () => {
+    const props = visible({ organisation_type: 'educational' });
+    expect(props).toContain('organisation_sub_type_educational');
+    expect(props).not.toContain('organisation_sub_type_non_educational');
+  });
+
+  it('shows only the non-educational sub-type for Non-Educational', () => {
+    const props = visible({ organisation_type: 'non_educational' });
+    expect(props).toContain('organisation_sub_type_non_educational');
+    expect(props).not.toContain('organisation_sub_type_educational');
+  });
+
+  it('clears a stale sub-type when the organisation type flips', () => {
+    // Educational answered, then switched to Non-Educational: the now-hidden
+    // value must not survive into the submitted payload.
+    const { formData } = resolveVisibleSchema(schema, {
+      organisation_type: 'non_educational',
+      organisation_sub_type_educational: 'polytechnic',
+    });
+    expect(formData).not.toHaveProperty('organisation_sub_type_educational');
+    expect(formData['organisation_type']).toBe('non_educational');
+  });
+
+  it('carries the sheet option lists on each sub-type', () => {
+    const props = schema.properties as Record<string, { enum?: string[] }>;
+    expect(props['organisation_sub_type_educational']!.enum).toEqual([
+      'school',
+      'pu_college',
+      'college',
+      'iti',
+      'other_vocational_training',
+      'polytechnic',
+      'diploma',
+      'other',
+    ]);
+    expect(props['organisation_sub_type_non_educational']!.enum).toEqual([
+      'employment_exchange',
+      'placement_agency',
+      'community_group',
+      'individual_trainer_counsellor',
+      'msme_association',
+      'industries_and_commerce_department',
+      'other',
     ]);
   });
 });

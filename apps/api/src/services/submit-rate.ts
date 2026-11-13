@@ -1,10 +1,8 @@
 /**
- * Injectable submit rate-limit check for the coordinator registration
- * endpoint (spec A6).
+ * Injectable rate-limit check for the coordinator registration endpoint.
  *
- * Belongs to `@aggregator-dpg/api`. Wraps the Redis fixed-window limiter so
- * route handlers stay testable without Redis (the real limiter fails open and
- * needs a live connection); tests override via `_setSubmitRateChecker`.
+ * Belongs to `@aggregator-dpg/api`. Wraps the Redis limiter so routes can be
+ * tested without Redis; tests override it with `_setSubmitRateChecker`.
  */
 
 import { config } from '../config.js';
@@ -19,7 +17,7 @@ type Checker = (key: string) => Promise<SubmitRateResult>;
 
 let override: Checker | null = null;
 
-/** Test helper — replace the checker (null restores the Redis-backed default). */
+/** Test helper; replaces the checker (null restores the Redis-backed default). */
 export function _setSubmitRateChecker(c: Checker | null): void {
   override = c;
 }
@@ -29,7 +27,7 @@ export function _setSubmitRateChecker(c: Checker | null): void {
  * coordinator-submit bucket.
  *
  * @param key - Identifier inside the bucket (per-IP and/or per-email).
- * @returns Whether the call is allowed + retry-after seconds.
+ * @returns Whether the call is allowed, and retry-after seconds.
  */
 export async function checkSubmitRate(key: string): Promise<SubmitRateResult> {
   if (override) return override(key);

@@ -1,15 +1,15 @@
 /**
- * Support / contact-form email — sent to SUPPORT_EMAIL when a coordinator
- * submits the in-app "Contact support" form. Carries the raised complaint /
- * support request, the (prefilled + editable) submitter contact details, a
- * human-readable reference, and the portal link so support can triage and
- * follow up (Reply-To is the submitter's email when present).
+ * Support / contact-form email, sent to SUPPORT_EMAIL when a coordinator
+ * submits the in-app "Contact support" form. Carries the request, the
+ * submitter's contact details, a reference and the portal link. Reply-To is
+ * the submitter's email when present.
  *
  * Belongs to `@aggregator-dpg/api`.
  */
 
 import { randomBytes } from 'node:crypto';
 import { escapeHtml, renderShell } from './shared.js';
+import { formatBytes } from '../support-attachments.js';
 
 /** Kind of contact-support submission. */
 export type SupportRequestType = 'complaint' | 'support_request';
@@ -34,6 +34,8 @@ export interface SupportRequestVars {
   teamName: string;
   /** When the form was submitted. */
   submittedAt: Date;
+  /** Accepted attachments, listed in the body as well as sent as MIME parts. */
+  attachments?: Array<{ filename: string; bytes: number }>;
 }
 
 const REF_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -49,10 +51,9 @@ function typeLabel(type: SupportRequestType): string {
 }
 
 /**
- * Generates a support tracking reference of the form `SUP-YYYYMMDD-XXXXXX`,
- * where the date is UTC and the suffix is 6 uppercase alphanumeric characters
- * drawn from a cryptographic source. Pure and side-effect-free given its
- * clock argument, so the format is trivially asserted in tests.
+ * Generates a support reference of the form `SUP-YYYYMMDD-XXXXXX`. The date is
+ * UTC; the suffix is 6 uppercase alphanumeric characters from a cryptographic
+ * source.
  *
  * @param now - Timestamp to derive the UTC date from. Defaults to `new Date()`.
  * @returns A new support reference string.
@@ -61,10 +62,15 @@ export function generateSupportReference(now: Date = new Date()): string {
   const y = now.getUTCFullYear();
   const m = String(now.getUTCMonth() + 1).padStart(2, '0');
   const d = String(now.getUTCDate()).padStart(2, '0');
-  const bytes = randomBytes(6);
+  // Rejection sampling avoids modulo bias (256 % 36 != 0), so every symbol is equally likely.
+  const limit = Math.floor(256 / REF_ALPHABET.length) * REF_ALPHABET.length;
   let suffix = '';
-  for (let i = 0; i < 6; i++) {
-    suffix += REF_ALPHABET[bytes[i]! % REF_ALPHABET.length];
+  while (suffix.length < 6) {
+    for (const b of randomBytes(6)) {
+      if (b >= limit) continue;
+      suffix += REF_ALPHABET[b % REF_ALPHABET.length];
+      if (suffix.length === 6) break;
+    }
   }
   return `SUP-${y}${m}${d}-${suffix}`;
 }
@@ -112,6 +118,15 @@ export function renderSupportRequest(v: SupportRequestVars): {
     )
     .join('');
 
+  const attachmentList = (v.attachments ?? [])
+    .map((a) => `${a.filename} (${formatBytes(a.bytes)})`)
+    .join(', ');
+  const attachmentsHtml = attachmentList
+    ? `<div style="margin:12px 0;font-size:13px;color:#475069;">Attachments (${
+        v.attachments?.length ?? 0
+      }): <strong style="color:#0b1020;">${escapeHtml(attachmentList)}</strong></div>`
+    : '';
+
   const linkHtml = link
     ? `<div style="margin:2px 0 12px;font-size:13px;color:#475069;">Raised from <a href="${escapeHtml(
         link,
@@ -132,6 +147,7 @@ ${linkHtml}
 <div style="font-size:14px;font-weight:600;color:#0b1020;margin:18px 0 6px;">Contact details</div>
 <table style="border-collapse:collapse;font-size:13px;">${contactRowsHtml}</table>
 <div style="margin:12px 0;font-size:13px;color:#475069;">Consent to share contact: <strong style="color:#0b1020;">Yes</strong></div>
+${attachmentsHtml}
 <div style="margin:2px 0 18px;font-size:12px;color:#475069;">Submitted at: ${escapeHtml(
     submitted,
   )}</div>
@@ -152,6 +168,7 @@ ${linkHtml}
     `Phone: ${phone}\n` +
     `Email: ${email}\n\n` +
     `Consent to share contact: Yes\n` +
+    (attachmentList ? `Attachments (${v.attachments?.length ?? 0}): ${attachmentList}\n` : '') +
     `Submitted at: ${submitted}\n\n` +
     `Regards,\nTeam ${v.teamName}`;
 

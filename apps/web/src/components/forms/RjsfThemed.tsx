@@ -4,24 +4,41 @@ import Form from '@rjsf/core';
 import type { FormProps } from '@rjsf/core';
 import { customizeValidator } from '@rjsf/validator-ajv8';
 import Ajv2020 from 'ajv/dist/2020';
+import { enumOptionsIndexForValue, enumOptionsValueForIndex } from '@rjsf/utils';
 import type {
+  EnumOptionsType,
   RegistryWidgetsType,
   WidgetProps,
   FieldTemplateProps,
   ObjectFieldTemplateProps,
   ArrayFieldTemplateProps,
+  ArrayFieldItemTemplateProps,
   TitleFieldProps,
+  UiSchema,
   ValidatorType,
   RJSFSchema,
   GenericObjectType,
 } from '@rjsf/utils';
 import type { IChangeEvent } from '@rjsf/core';
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactElement,
+  type Ref,
+} from 'react';
 import { useTranslations } from 'next-intl';
+import { X } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/Select';
 import { MultiSelect } from '../ui/MultiSelect';
 import { resolveVisibleSchema, stripShowIf } from '../../lib/show-if';
 import { ConsentCheckboxWidget } from './ConsentCheckboxWidget';
+import { LocationAutocompleteWidget } from './custom-widgets/LocationAutocompleteWidget';
+import { MultiLocationAutocompleteWidget } from './custom-widgets/MultiLocationAutocompleteWidget';
+import { ReferenceAutocompleteWidget } from './custom-widgets/ReferenceAutocompleteWidget';
+import { PhoneWidget } from './custom-widgets/PhoneWidget';
 
 function TextWidget(props: WidgetProps) {
   const {
@@ -74,30 +91,57 @@ function TextareaWidget(props: WidgetProps) {
 function SelectWidget(props: WidgetProps) {
   const { id, value, required, disabled, readonly, onChange, options, placeholder } = props;
   const t = useTranslations('form');
-  const enumOptions =
-    (options['enumOptions'] as { value: unknown; label: string }[] | undefined) ?? [];
-  // shadcn Select disallows the empty-string sentinel as a value; map
-  // empty selection to a controlled `undefined` instead and surface the
-  // placeholder via SelectValue.
-  const current = value !== undefined && value !== null && value !== '' ? String(value) : undefined;
+  const enumOptions = (options['enumOptions'] as EnumOptionsType[] | undefined) ?? [];
+  // Options are addressed by index, since Radix values are strings only. This
+  // keeps boolean and numeric enum values their original type, as in Signals-DPG.
+  // `''` means no selection and shows the placeholder.
+  // `value` is always passed so the Select stays controlled.
+  const current = (enumOptionsIndexForValue(value, enumOptions, false) as string) ?? '';
+  // Clear button: only for an optional, unlocked field that has a value.
+  const clearable = !required && current !== '' && !disabled && !readonly;
   return (
-    <Select
-      {...(current !== undefined ? { value: current } : {})}
-      onValueChange={(v) => onChange(v === '' ? options['emptyValue'] : v)}
-      disabled={Boolean(disabled || readonly)}
-      required={Boolean(required)}
-    >
-      <SelectTrigger id={id} {...(required ? { 'aria-required': true } : {})}>
-        <SelectValue placeholder={placeholder ?? t('select_placeholder')} />
-      </SelectTrigger>
-      <SelectContent>
-        {enumOptions.map((opt) => (
-          <SelectItem key={String(opt.value)} value={String(opt.value)}>
-            {opt.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <div className="relative">
+      <Select
+        value={current}
+        onValueChange={(index) =>
+          onChange(enumOptionsValueForIndex(index, enumOptions, options['emptyValue']))
+        }
+        disabled={Boolean(disabled || readonly)}
+        required={Boolean(required)}
+      >
+        <SelectTrigger
+          id={id}
+          {...(required ? { 'aria-required': true } : {})}
+          // Pads the value span (the only direct <span> child) to make room for
+          // the overlaid clear button. The button cannot nest in the trigger,
+          // which is itself a <button>. Padding the trigger would move the chevron.
+          className={clearable ? '[&>span]:pr-7' : undefined}
+        >
+          {/* `||`, not `??`: RJSF passes `''` when no `ui:placeholder` is set. */}
+          <SelectValue placeholder={placeholder || t('select_placeholder')} />
+        </SelectTrigger>
+        <SelectContent>
+          {enumOptions.map((opt, index) => (
+            <SelectItem key={`${index}-${opt.label}`} value={String(index)}>
+              {opt.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {clearable && (
+        <button
+          type="button"
+          // Same empty value as the text widgets, so RJSF drops the key.
+          onClick={() => onChange(options['emptyValue'])}
+          aria-label={t('clear_selection')}
+          title={t('clear_selection')}
+          // `right-8` sits just left of the chevron.
+          className="absolute inset-y-0 right-8 my-auto flex h-6 w-6 items-center justify-center rounded-md text-(--bd-fg-muted) transition-colors hover:bg-(--bd-border-soft) hover:text-(--bd-fg) focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-(--bd-primary-50)"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -117,14 +161,10 @@ function DateWidget(props: WidgetProps) {
 }
 
 /**
- * Tag-style widget for an `array<string>` schema. Maintains a local string
- * mirror of the input so commas and partial tokens survive editing. The
- * earlier implementation reflowed the array → display on every keystroke
- * which stripped the trailing comma the moment the user typed it, making
- * a multi-tag entry impossible.
+ * Comma-separated text input for an `array<string>` schema.
  *
- * Parent state syncs on each keystroke (empties dropped); blur canonicalises
- * the display back to `tag1, tag2, …`.
+ * Keeps the raw text locally so commas and partial tokens survive editing.
+ * Updates the array on each keystroke and normalises the text on blur.
  */
 function CommaSeparatedArrayWidget(props: WidgetProps) {
   const { id, value, required, disabled, readonly, onChange, placeholder } = props;
@@ -133,8 +173,7 @@ function CommaSeparatedArrayWidget(props: WidgetProps) {
   const [text, setText] = useState<string>(arrayValue.join(', '));
   const lastSyncedRef = useRef<string>(arrayValue.join('|'));
 
-  // Re-sync local text if the array prop changes from somewhere else
-  // (e.g. RJSF reset). Sentinel prevents clobbering in-flight typing.
+  // Re-sync the text when the array changes from outside (e.g. a reset).
   useEffect(() => {
     const next = arrayValue.join('|');
     if (next !== lastSyncedRef.current) {
@@ -182,7 +221,7 @@ function CheckboxWidget(props: WidgetProps) {
       <input
         id={id}
         type="checkbox"
-        className="w-[18px] h-[18px] rounded-[5px] mt-0.5 accent-[var(--bd-primary)]"
+        className="w-[18px] h-[18px] rounded-[5px] mt-0.5 accent-(--bd-primary)"
         checked={Boolean(value)}
         required={required}
         disabled={disabled || readonly}
@@ -210,17 +249,13 @@ function FieldTemplate(props: FieldTemplateProps) {
     return null;
   }
   const isCheckbox = schema.type === 'boolean';
-  // Array fields with a custom scalar `ui:widget` (e.g. our comma-separated
-  // tag input) render a leaf input, not a row-builder. Treat them as leaves
-  // so the label + required marker show up normally.
+  // Array fields with a custom `ui:widget` render as one input, so treat them as leaves.
   const customWidget = uiSchema?.['ui:widget'];
   const arrayAsLeaf =
     schema.type === 'array' && typeof customWidget === 'string' && customWidget !== 'hidden';
   const isContainer = (schema.type === 'object' || schema.type === 'array') && !arrayAsLeaf;
   const hasError = Array.isArray(rawErrors) && rawErrors.length > 0;
-  // Red-border styling for invalid leaf inputs. Tailwind arbitrary selectors
-  // descend into the widget regardless of whether it renders an <input> or a
-  // <select> as long as it carries the .bd-input class.
+  // Red border on any `.bd-input` inside an invalid field.
   const errorWrap = hasError ? '[&_.bd-input]:border-rose-400 [&_.bd-input]:ring-rose-100' : '';
   if (isCheckbox) {
     return (
@@ -253,20 +288,150 @@ function FieldTemplate(props: FieldTemplateProps) {
   );
 }
 
+/**
+ * Reads the `uiSchema` off one of `ObjectFieldTemplate`'s child slots.
+ *
+ * React 19 types element `props` as `unknown`, so the shape is narrowed here.
+ *
+ * @param content - The rendered child field element.
+ * @returns The child's `uiSchema`, or `undefined` when it carries none.
+ */
+function childUiSchema(content: ReactElement): Record<string, unknown> | undefined {
+  return (content.props as { uiSchema?: Record<string, unknown> }).uiSchema;
+}
+
+/** One titled group of fields, from the schema's `x-form-layout`. */
+interface FormLayoutSection {
+  title: string;
+  fields: string[];
+}
+
+/**
+ * Schema-authored form layout (`x-form-layout` on the item schema).
+ *
+ * `sections` gives the grouping and field order; `twoColumn` names fields that
+ * can sit two per row. The Signals profile form reads the same block.
+ */
+interface FormLayout {
+  sections: FormLayoutSection[];
+  twoColumn?: string[];
+}
+
+type ObjectProperty = ObjectFieldTemplateProps['properties'][number];
+
+/**
+ * Groups a section's fields into rows, pairing adjacent two-column fields.
+ *
+ * Every other field gets its own row, so no row is left half empty.
+ *
+ * @param fields - The section's visible fields, in layout order.
+ * @param twoColumn - Field names the layout marks as two-column.
+ * @returns Rows of one or two fields.
+ */
+function packRows(fields: ObjectProperty[], twoColumn: Set<string>): ObjectProperty[][] {
+  const rows: ObjectProperty[][] = [];
+  let i = 0;
+  while (i < fields.length) {
+    const current = fields[i]!;
+    const next = fields[i + 1];
+    if (twoColumn.has(current.name) && next && twoColumn.has(next.name)) {
+      rows.push([current, next]);
+      i += 2;
+    } else {
+      rows.push([current]);
+      i += 1;
+    }
+  }
+  return rows;
+}
+
+/**
+ * Renders the form as the schema's numbered sections.
+ *
+ * A section with no visible fields is skipped, and numbering counts only
+ * rendered sections. Fields not listed in the layout render after the sections.
+ */
+function SectionedObject({
+  layout,
+  properties,
+}: Readonly<{ layout: FormLayout; properties: ObjectProperty[] }>) {
+  const byName = new Map(properties.map((p) => [p.name, p]));
+  const twoColumn = new Set(layout.twoColumn ?? []);
+  const claimed = new Set<string>();
+  let sectionNumber = 0;
+
+  const sections = layout.sections.map((section) => {
+    const fields = section.fields
+      .map((name) => byName.get(name))
+      .filter((p): p is ObjectProperty => Boolean(p));
+    if (fields.length === 0) return null;
+    fields.forEach((f) => claimed.add(f.name));
+    sectionNumber += 1;
+    return { title: section.title, number: sectionNumber, rows: packRows(fields, twoColumn) };
+  });
+
+  const orphans = properties.filter((p) => !claimed.has(p.name));
+
+  return (
+    <div className="space-y-8">
+      {sections.map(
+        (section) =>
+          section && (
+            <section key={section.title}>
+              <div className="mb-5">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-(--bd-primary-50) text-[12px] font-bold text-(--bd-primary-600)">
+                    {section.number}
+                  </div>
+                  <h3 className="font-display text-[15px] font-bold tracking-tight text-ink-900">
+                    {section.title}
+                  </h3>
+                </div>
+                <div className="mt-3 h-px bg-linear-to-r from-(--bd-border) to-transparent" />
+              </div>
+              <div className="space-y-3">
+                {section.rows.map((row) =>
+                  row.length === 2 ? (
+                    <div
+                      key={row[0]!.name}
+                      className="grid grid-cols-1 gap-x-5 gap-y-3 md:grid-cols-2"
+                    >
+                      {row.map((p) => (
+                        <div key={p.name}>{p.content}</div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div key={row[0]!.name}>{row[0]!.content}</div>
+                  ),
+                )}
+              </div>
+            </section>
+          ),
+      )}
+      {orphans.map((p) => (
+        <div key={p.name}>{p.content}</div>
+      ))}
+    </div>
+  );
+}
+
 function ObjectFieldTemplate(props: ObjectFieldTemplateProps) {
-  const { properties, title, description, uiSchema } = props;
+  const { properties, title, description, uiSchema, schema } = props;
   const layout = (uiSchema?.['ui:layout'] as 'grid' | 'stack' | undefined) ?? 'grid';
-  // Skip the header when ui:title is explicitly empty / false — used to hide
-  // auto-derived property-name headings (e.g. lowercase "address" on a
-  // nested object that has no schema-level title).
+  // An empty or false `ui:title` hides the heading.
   const explicitTitle = uiSchema?.['ui:title'] as string | false | undefined;
   const showTitle = explicitTitle !== '' && explicitTitle !== false && Boolean(title);
-  // Drop child slots whose inner widget is `hidden` — otherwise an empty
-  // wrapper div lands in the grid/stack and inflates the section height.
-  const visibleProperties = properties.filter((p) => {
-    const childUi = p.content.props.uiSchema as Record<string, unknown> | undefined;
-    return childUi?.['ui:widget'] !== 'hidden';
-  });
+  // Skip hidden children so they leave no empty wrapper in the grid.
+  const visibleProperties = properties.filter(
+    (p) => childUiSchema(p.content)?.['ui:widget'] !== 'hidden',
+  );
+
+  // `x-form-layout` (root schema only) takes precedence over the flat grid.
+  const formLayout = (schema as { 'x-form-layout'?: FormLayout } | undefined)?.['x-form-layout'];
+  if (formLayout?.sections?.length) {
+    return <SectionedObject layout={formLayout} properties={visibleProperties} />;
+  }
+
   return (
     <div className="space-y-3">
       {showTitle && (
@@ -283,7 +448,7 @@ function ObjectFieldTemplate(props: ObjectFieldTemplateProps) {
         }
       >
         {visibleProperties.map((p) => {
-          const span = (p.content.props.uiSchema?.['ui:colSpan'] as 1 | 2 | undefined) ?? 1;
+          const span = (childUiSchema(p.content)?.['ui:colSpan'] as 1 | 2 | undefined) ?? 1;
           return (
             <div key={p.name} className={span === 2 ? 'md:col-span-2' : ''}>
               {p.content}
@@ -295,35 +460,61 @@ function ObjectFieldTemplate(props: ObjectFieldTemplateProps) {
   );
 }
 
+/**
+ * Reads the `itemLabel` ui option off an array field's own uiSchema.
+ *
+ * Used by both array templates; the item template passes `parentUiSchema`.
+ *
+ * @param uiSchema - The array field's uiSchema, if it declares one.
+ * @returns The configured item noun, defaulting to `entry`.
+ */
+function arrayItemLabel(uiSchema: UiSchema | undefined): string {
+  return (uiSchema?.['ui:options']?.['itemLabel'] as string | undefined) ?? 'entry';
+}
+
+/**
+ * Renders one array item with an "<Item> N" heading and Remove button.
+ *
+ * The heading and button show only when the array has more than one entry.
+ *
+ * @param props - RJSF array item props.
+ * @returns One array row, with its header when the array has several rows.
+ */
+function ArrayFieldItemTemplate(props: ArrayFieldItemTemplateProps) {
+  const { children, index, totalItems, buttonsProps, parentUiSchema } = props;
+  const itemLabel = arrayItemLabel(parentUiSchema);
+  const multiple = totalItems > 1;
+  return (
+    <div className="space-y-2">
+      {multiple && (
+        <div className="flex items-center justify-between">
+          <span className="text-[12.5px] font-semibold text-ink-500">
+            {capitalise(itemLabel)} {index + 1}
+          </span>
+          {buttonsProps.hasRemove && (
+            <button
+              type="button"
+              onClick={buttonsProps.onRemoveItem}
+              className="text-[12.5px] text-rose-500 hover:text-rose-600"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
 function ArrayFieldTemplate(props: ArrayFieldTemplateProps) {
-  const { title, items, canAdd, onAddClick, uiSchema, formContext } = props;
-  void formContext;
-  const itemLabel = (uiSchema?.['ui:options']?.['itemLabel'] as string | undefined) ?? 'entry';
-  const multiple = items.length > 1;
+  const { title, items, canAdd, onAddClick, uiSchema } = props;
+  const itemLabel = arrayItemLabel(uiSchema);
   return (
     <div className="space-y-3">
       {title && <h3 className="font-display font-bold text-[15px] text-ink-900">{title}</h3>}
-      {items.map((item) => (
-        <div key={item.key} className="space-y-2">
-          {multiple && (
-            <div className="flex items-center justify-between">
-              <span className="text-[12.5px] font-semibold text-ink-500">
-                {capitalise(itemLabel)} {item.index + 1}
-              </span>
-              {item.hasRemove && (
-                <button
-                  type="button"
-                  onClick={item.onDropIndexClick(item.index)}
-                  className="text-[12.5px] text-rose-500 hover:text-rose-600"
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          )}
-          {item.children}
-        </div>
-      ))}
+      {/* Items arrive already rendered and keyed. */}
+      {items}
       {canAdd && (
         <button
           type="button"
@@ -345,14 +536,10 @@ function TitleField(_props: TitleFieldProps) {
   return null;
 }
 
-// RJSF picks specialised widgets for `format: "email" | "uri" | "tel"` etc.
 /**
- * Multi-select dropdown for array-of-enum schemas. Visually mirrors the
- * single-select SelectWidget (same `bd-input` chrome) so users get the
- * familiar Qualification-style dropdown; picked values surface as
- * removable chips above the dropdown. Writes the field as `string[]`
- * (or `undefined` when empty) so RJSF + Ajv see the schema's expected
- * array shape.
+ * Multi-select dropdown for array-of-enum schemas.
+ *
+ * Picked values show as removable chips. Writes `string[]`, or `undefined` when empty.
  */
 function CheckboxesWidget(props: WidgetProps) {
   const { id, value, required, disabled, readonly, onChange, options, placeholder } = props;
@@ -375,10 +562,14 @@ function CheckboxesWidget(props: WidgetProps) {
   );
 }
 
-// The defaults render unstyled <input>s — alias them to TextWidget so the
-// shared `.bd-input` styling applies everywhere.
+// Default widgets are aliased to TextWidget so `.bd-input` styling applies.
 const widgets: RegistryWidgetsType = {
   TextWidget,
+  // Custom widgets, keyed by the names the uiSchema uses. Same as the Signals profile form.
+  'location-autocomplete': LocationAutocompleteWidget,
+  'location-multi': MultiLocationAutocompleteWidget,
+  'reference-autocomplete': ReferenceAutocompleteWidget,
+  phone: PhoneWidget,
   TextareaWidget,
   SelectWidget,
   DateWidget,
@@ -386,9 +577,7 @@ const widgets: RegistryWidgetsType = {
   CheckboxesWidget,
   CommaSeparatedArrayWidget,
   ConsentCheckbox: ConsentCheckboxWidget,
-  // Email + URL fields render TextWidget but pin the native HTML
-  // `type` so mobile keyboards default to the email / URL layout and
-  // the browser surfaces native autofill hints.
+  // Native input type gives the right mobile keyboard and autofill.
   EmailWidget: (props: WidgetProps) => <TextWidget {...props} type="email" />,
   URLWidget: (props: WidgetProps) => <TextWidget {...props} type="url" />,
   UpDownWidget: TextWidget,
@@ -402,11 +591,12 @@ export interface RjsfThemedFormProps<T extends GenericObjectType = GenericObject
   'validator' | 'widgets' | 'templates'
 > {
   className?: string;
+  /** The RJSF form instance, e.g. to call `validateForm()` from outside it. */
+  ref?: Ref<Form<T>>;
   /**
-   * Fired whenever schema-validity of the (visible, `x-show-if`-pruned) form
-   * changes. `true` once every visible required field is filled and valid.
-   * Lets callers gate a submit button's `disabled` without re-implementing
-   * validation. Hidden fields are pruned before the check, so they never block.
+   * Called when the validity of the visible form changes.
+   *
+   * `true` once every visible required field is valid. Hidden fields never block.
    */
   onValidityChange?: (valid: boolean) => void;
 }
@@ -416,8 +606,7 @@ export function RjsfThemedForm<T extends GenericObjectType = GenericObjectType>(
   showErrorList = false,
   liveValidate = false,
   noHtml5Validate = true,
-  // `x-show-if` requires omitting hidden/pruned values so they never validate
-  // or submit. Default both on; a caller may still override explicitly.
+  // On by default so `x-show-if`-hidden values never validate or submit.
   omitExtraData = true,
   liveOmit = true,
   schema,
@@ -426,10 +615,7 @@ export function RjsfThemedForm<T extends GenericObjectType = GenericObjectType>(
   onValidityChange,
   ...props
 }: RjsfThemedFormProps<T>) {
-  // Customised validator with Ajv's 2020 build. The default RJSF validator
-  // ships draft-07/2019-09; our schemas declare
-  // `$schema: ".../draft/2020-12/schema"` and Ajv rejects the meta-ref
-  // unless we hand it an Ajv class that already knows draft 2020-12.
+  // Uses Ajv's 2020 build because the schemas declare draft 2020-12.
   const validator = customizeValidator({
     AjvClass: Ajv2020 as unknown as Parameters<typeof customizeValidator>[0] extends {
       AjvClass?: infer C;
@@ -438,35 +624,25 @@ export function RjsfThemedForm<T extends GenericObjectType = GenericObjectType>(
       : never,
   }) as unknown as ValidatorType<T, RJSFSchema, GenericObjectType>;
 
-  // Apply `x-show-if`: prune fields whose control value doesn't match, clearing
-  // their data. The pruned schema and cleared values feed RJSF directly so
-  // hidden fields never render, validate, or submit.
+  // Apply `x-show-if`: hidden fields are removed and their values cleared.
   const currentData = (formData ?? {}) as Record<string, unknown>;
   const resolved = resolveVisibleSchema(schema as RJSFSchema, currentData);
   const hiddenKey = resolved.hidden.join('|');
 
-  // Memoise the rendered schema on (schema identity, visible-set signature) so
-  // its object identity is stable while the visible set is unchanged — otherwise
-  // RJSF rebuilds fields on every keystroke and text inputs lose focus. Strip
-  // `x-show-if` so Ajv never sees the custom keyword.
-  // Keyed on (schema identity, visible-set signature): resolved.schema depends
-  // only on those two, so recomputing with the latest `currentData` yields the
-  // same pruned shape while keeping a stable identity across keystrokes.
+  // Memoised on the schema and the visible-field set so inputs keep focus
+  // while typing. `x-show-if` is stripped so Ajv never sees it.
   const renderSchema = useMemo(
     () => stripShowIf(resolveVisibleSchema(schema as RJSFSchema, currentData).schema),
     [schema, hiddenKey],
   );
 
-  // Schema-validity of the visible (pruned) form. Drives a caller's submit
-  // gate via onValidityChange. Computed against renderSchema + cleared data, so
-  // `x-show-if`-hidden required fields are already excluded and never block.
+  // Validity of the visible form only.
   const isValid = validator.isValid(
     renderSchema as RJSFSchema,
     resolved.formData as T,
     renderSchema as RJSFSchema,
   );
-  // Keep the callback in a ref so the emit effect fires only on validity flips,
-  // not on every parent re-render that passes a fresh inline callback.
+  // Ref so the effect fires only when validity changes.
   const validityCb = useRef(onValidityChange);
   validityCb.current = onValidityChange;
   useEffect(() => {
@@ -485,8 +661,7 @@ export function RjsfThemedForm<T extends GenericObjectType = GenericObjectType>(
         schema={renderSchema as RJSFSchema}
         formData={resolved.formData as T}
         onChange={(e: IChangeEvent<T>, id?: string) => {
-          // Re-run the evaluator on the new values so hidden fields are cleared
-          // before the change bubbles to the parent's controlled state.
+          // Clear newly hidden fields before passing the change up.
           const next = (e.formData ?? {}) as Record<string, unknown>;
           const cleared = resolveVisibleSchema(schema as RJSFSchema, next).formData;
           onChange?.({ ...e, formData: cleared as T }, id);
@@ -497,6 +672,7 @@ export function RjsfThemedForm<T extends GenericObjectType = GenericObjectType>(
           FieldTemplate,
           ObjectFieldTemplate,
           ArrayFieldTemplate,
+          ArrayFieldItemTemplate,
           TitleFieldTemplate: TitleField,
         }}
       />

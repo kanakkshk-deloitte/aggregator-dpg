@@ -40,4 +40,26 @@ describe('<StatusPill />', () => {
     renderPill('incomplete');
     expect(screen.getByText('Incomplete')).toBeInTheDocument();
   });
+
+  it('renders the inactive and satisfied labels', () => {
+    renderPill('inactive');
+    expect(screen.getByText('Inactive')).toBeInTheDocument();
+    renderPill('satisfied');
+    expect(screen.getByText('Satisfied')).toBeInTheDocument();
+  });
+
+  it('falls back to the inactive style/label for an unrecognised status', () => {
+    // Simulates upstream data drifting from the known status union — the `??`
+    // fallback in the component must degrade gracefully rather than throw.
+    renderPill('unknown-status' as unknown as ComponentProps<typeof StatusPill>['status']);
+    expect(screen.getByText('Inactive')).toBeInTheDocument();
+  });
+
+  it('renders a pulsing indicator only for the at-risk status', () => {
+    const { container: atRisk } = renderPill('at-risk');
+    expect(atRisk.querySelector('.animate-pulse-dot')).toBeInTheDocument();
+
+    const { container: active } = renderPill('active');
+    expect(active.querySelector('.animate-pulse-dot')).toBeNull();
+  });
 });

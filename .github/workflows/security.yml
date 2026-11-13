@@ -1,0 +1,72 @@
+# Security scanning (Sec-Audit A2 — Blue-Dots-Economy/signals-dpg#300)
+#
+# Thin caller. All scanning logic lives once in bluedots-automation so the six
+# in-scope repos can't drift apart; see that repo's
+# .github/workflows/security-scan.yml and signals-dpg
+# docs/operations/security-scanning-a2*.md.
+#
+# What runs here (language: ts, no image-refs, gitleaks on):
+#   * trivy-fs    — dependency CVEs from pnpm-lock.yaml + Dockerfile/IaC
+#                   misconfig + filesystem secret detection -> SARIF
+#   * deps-audit  — `pnpm audit` as a second opinion (log only, no SARIF)
+#   * image-scan  — SKIPPED: no image-refs passed. The api/web/worker images are
+#                   scanned in ci.yml's `docker` job, and the keycloak-server /
+#                   keycloak-theme images in their own build workflows, against
+#                   the freshly-built artifact rather than a registry pull.
+#   * gitleaks    — git-history secret scan. NOW ON: run-gitleaks defaults to
+#                   true as of bluedots-automation#253, which also made the scan
+#                   fail closed. Native GitHub secret scanning is not a
+#                   substitute -- on a free public repo it matches partner
+#                   patterns (provider-registered token formats) and not custom
+#                   high-entropy secrets such as Keycloak client secrets, so the
+#                   two are complementary rather than redundant.
+#
+# Report-only (`block: false`): findings land in Security > Code scanning and the
+# job still passes. Green means "the scan ran", NOT "nothing found". Flip to
+# `block: true` (fail on HIGH/CRITICAL) only after Phase-B triage, otherwise the
+# pre-existing alert backlog (76 open Dependabot alerts here, the largest of the
+# six repos) would red-wall every PR.
+#
+# NOTE: this is deliberately NOT wired into ci.yml. The repo's required-check
+# policy treats `CI` as the gate; keeping the scan a separate workflow means it
+# reports independently and cannot turn the required check red.
+#
+# Pinned @feature: the reusable workflow currently only exists on that branch of
+# bluedots-automation. Repin to @main once it is promoted feature -> develop -> main.
+
+name: security
+
+on:
+  pull_request:
+    branches: [feature, develop, main]
+  push:
+    branches: [develop, main]
+  # Monthly sweep: new CVEs get published against code nobody has touched.
+  schedule:
+    - cron: "0 3 1 * *"
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    # Declared here as well as in the reusable workflow: a called workflow cannot
+    # escalate beyond what the caller grants, so without security-events: write
+    # the SARIF upload fails with a 403 on repos whose default token is read-only.
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
+    # Pinned to a full commit SHA (githubactions:S7637). `@feature` was a
+    # MUTABLE branch ref, so main was silently running whatever that branch
+    # happened to hold — and Sonar counts it as a vulnerability, which is what
+    # put main's Security Rating on New Code at C. This SHA is bluedots-automation
+    # `main`, which is the ref signals-dpg/docs/operations/security-scanning-a2-callers.md
+    # prescribes for callers; bump it deliberately when that workflow changes.
+    uses: Blue-Dots-Economy/bluedots-automation/.github/workflows/security-scan.yml@58fb1d8f0bdfc62c304ed45ffbc0ba5ba0912fe9  # main 2026-10-29
+    with:
+      language: ts
+      node-version: "24"   # matches engines.node (>=24) and ci.yml
+      block: false

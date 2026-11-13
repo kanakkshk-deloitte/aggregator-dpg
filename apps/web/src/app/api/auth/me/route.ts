@@ -1,7 +1,7 @@
 /**
  * Returns the public profile of the active session.
  *
- * Tokens never leave the BFF — only safe identity claims are returned.
+ * Tokens never leave the BFF; only identity claims are returned.
  *
  * GET /api/auth/me  → 200 { sub, email?, phone?, name? } | 401
  */

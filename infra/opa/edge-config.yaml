@@ -1,0 +1,16 @@
+# OPA configuration for the edge (docs/rbac/rbac-edge-enforcement.md §2).
+#
+# Used with the opa-envoy-plugin build (`openpolicyagent/opa:*-envoy*`). Besides
+# the REST API on :8181 (the api's own decisions and its catalogue push to
+# data.catalogue), it serves Envoy's ext_authz gRPC check on :9191 from
+# data.rbac.edge.decision (policy/rbac/edge.rego).
+#
+# Decision logs stay off: their input carries the verified token's payload
+# (email, phone), which must not be logged. Envoy's access log records each
+# edge outcome instead, without personal data.
+plugins:
+  envoy_ext_authz_grpc:
+    addr: 0.0.0.0:9191
+    path: rbac/edge/decision
+    dry-run: false
+    enable-reflection: false

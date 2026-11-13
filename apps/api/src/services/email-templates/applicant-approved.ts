@@ -1,50 +1,36 @@
 /**
- * Applicant-approved email — sent on `approve`. Welcomes the user and
- * points them at the portal sign-in page. Uses OTP login, so no password
- * is included.
+ * Applicant-approved email — sent on `approve`. Welcomes the user and points
+ * them at the portal sign-in page. Uses OTP login, so no password is included.
+ *
+ * Belongs to `@aggregator-dpg/api`. Copy lives in the properties layers under
+ * `applicant_approved.*` and the layout on the case registry entry; this
+ * module gives the case a typed signature.
  */
 
-import { ctaButton, escapeHtml, getEmailBrand, renderShell } from './shared.js';
+import { renderCase, type RenderedEmail } from './render-case.js';
 
+/**
+ * Template inputs for the applicant-approved email.
+ */
 export interface ApplicantApprovedVars {
   contactName: string;
   association: string;
-  identifier: string; // email or phone the user registered with
+  /** Email or phone the user registered with. */
+  identifier: string;
   signInUrl: string;
 }
 
-export function renderApplicantApproved(v: ApplicantApprovedVars): {
-  subject: string;
-  html: string;
-  text: string;
-} {
-  const brand = getEmailBrand();
-  const subject = `Your ${brand.short_name} aggregator account is approved`;
-  const body = `
-<h1 style="font-size:22px;font-weight:700;letter-spacing:-0.01em;margin:0 0 12px;color:#0b1020;">
-  Welcome to ${escapeHtml(brand.short_name)}, ${escapeHtml(v.contactName)}.
-</h1>
-<p style="margin:0 0 14px;font-size:14px;color:#475069;line-height:1.55;">
-  Your application for <strong>${escapeHtml(v.association)}</strong> has been approved. You can sign in to the ${escapeHtml(brand.long_name)} now.
-</p>
-<p style="margin:0 0 22px;font-size:14px;color:#475069;line-height:1.55;">
-  Use the email or mobile number you registered (<strong>${escapeHtml(v.identifier)}</strong>) — we'll send a one-time code to verify it.
-</p>
-<div style="margin:0 0 18px;">
-  ${ctaButton(`Sign in to ${brand.short_name}`, v.signInUrl, 'primary')}
-</div>
-<p style="margin:0;font-size:12px;color:#7c84a6;line-height:1.55;">
-  Trouble signing in? Reply to this email and the ${escapeHtml(brand.short_name)} team will help.
-</p>
-`;
-  const text = `Welcome to ${brand.short_name}, ${v.contactName}.
-
-Your application for ${v.association} has been approved. You can sign in to the ${brand.long_name} now.
-
-Use the email or mobile number you registered (${v.identifier}) — we'll send a one-time code to verify it.
-
-Sign in: ${v.signInUrl}
-`;
-
-  return { subject, html: renderShell({ preheader: subject, bodyHtml: body }), text };
+/**
+ * Renders the applicant-approved email.
+ *
+ * @param v - Contact name, association, registered identifier, sign-in URL.
+ * @returns The `subject`, `html`, and `text` parts ready for the mailer.
+ */
+export function renderApplicantApproved(v: ApplicantApprovedVars): RenderedEmail {
+  return renderCase('applicant_approved', {
+    contactName: v.contactName,
+    association: v.association,
+    identifier: v.identifier,
+    signInUrl: v.signInUrl,
+  });
 }

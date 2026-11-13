@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.bluedots.org/aggregator/registration.v1.json",
+  "title": "Coordinator Registration",
+  "description": "Signup payload for a new Aggregator account. Captures only the identity, contact, optional locations, and consent needed to create a Keycloak user and let the aggregator log in. Personas, services, verified certificates, and the contact-name label are filled in afterwards through the profile-completion flow.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "type", "contact", "consent"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "title": "Organisation Name",
+      "minLength": 2,
+      "maxLength": 200,
+      "examples": ["ABC Limited", "XYZ Foundation"]
+    },
+    "type": {
+      "type": "string",
+      "title": "Aggregator Type",
+      "enum": ["seeker", "provider"]
+    },
+    "sub_org_name": {
+      "type": "string",
+      "title": "Sub-Org / Division / Vertical / Institution Name",
+      "description": "Any specific sub-identity needed for identification and tracking. May be the same as the organisation name.",
+      "maxLength": 200,
+      "x-updatable": true
+    },
+    "url": {
+      "type": "string",
+      "title": "Website",
+      "format": "uri",
+      "maxLength": 2048,
+      "examples": ["https://abclimited.org"],
+      "x-org-detail": true
+    },
+    "locations": {
+      "type": "array",
+      "title": "Location",
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["geo", "address"],
+        "properties": {
+          "geo": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "coordinates"],
+            "default": {
+              "type": "Point",
+              "coordinates": [0, 0]
+            },
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "Point",
+                  "LineString",
+                  "Polygon",
+                  "MultiPoint",
+                  "MultiLineString",
+                  "MultiPolygon",
+                  "GeometryCollection"
+                ],
+                "default": "Point"
+              },
+              "coordinates": {
+                "type": "array",
+                "default": [0, 0]
+              }
+            }
+          },
+          "address": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "streetAddress": {
+                "type": "string",
+                "title": "Address",
+                "maxLength": 500
+              }
+            }
+          }
+        }
+      },
+      "x-org-detail": true
+    },
+    "contact": {
+      "type": "object",
+      "title": "Primary Contact",
+      "additionalProperties": false,
+      "required": ["name", "phone", "email"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Contact Name",
+          "minLength": 2,
+          "maxLength": 200,
+          "examples": ["Rajesh Kumar"]
+        },
+        "phone": {
+          "type": "string",
+          "title": "Phone",
+          "pattern": "^(\\+?\\d{10,15}|\\d{10})$",
+          "examples": ["+919876543210", "9876543210"]
+        },
+        "email": {
+          "type": "string",
+          "title": "Email",
+          "format": "email",
+          "maxLength": 320,
+          "examples": ["admin@abclimited.org"]
+        }
+      }
+    },
+    "consent": {
+      "type": "object",
+      "title": "Terms & Privacy Consent",
+      "additionalProperties": false,
+      "required": ["value"],
+      "properties": {
+        "value": {
+          "type": "boolean",
+          "title": "I have read and accept the terms and privacy policy"
+        },
+        "given_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "valid_till": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

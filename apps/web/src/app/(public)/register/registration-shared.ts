@@ -1,11 +1,8 @@
 /**
- * Shared helpers + types for the public registration surfaces.
+ * Shared helpers and types for the coordinator and org registration forms.
  *
- * Both the coordinator form (`RegisterView`) and the org form
- * (`OrgRegisterForm`) render RJSF, POST to a BFF proxy, and surface the same
- * canonical error envelope. This module holds the pure logic they share:
- * humanising Ajv validation errors against schema titles and parsing the API
- * error envelope. Kept framework-free so it is trivially unit-testable.
+ * Holds the framework-free logic both forms use: readable validation errors,
+ * API error parsing, submit, and payload shaping.
  *
  * @module apps/web/src/app/(public)/register/registration-shared
  */
@@ -16,7 +13,16 @@ import type { RJSFSchema } from '@rjsf/utils';
 export type SubmitState =
   | { status: 'idle' }
   | { status: 'submitting' }
-  | { status: 'done'; refId: string }
+  /**
+   * Submitted successfully. `outcome` separates a new pending registration
+   * from an already-approved org whose invite link was re-sent.
+   */
+  | {
+      status: 'done';
+      refId: string;
+      outcome?: 'pending' | 'already_registered';
+      mailSent?: boolean;
+    }
   | { status: 'error'; title: string; detail: string; code: string; requestId: string };
 
 /** Canonical API error envelope (partial — every field optional on the wire). */
@@ -26,6 +32,7 @@ export interface ApiErrorEnvelope {
     title?: string;
     detail?: string;
     requestId?: string;
+    fields?: Record<string, unknown>;
   };
 }
 
@@ -84,9 +91,7 @@ export function lookupTitle(schema: RJSFSchema, dottedPath: string): string | un
 }
 
 /**
- * Converts Ajv-shaped validation errors into user-facing sentences keyed off
- * each field's schema `title` (falling back to a title-cased key, then the
- * raw message, then the schema path).
+ * Converts Ajv validation errors into readable lines using each field's schema `title`.
  *
  * @param errs - Raw Ajv errors from RJSF `onError`.
  * @param schema - The (pruned) schema the form validated against.
@@ -98,7 +103,10 @@ export function humaniseValidationErrors(errs: AjvLikeError[], schema: RJSFSchem
   for (const e of errs) {
     const propPath = (e.property ?? '').replace(/^\./, '');
     const missing = (e.params?.['missingProperty'] as string | undefined) ?? undefined;
-    const fullPath = missing ? [propPath, missing].filter(Boolean).join('.') : propPath;
+    // RJSF already ends a missing field's path with the field; Ajv gives only the parent.
+    const endsWithMissing = missing && (propPath === missing || propPath.endsWith(`.${missing}`));
+    const fullPath =
+      missing && !endsWithMissing ? [propPath, missing].filter(Boolean).join('.') : propPath;
     const titleFromSchema = lookupTitle(schema, fullPath);
     const fallbackKey = missing || fullPath.split('.').pop() || '';
     const resolvedLabel =
@@ -125,32 +133,32 @@ export function humaniseValidationErrors(errs: AjvLikeError[], schema: RJSFSchem
 }
 
 /**
- * Extracts a display-ready error from the canonical API envelope, applying
- * sensible fallbacks when the server response is missing fields.
+ * Extracts a display-ready error from the API error envelope, with fallbacks for missing fields.
  *
  * @param body - Parsed response body (may not be an envelope).
  * @param fallbackStatus - HTTP status, used to synthesise a detail line.
  * @param fallbackReqId - Request id to attribute when the body omits one.
- * @returns Normalised `{ title, detail, code, requestId }`.
+ * @returns Normalised `{ title, detail, code, requestId }`, plus `fields` when the body has them.
  */
 export function parseError(
   body: unknown,
   fallbackStatus: number,
   fallbackReqId: string,
-): { title: string; detail: string; code: string; requestId: string } {
+): SubmitError {
   const env = body as ApiErrorEnvelope;
   return {
     title: env?.error?.title ?? 'Submission failed',
     detail: env?.error?.detail ?? `The server returned HTTP ${fallbackStatus}.`,
     code: env?.error?.code ?? 'UNKNOWN',
     requestId: env?.error?.requestId ?? fallbackReqId,
+    ...(env?.error?.fields ? { fields: env.error.fields } : {}),
   };
 }
 
 /**
- * Returns a copy of an RJSF schema with `title`/`description` stripped — the
- * register page owns the heading and the schema description is an API-contract
- * note, not form UI copy. Shared by the coordinator + org forms.
+ * Returns a copy of an RJSF schema without `title` and `description`.
+ *
+ * The page renders its own heading, and the schema description is not form copy.
  *
  * @param schema - The loaded JSON Schema.
  * @returns A shallow clone without `title`/`description`.
@@ -162,16 +170,21 @@ export function stripFormChrome(schema: RJSFSchema): RJSFSchema {
   return clone;
 }
 
+/** A failed submission, ready to display. `fields` is the API's `error.fields`, when present. */
+export interface SubmitError {
+  title: string;
+  detail: string;
+  code: string;
+  requestId: string;
+  fields?: Record<string, unknown>;
+}
+
 /** Result of {@link submitRegistration}: parsed success body or display error. */
 export type SubmitResult =
-  | { ok: true; body: Record<string, unknown> }
-  | { ok: false; error: { title: string; detail: string; code: string; requestId: string } };
+  { ok: true; body: Record<string, unknown> } | { ok: false; error: SubmitError };
 
 /**
  * POSTs a registration payload to a BFF endpoint and normalises the outcome.
- * Shared by the coordinator and org forms so the fetch → parse → error-envelope
- * handling lives in one place; the caller maps the success body to its own
- * reference id (aggregator_id vs slug).
  *
  * @param endpoint - BFF route, e.g. `/api/aggregator/register`.
  * @param payload - JSON body to send.
@@ -223,5 +236,86 @@ export function stampConsent(
     ...(existing ?? {}),
     given_at: now.toISOString(),
     valid_till: oneYear.toISOString(),
+  };
+}
+
+/**
+ * Returns a copy of an RJSF schema with the `consent` block removed.
+ *
+ * Consent is collected by {@link ConsentGate} after the form is valid, so the
+ * form must not render or require it. The API still requires `consent`; the
+ * gate adds it at submit time.
+ *
+ * @param schema - The loaded JSON Schema.
+ * @returns A copy without the consent property or its `required` entry.
+ */
+export function stripConsentBlock(schema: RJSFSchema): RJSFSchema {
+  const properties = { ...((schema.properties ?? {}) as Record<string, unknown>) };
+  if (!('consent' in properties)) return schema;
+  delete properties['consent'];
+  const clone: RJSFSchema = { ...schema, properties: properties as RJSFSchema['properties'] };
+  if (Array.isArray(schema.required)) {
+    clone.required = schema.required.filter((k) => k !== 'consent');
+  }
+  return clone;
+}
+
+/** Coordinate part of a resolved place. The widget's `ResolvedPlace` satisfies it. */
+export interface ResolvedCoordinate {
+  lat: number;
+  lng: number;
+}
+
+/**
+ * Attaches the resolved coordinate to an organisation submit body.
+ *
+ * The org body has no location array, so `coordinates` sits at the top level.
+ * Kept as a function so tests can check the `[longitude, latitude]` order.
+ *
+ * @param payload - The submit body.
+ * @param place - The coordinate the widget resolved, or null if none.
+ * @returns A copy carrying `coordinates`, or the original when none resolved.
+ */
+export function withOrgCoordinates(
+  payload: Record<string, unknown>,
+  place: ResolvedCoordinate | null,
+): Record<string, unknown> {
+  if (!place) return payload;
+  return {
+    ...payload,
+    // GeoJSON order is [longitude, latitude].
+    coordinates: [place.lng, place.lat],
+  };
+}
+
+/**
+ * Stitches a resolved coordinate into the coordinator payload's first location.
+ *
+ * The address widget reports its coordinate outside `formData`, so it is merged
+ * in at submit. When the user did not pick a suggestion, the payload is
+ * returned unchanged and keeps its `[0,0]` placeholder (`geo` is required).
+ *
+ * @param payload - The submit body, carrying the form's `locations` array.
+ * @param place - The coordinate the widget resolved, or null if none.
+ * @returns A copy with `locations[0].geo.coordinates` set, or the original.
+ */
+export function withResolvedCoordinates(
+  payload: Record<string, unknown>,
+  place: ResolvedCoordinate | null,
+): Record<string, unknown> {
+  if (!place) return payload;
+  const locations = payload['locations'];
+  if (!Array.isArray(locations) || locations.length === 0) return payload;
+  const [first, ...rest] = locations as Record<string, unknown>[];
+  return {
+    ...payload,
+    locations: [
+      {
+        ...first,
+        // GeoJSON order is [longitude, latitude].
+        geo: { type: 'Point', coordinates: [place.lng, place.lat] },
+      },
+      ...rest,
+    ],
   };
 }

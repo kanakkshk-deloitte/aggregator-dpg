@@ -1,0 +1,154 @@
+# Envoy in front of aggregator-api (docs/rbac/rbac-edge-enforcement.md §2).
+#
+# Every request is checked before it reaches the API:
+#   1. jwt_authn verifies a Keycloak access token when one is present (a bad
+#      token is 401 here); a request without one goes on, and the policy
+#      decides whether the route needs one.
+#   2. ext_authz asks OPA (opa-envoy-plugin, data.rbac.edge.decision) with the
+#      verified payload. Fail closed: no answer from OPA refuses the request.
+#   3. The router forwards an allowed request to the API.
+#
+# The access log records each edge outcome (allow / would_deny / deny) with
+# the request id the API logs under, and no personal data: the path is logged
+# without its query string and no token or header values are logged.
+#
+# A template: each placeholder (a variable name between double underscores)
+# is replaced with that environment variable before Envoy starts, because hosts, ports and Keycloak's issuer differ
+# between the compose stacks and a deployment (Envoy as a sidecar in the API
+# pod, everything on 127.0.0.1). infra/envoy/render.sh does it for compose; the
+# deployment's init container applies the same rule. A missing variable stops
+# the start. The names: ADMIN_ADDRESS, LISTEN_PORT, API_HOST, API_PORT,
+# OPA_HOST, KEYCLOAK_HOST, KEYCLOAK_PORT, JWT_ISSUER (the tokens' `iss`) and
+# JWKS_URI (Keycloak's signing keys, fetched through the keycloak cluster).
+admin:
+  address:
+    socket_address: { address: __ADMIN_ADDRESS__, port_value: 9901 }
+
+static_resources:
+  listeners:
+    - name: aggregator_api
+      address:
+        socket_address: { address: 0.0.0.0, port_value: __LISTEN_PORT__ }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: aggregator_api
+                # Keep the web BFF's x-request-id, so one id spans web, edge and API.
+                preserve_external_request_id: true
+                generate_request_id: true
+                access_log:
+                  - name: envoy.access_loggers.stdout
+                    typed_config:
+                      '@type': type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                      log_format:
+                        formatters:
+                          - name: envoy.formatter.req_without_query
+                            typed_config:
+                              '@type': type.googleapis.com/envoy.extensions.formatter.req_without_query.v3.ReqWithoutQuery
+                        json_format:
+                          operation: 'rbac.edge'
+                          time: '%START_TIME%'
+                          request_id: '%REQ(X-REQUEST-ID)%'
+                          method: '%REQ(:METHOD)%'
+                          path: '%REQ_WITHOUT_QUERY(:PATH)%'
+                          status: '%RESPONSE_CODE%'
+                          outcome: '%DYNAMIC_METADATA(envoy.filters.http.ext_authz:rbac_edge:outcome)%'
+                          mode: '%DYNAMIC_METADATA(envoy.filters.http.ext_authz:rbac_edge:mode)%'
+                          route: '%DYNAMIC_METADATA(envoy.filters.http.ext_authz:rbac_edge:route)%'
+                          permission: '%DYNAMIC_METADATA(envoy.filters.http.ext_authz:rbac_edge:permission)%'
+                          code: '%DYNAMIC_METADATA(envoy.filters.http.ext_authz:rbac_edge:code)%'
+                          latency_ms: '%DURATION%'
+                route_config:
+                  name: aggregator_api
+                  virtual_hosts:
+                    - name: aggregator_api
+                      domains: ['*']
+                      routes:
+                        - match: { prefix: '/' }
+                          # Exports and bulk reads can be slow; match the API, not Envoy's 15 s default.
+                          route: { cluster: aggregator_api, timeout: 300s }
+                http_filters:
+                  - name: envoy.filters.http.jwt_authn
+                    typed_config:
+                      '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+                      providers:
+                        keycloak:
+                          issuer: __JWT_ISSUER__
+                          remote_jwks:
+                            http_uri:
+                              uri: __JWKS_URI__
+                              cluster: keycloak
+                              timeout: 5s
+                            cache_duration: 300s
+                          # The API verifies the token again (defense in depth).
+                          forward: true
+                          payload_in_metadata: jwt_payload
+                      rules:
+                        - match: { prefix: '/' }
+                          requires:
+                            requires_any:
+                              requirements:
+                                - provider_name: keycloak
+                                - allow_missing: {}
+                  - name: envoy.filters.http.ext_authz
+                    typed_config:
+                      '@type': type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                      transport_api_version: V3
+                      failure_mode_allow: false
+                      metadata_context_namespaces: ['envoy.filters.http.jwt_authn']
+                      grpc_service:
+                        envoy_grpc: { cluster_name: opa }
+                        timeout: 0.5s
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+    - name: aggregator_api
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment:
+        cluster_name: aggregator_api
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  {
+                    address:
+                      { socket_address: { address: __API_HOST__, port_value: __API_PORT__ } },
+                  }
+    - name: opa
+      type: STRICT_DNS
+      connect_timeout: 1s
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: opa
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  { address: { socket_address: { address: __OPA_HOST__, port_value: 9191 } } }
+    - name: keycloak
+      type: STRICT_DNS
+      connect_timeout: 2s
+      # Start serving without waiting for Keycloak's DNS: the edge must not stay
+      # down (every route, public ones included) because Keycloak's name does not
+      # resolve yet. Until it does, a request with a token is refused (401: its
+      # signature cannot be checked), so this fails closed.
+      wait_for_warm_on_init: false
+      load_assignment:
+        cluster_name: keycloak
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  {
+                    address:
+                      {
+                        socket_address:
+                          { address: __KEYCLOAK_HOST__, port_value: __KEYCLOAK_PORT__ },
+                      },
+                  }

@@ -1,7 +1,7 @@
 /**
- * Public surface and factory for the registration links store.
+ * Public surface and factory for the registration links store (`@aggregator-dpg/api`).
  *
- * Returns a process-wide singleton. Tests override via `_setRegistrationLinksStore`.
+ * Returns a process-wide singleton. Tests override it with `_setRegistrationLinksStore`.
  */
 
 import type { RegistrationLinksStoreBase } from './interface.js';
@@ -15,7 +15,7 @@ export function getRegistrationLinksStore(): RegistrationLinksStoreBase {
   return instance;
 }
 
-/** Test helper — replace the singleton. */
+/** Test helper; replaces the singleton. */
 export function _setRegistrationLinksStore(s: RegistrationLinksStoreBase | null): void {
   instance = s;
 }

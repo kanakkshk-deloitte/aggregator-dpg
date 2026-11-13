@@ -1,14 +1,11 @@
 /**
- * Worker entrypoint.
+ * Worker app entrypoint.
  *
- * Wires BullMQ workers for the onboarding pipeline. At slice 9 this
- * exposes only the File Processor (`bulk-file-process` queue). Subsequent
- * slices add the Row Processor, Finaliser, and Metrics Aggregator workers
- * alongside.
+ * Starts the health server and the BullMQ consumers for the roles in
+ * `WORKER_ROLES`, and registers the cron schedulers when `cron` runs here.
  */
 
-// Load apps/worker/.env into process.env before config.js parses it (dev only;
-// no-op when the file is absent, e.g. Docker/prod inject env directly).
+// Load apps/worker/.env before config.js parses env. No-op when the file is absent.
 import './env.js';
 
 import { Queue, Worker } from 'bullmq';
@@ -18,6 +15,7 @@ import {
   type BulkFileProcessJob,
   type BulkFinaliseJob,
   type BulkRowProcessJob,
+  type CampaignProcessJob,
   type CronWatchdogJob,
   type LinkMetricsRollupJob,
 } from '@aggregator-dpg/queue';
@@ -29,14 +27,16 @@ import { processBulkRow } from './jobs/bulk-row-process.js';
 import { finaliseBulk } from './jobs/bulk-finalise.js';
 import { rollupLinkMetrics } from './jobs/link-metrics-rollup.js';
 import { runWatchdog } from './jobs/cron-watchdog.js';
+import { processCampaignJob } from './jobs/campaign-process.js';
 import { getRedis, closeRedis } from './services/redis.js';
 import { closeQueues } from './services/bulk-queue.js';
 import { parseWorkerRoles, missingRoles } from './worker-roles.js';
+import { startHealthServer } from './health.js';
 
 async function main(): Promise<void> {
   const connection = getRedis();
-  // Which consumers this process runs. Default (unset) = all, preserving the
-  // single-process deployment; `WORKER_ROLES=file` isolates the parser.
+  const healthServer = startHealthServer(config.HEALTH_PORT, connection);
+  // Consumers this process runs. Unset means all.
   const roles = parseWorkerRoles(config.WORKER_ROLES);
 
   const workers: Array<readonly [string, Worker]> = [];
@@ -74,6 +74,21 @@ async function main(): Promise<void> {
     ]);
   }
 
+  if (roles.has('campaign')) {
+    workers.push([
+      'campaignProcess',
+      new Worker<CampaignProcessJob>(
+        QueueName.CampaignProcess,
+        async (job) =>
+          processCampaignJob(job.data, {
+            attempt: job.attemptsMade + 1,
+            maxAttempts: job.opts.attempts ?? 1,
+          }),
+        { connection, concurrency: config.CAMPAIGN_CONCURRENCY },
+      ),
+    ]);
+  }
+
   if (roles.has('cron')) {
     workers.push([
       'linkMetricsRollup',
@@ -91,19 +106,15 @@ async function main(): Promise<void> {
       }),
     ]);
 
-    // Repeatable cron ticks. Threshold-triggered fan-in for metrics rollup
-    // can be added later — cron-only is sufficient for MVP.
+    // Repeatable cron ticks.
     const linkMetricsQueue = new Queue<LinkMetricsRollupJob>(QueueName.LinkMetricsRollup, {
       connection,
       defaultJobOptions: DEFAULT_JOB_OPTS,
     });
-    await linkMetricsQueue.add(
-      'tick',
-      { tick: Date.now() },
-      {
-        repeat: { every: config.LINK_METRICS_ROLLUP_INTERVAL_MS },
-        jobId: 'link-metrics-rollup-tick',
-      },
+    await linkMetricsQueue.upsertJobScheduler(
+      'link-metrics-rollup-tick',
+      { every: config.LINK_METRICS_ROLLUP_INTERVAL_MS },
+      { name: 'tick', data: { tick: Date.now() } },
     );
     queues.push(linkMetricsQueue);
 
@@ -111,21 +122,19 @@ async function main(): Promise<void> {
       connection,
       defaultJobOptions: DEFAULT_JOB_OPTS,
     });
-    await watchdogQueue.add(
-      'tick',
-      { tick: Date.now() },
-      { repeat: { every: config.WATCHDOG_INTERVAL_MS }, jobId: 'cron-watchdog-tick' },
+    await watchdogQueue.upsertJobScheduler(
+      'cron-watchdog-tick',
+      { every: config.WATCHDOG_INTERVAL_MS },
+      { name: 'tick', data: { tick: Date.now() } },
     );
     queues.push(watchdogQueue);
 
-    // One-shot cleanup: removed cron-driven keycloak-sync. If a previous worker
-    // run registered the repeatable, drop it from Redis so it does not keep
-    // firing without a consumer.
+    // Remove any `keycloak-sync` scheduler left in Redis; it has no consumer.
     const legacyKeycloakSyncQueue = new Queue('keycloak-sync', { connection });
     try {
-      const repeatables = await legacyKeycloakSyncQueue.getRepeatableJobs();
-      for (const r of repeatables) {
-        await legacyKeycloakSyncQueue.removeRepeatableByKey(r.key);
+      const schedulers = await legacyKeycloakSyncQueue.getJobSchedulers();
+      for (const s of schedulers) {
+        await legacyKeycloakSyncQueue.removeJobScheduler(s.key);
       }
     } finally {
       await legacyKeycloakSyncQueue.close();
@@ -141,10 +150,8 @@ async function main(): Promise<void> {
     });
   }
 
-  // Fleet-completeness sanity check: a process running a strict subset of roles
-  // is valid only if the complement runs in another deployment. Warn so a
-  // single-pod misconfiguration doesn't silently strand uploads (no consumer
-  // for finalise, or no cron watchdog to fail stuck uploads out).
+  // Warn when this process runs only some roles. The rest must run elsewhere,
+  // or uploads and campaigns stall.
   const uncovered = missingRoles(roles);
   if (uncovered.length > 0) {
     logger.warn({
@@ -166,6 +173,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ operation: 'worker.shutdown', signal });
+    await new Promise<void>((resolve) => healthServer.close(() => resolve()));
     await Promise.all(workers.map(([, w]) => w.close()));
     await Promise.all(queues.map((q) => q.close()));
     await closeQueues();

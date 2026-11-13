@@ -1,10 +1,8 @@
 /**
  * Authenticated aggregator profile page.
  *
- * Server Component: loads the same registration JSON Schema the public
- * `/register` page uses (single source of truth) and hands it to a read-only
- * client view. Per issue #470 the profile mirrors the registration form and
- * cannot be edited in place — update requests are handled out-of-band.
+ * Server Component that loads the registration JSON Schema used by `/register`
+ * and passes it to a read-only client view.
  */
 
 import type { Metadata } from 'next';

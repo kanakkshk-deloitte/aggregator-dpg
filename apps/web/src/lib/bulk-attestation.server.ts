@@ -1,14 +1,9 @@
 /**
- * Server-side loader for the bulk-upload operator attestation statement
- * (#522 Task 1).
+ * Server-side loader for the bulk-upload operator attestation statement.
  *
- * Read the same way the registration Terms/Privacy copy is read — server-side
- * via `@aggregator-dpg/config-loader/fs`, no API round-trip (see
- * apps/web/CLAUDE.md "Consent content has no API round-trip"). The statement
- * lives in the aggregator (operator) `consent.json` under
- * `audiences.aggregator.documents.bulk_upload_attestation`.
- *
- * The rendered version is display-only; the API re-reads + records the
+ * Reads `audiences.aggregator.documents.bulk_upload_attestation` from the
+ * operator `consent.json` via `@aggregator-dpg/config-loader/fs`, with no API
+ * call. The version shown is for display only; the API records the
  * authoritative version at `/start`.
  *
  * @module apps/web/src/lib/bulk-attestation.server
@@ -26,8 +21,7 @@ export interface BulkAttestationContent {
 
 /**
  * Loads the current-version bulk-upload attestation statement for the active
- * network/brand. Returns null when unconfigured or the config can't be read —
- * the UI degrades to a generic checkbox label. Never throws.
+ * network/brand. Never throws.
  *
  * @returns The attestation `{ version, title, content }`, or null.
  */

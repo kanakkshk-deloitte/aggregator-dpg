@@ -1,6 +1,6 @@
 /**
- * Builds the Fastify app instance. Kept separate from `server.ts` so tests
- * can spin up an in-memory app without binding to a network port.
+ * Builds the api app's Fastify instance. Separate from `server.ts` so tests
+ * can run the app without binding a port.
  *
  * Wires:
  *   - request id generation + propagation via `x-request-id`
@@ -20,15 +20,26 @@ import {
   serializerCompiler,
   validatorCompiler,
 } from 'fastify-type-provider-zod';
-import { config, corsOrigins, apiReferenceEnabled } from './config.js';
+import {
+  config,
+  corsOrigins,
+  apiReferenceEnabled,
+  signalsUiUrlWarnings,
+  onboardingEnabledWarnings,
+} from './config.js';
 import { loggerOptions } from './logger.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerAggregatorRegistrationRoutes } from './routes/aggregator-registrations.js';
 import { registerAggregatorMaintenanceRoutes } from './routes/aggregator-maintenance.js';
 import { registerAggregatorOrgRoutes } from './routes/aggregator-orgs.js';
 import { registerAggregatorOrgApprovalRoutes } from './routes/aggregator-org-approvals.js';
+import { registerInviteRoutes } from './routes/invites.js';
 import { registerAggregatorApprovalRoutes } from './routes/aggregator-approvals.js';
 import { registerAggregatorProfileRoutes } from './routes/aggregator-profile.js';
+import { registerV1UserRoutes } from './routes/v1-user.js';
+import { registerV1OrgRoutes } from './routes/v1-org.js';
+import { registerV1IamRoutes } from './routes/v1-iam.js';
+import { registerV1RbacCatalogueRoutes } from './routes/v1-rbac-catalogue.js';
 import { registerBulkUploadsRoutes } from './routes/bulk-uploads.js';
 import { registerRegistrationLinksRoutes } from './routes/registration-links.js';
 import { registerPublicRegistrationLinkRoutes } from './routes/public-registration-links.js';
@@ -37,26 +48,25 @@ import { registerOnboardingRoutes } from './routes/onboarding.js';
 import { registerDashboardRoutes } from './routes/dashboard.js';
 import { registerAggregatorConfigRoutes } from './routes/aggregator-config.js';
 import { registerSupportRoutes } from './routes/support.js';
+import { registerCampaignExportRoutes } from './routes/campaign-export.js';
+import { registerCampaignVoiceRoutes } from './routes/campaign-voice.js';
+import { registerCampaignEmailRoutes } from './routes/campaign-email.js';
+import { registerCampaignJobRoutes } from './routes/campaign-jobs.js';
 import { ERR } from './errors/codes.js';
 import { HttpError } from './errors/http-error.js';
 import { coerceToHttpError, toEnvelope, toLogPayload } from './errors/serialize.js';
+import { assertRouteDeclared } from './services/authz/index.js';
 
 const REQUEST_ID_HEADER = 'x-request-id';
 const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    // Build the request logger from the shared options (single source of truth
-    // for level, base fields, and — critically — the PII/secret `redact`
-    // paths). A prior inline copy here drifted from `logger.ts` and omitted the
-    // email/phone redactions, so request-scoped `req.log` leaked participant
-    // PII. Sharing `loggerOptions` keeps request logging and the rest of the
-    // API on one redaction policy.
+    // Shared options, so `req.log` uses the same PII/secret redaction as the rest of the API.
     logger: loggerOptions,
-    // Trust only the upstream proxies named in `TRUST_PROXY`. Blanket
-    // `true` would let any caller forge `X-Forwarded-For` and bypass the
-    // public rate limiter, which is keyed off `req.ip`. The default trusts
-    // RFC1918 only — production must point this at the BFF subnet.
+    // Trust only the proxies in `TRUST_PROXY`. Trusting all would let callers forge
+    // `X-Forwarded-For` and bypass the rate limiter keyed on `req.ip`.
+    // The default trusts RFC1918 only; production must set the BFF subnet.
     trustProxy: parseTrustProxy(config.TRUST_PROXY),
     requestIdHeader: REQUEST_ID_HEADER,
     requestIdLogLabel: 'reqId',
@@ -70,6 +80,17 @@ export async function buildApp(): Promise<FastifyInstance> {
     disableRequestLogging: true,
   });
 
+  // `SIGNALS_UI_URLS` is parsed before a logger exists, so log its skipped entries here.
+  for (const warning of signalsUiUrlWarnings) {
+    app.log.warn({ operation: 'config.parseSignalsUiUrls', status: 'skipped' }, warning);
+  }
+
+  // Same for `AGGREGATOR_ONBOARDING_ENABLED`. The check against declared
+  // registration modes lives in `services/network-config.ts`.
+  for (const warning of onboardingEnabledWarnings) {
+    app.log.warn({ operation: 'config.parseOnboardingEnabled', status: 'skipped' }, warning);
+  }
+
   await app.register(cors, {
     origin: corsOrigins.length === 0 || corsOrigins.includes('*') ? true : corsOrigins,
     credentials: false,
@@ -77,18 +98,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(formbody);
   await app.register(sensible);
 
-  // Zod-based schema compilers — routes declare request/response shapes
-  // as zod schemas, fastify validates with them, and @fastify/swagger
-  // converts them to OpenAPI for the Scalar UI at /api/reference.
+  // Routes declare zod schemas; Fastify validates with them and swagger turns them into OpenAPI.
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  // Docs surface is env-gated and secure-by-default: the API is
-  // internet-reachable, so the spec (which enumerates admin route paths) is
-  // force-disabled under NODE_ENV=production (unless API_REFERENCE_FORCE).
-  // Both the 3.5MB Scalar bundle and the swagger plugin register only when
-  // enabled. Route-level zod validation/serialization is unaffected — the
-  // compilers above run regardless.
+  // The docs are off in production unless API_REFERENCE_FORCE is set, since the spec lists admin routes.
+  // Validation does not depend on this.
   if (apiReferenceEnabled) {
     await app.register(fastifySwagger, {
       openapi: {
@@ -98,9 +113,7 @@ export async function buildApp(): Promise<FastifyInstance> {
             'Aggregator BFF for the Blue Dots / Purple Dots networks — handles aggregator registration, brand + network config, public participant onboarding (link + bulk), and the dashboard rollup proxy to signalstack.',
           version: pkg.version,
         },
-        // Deployments are per instance, so the published spec carries a
-        // substitute-your-host URL (from the dump script's PUBLIC_API_URL)
-        // plus a local-dev entry; deduped when they coincide.
+        // The deployment's public URL plus a local-dev entry, unless they are the same.
         servers: [
           {
             url: config.PUBLIC_API_URL,
@@ -151,6 +164,15 @@ export async function buildApp(): Promise<FastifyInstance> {
           { name: 'onboarding', description: 'Single-participant onboarding (authenticated).' },
           { name: 'dashboard', description: 'Dashboard rollup + items proxy to signalstack.' },
           { name: 'support', description: 'Authenticated contact-support form submission.' },
+          {
+            name: 'console',
+            description:
+              'Organisation console (/v1/user, /v1/org): org owners and the network admin manage coordinators and organisation details.',
+          },
+          {
+            name: 'campaign',
+            description: 'Campaign integrations — participant PII export (#579).',
+          },
         ],
       },
       transform: jsonSchemaTransform,
@@ -159,6 +181,9 @@ export async function buildApp(): Promise<FastifyInstance> {
       routePrefix: '/api/reference',
     });
   }
+
+  // Every route must declare `config.rbac`; a route without one stops the app from booting.
+  app.addHook('onRoute', assertRouteDeclared);
 
   app.addHook('onRequest', async (req, reply) => {
     reply.header(REQUEST_ID_HEADER, req.id);
@@ -184,10 +209,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   await registerHealthRoutes(app);
   await registerAggregatorRegistrationRoutes(app);
   await registerAggregatorMaintenanceRoutes(app);
-  await registerAggregatorOrgRoutes(app);
+  registerAggregatorOrgRoutes(app);
   await registerAggregatorOrgApprovalRoutes(app);
+  await registerInviteRoutes(app);
   await registerAggregatorApprovalRoutes(app);
-  await registerAggregatorProfileRoutes(app);
+  registerAggregatorProfileRoutes(app);
+  registerV1UserRoutes(app);
+  registerV1OrgRoutes(app);
+  registerV1IamRoutes(app);
+  registerV1RbacCatalogueRoutes(app);
   await registerBulkUploadsRoutes(app);
   await registerRegistrationLinksRoutes(app);
   await registerPublicRegistrationLinkRoutes(app);
@@ -196,10 +226,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   await registerDashboardRoutes(app);
   await registerAggregatorConfigRoutes(app);
   await registerSupportRoutes(app);
+  await registerCampaignExportRoutes(app);
+  await registerCampaignJobRoutes(app, 'export');
+  await registerCampaignVoiceRoutes(app);
+  await registerCampaignJobRoutes(app, 'voice');
+  await registerCampaignEmailRoutes(app);
+  await registerCampaignJobRoutes(app, 'email');
 
   app.setErrorHandler((rawErr, req, reply) => {
-    // Fastify schema validation error — promote to a typed HttpError so the
-    // envelope shape matches the rest of the API.
+    // Turn Fastify validation errors into the standard error envelope.
     const fastifyValidation = (rawErr as { validation?: unknown[] }).validation;
     let err: HttpError;
     if (Array.isArray(fastifyValidation) && fastifyValidation.length > 0) {
@@ -207,6 +242,9 @@ export async function buildApp(): Promise<FastifyInstance> {
         cause: rawErr,
         fields: { issues: fastifyValidation },
       });
+    } else if ((rawErr as { code?: string }).code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+      // This Fastify error has no `statusCode`, so map it to 413 here instead of a 500.
+      err = new HttpError(ERR.PAYLOAD_TOO_LARGE, { cause: rawErr });
     } else {
       err = coerceToHttpError(rawErr);
     }
@@ -235,7 +273,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 }
 
 /**
- * Parse `TRUST_PROXY` env into the shape Fastify expects.
+ * Parses `TRUST_PROXY` into the shape Fastify expects.
  *
  *   "loopback,linklocal,uniquelocal" → "loopback, linklocal, uniquelocal"
  *   "10.0.0.0/8,127.0.0.1"          → "10.0.0.0/8, 127.0.0.1"

@@ -1,9 +1,8 @@
 /**
  * Self-contained path-resolution helpers for the web app.
  *
- * Mirrors `@aggregator-dpg/network-config/paths` but is kept here to avoid
- * pulling the network-config package into the web bundle. Any logic change
- * must be applied to both files.
+ * Mirrors `@aggregator-dpg/network-config/paths` so the web bundle does not
+ * include that package. Keep both files in sync.
  *
  * Derivation rule:
  *   dir = `${CONFIG_ROOT}/${AGGREGATOR_NETWORK}[/${AGGREGATOR_BRAND}]`
@@ -39,4 +38,27 @@ function resolveConfigDir(): string {
  */
 export function resolveSchemaRoot(): string {
   return process.env.SCHEMA_ROOT_DIR?.trim() || path.join(resolveConfigDir(), 'schemas');
+}
+
+/**
+ * Returns the candidate locations of an aggregator schema file inside a
+ * `config/` root, most specific first.
+ *
+ * Callers use the first path that exists. A network or brand overrides the
+ * shared default by placing a complete copy of the file at
+ * `<network>[/<brand>]/schemas/aggregator/<file>`.
+ *
+ * Mirrors `aggregatorSchemaRelPaths` in `packages/network-config/src/paths.ts`;
+ * keep both in sync.
+ *
+ * @param file - Bare schema file name, e.g. `registration.v1.json`.
+ * @returns Root-relative paths, most specific first.
+ */
+export function aggregatorSchemaRelPaths(file: string): string[] {
+  const net = process.env.AGGREGATOR_NETWORK?.trim() || 'blue_dot';
+  const brand = process.env.AGGREGATOR_BRAND?.trim();
+  // Most specific first.
+  const relPath = (...prefix: string[]): string =>
+    path.join(...prefix, 'schemas', 'aggregator', file);
+  return brand ? [relPath(net, brand), relPath(net), relPath()] : [relPath(net), relPath()];
 }

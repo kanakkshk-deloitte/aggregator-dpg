@@ -83,3 +83,24 @@ export const FilterSchema = z.object({
   cursor: z.string().optional(),
   sortDirection: SortDirectionSchema.optional(),
 });
+
+/**
+ * Builds the `fields` query parameter of a read that returns some data only on request.
+ *
+ * The value is a comma-separated list of names from `allowed`, with no spaces.
+ * A name may contain dots, as in `parent.known_as_values`; they match only a dot.
+ * An absent or empty value requests nothing extra. Any other name fails validation.
+ *
+ * @param allowed - The names the read accepts.
+ * @returns A schema that parses the value to the requested names, without repeats.
+ */
+export function fieldsQuerySchema<const T extends readonly [string, ...string[]]>(allowed: T) {
+  const name = allowed.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const pattern = new RegExp(`^(?:(?:${name})(?:,(?:${name}))*)?$`);
+  return z
+    .string()
+    .regex(pattern, { message: `fields takes a comma-separated list of: ${allowed.join(', ')}` })
+    .optional()
+    .describe(`Comma-separated list of extra data to include: ${allowed.join(', ')}.`)
+    .transform((v): Array<T[number]> => (v ? [...new Set(v.split(','))] : []));
+}

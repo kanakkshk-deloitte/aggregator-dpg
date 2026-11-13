@@ -1,6 +1,8 @@
 /**
- * In-memory SchemaLoaderFake for tests. Seed it with raw schema documents;
- * calls to `getSchema` and `getValidator` resolve from the seeded map.
+ * In-memory SchemaLoaderFake for tests (`@aggregator-dpg/schema-loader/testing`).
+ *
+ * Seed it with raw schema documents; `getSchema` and `getValidator` resolve
+ * from the seeded map.
  */
 
 import { createRequire } from 'node:module';

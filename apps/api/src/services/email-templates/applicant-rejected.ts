@@ -1,58 +1,42 @@
 /**
- * Applicant-rejected email. Polite decline; optional reason rendered
- * verbatim if supplied by the admin.
+ * Applicant-rejected email. Polite decline; optional reason rendered verbatim
+ * if supplied by the admin.
+ *
+ * Belongs to `@aggregator-dpg/api`. Copy lives under `applicant_rejected.*`.
+ * The layout picks one of two greetings: with a name, or without one (the org
+ * flow has no owner name).
  */
 
-import { escapeHtml, getEmailBrand, renderShell } from './shared.js';
+import { renderCase, type RenderedEmail } from './render-case.js';
 
+/**
+ * Template inputs for the applicant-rejected email.
+ */
 export interface ApplicantRejectedVars {
-  contactName: string;
+  /**
+   * Personal name of the applicant contact. Optional: the org flow has no owner name.
+   */
+  contactName?: string | undefined;
   association: string;
   reason?: string | undefined;
+  /**
+   * What was rejected — drives the subject and the opening line. Use
+   * `organisation` for the org flow, `coordinator` for coordinators (`aggregator` when unset).
+   */
+  entityLabel?: string | undefined;
 }
 
-export function renderApplicantRejected(v: ApplicantRejectedVars): {
-  subject: string;
-  html: string;
-  text: string;
-} {
-  const brand = getEmailBrand();
-  const subject = `Update on your ${brand.short_name} aggregator application`;
-  const reasonBlock = v.reason
-    ? `<div style="margin:18px 0 0;padding:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;font-size:13.5px;color:#7f1d1d;line-height:1.55;">
-         <strong>Reason:</strong> ${escapeHtml(v.reason)}
-       </div>`
-    : '';
-
-  const body = `
-<h1 style="font-size:22px;font-weight:700;letter-spacing:-0.01em;margin:0 0 12px;color:#0b1020;">
-  Hi ${escapeHtml(v.contactName)},
-</h1>
-<p style="margin:0 0 14px;font-size:14px;color:#475069;line-height:1.55;">
-  Thanks for applying to onboard <strong>${escapeHtml(v.association)}</strong> as a ${escapeHtml(brand.short_name)} aggregator.
-</p>
-<p style="margin:0 0 14px;font-size:14px;color:#475069;line-height:1.55;">
-  After review, we are unable to approve your application at this time.
-</p>
-${reasonBlock}
-<p style="margin:18px 0 0;font-size:13.5px;color:#475069;line-height:1.55;">
-  If you believe this was a mistake, reply to this email with additional context and our team will take a second look.
-</p>
-`;
-  const text = `Hi ${v.contactName},
-
-Thanks for applying to onboard ${v.association} as a ${brand.short_name} aggregator.
-
-After review, we are unable to approve your application at this time.${
-    v.reason
-      ? `
-
-Reason: ${v.reason}`
-      : ''
-  }
-
-If you believe this was a mistake, reply to this email with additional context and our team will take a second look.
-`;
-
-  return { subject, html: renderShell({ preheader: subject, bodyHtml: body }), text };
+/**
+ * Renders the applicant-rejected email.
+ *
+ * @param v - Association, optional contact name, optional reason and label.
+ * @returns The `subject`, `html`, and `text` parts ready for the mailer.
+ */
+export function renderApplicantRejected(v: ApplicantRejectedVars): RenderedEmail {
+  return renderCase('applicant_rejected', {
+    contactName: v.contactName,
+    association: v.association,
+    entityLabel: v.entityLabel ?? 'aggregator',
+    reason: v.reason,
+  });
 }

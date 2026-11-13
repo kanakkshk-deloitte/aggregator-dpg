@@ -1,9 +1,8 @@
 /**
  * Redis-backed session store.
  *
- * Stores each session under `session:<sid>` with a TTL matching the configured
- * sliding window. Each `get` refreshes the TTL so active sessions stay alive
- * while idle ones expire automatically.
+ * Stores each session under `session:<sid>` with a sliding TTL that each
+ * `get` refreshes.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -82,7 +81,7 @@ export class RedisSessionStore extends SessionStoreBase {
         error: { code: 'CORRUPT', message: `session ${sid} unparseable` },
       };
     }
-    // Sliding TTL — fire-and-forget; failure to refresh is non-fatal.
+    // Slide the TTL; failure is non-fatal.
     void this.redis.expire(KEY_PREFIX + sid, this.ttlSec);
     return { ok: true, value: parsed };
   }
@@ -116,8 +115,7 @@ export class RedisSessionStore extends SessionStoreBase {
   }
 
   /**
-   * No-op for the shared singleton client. Use `closeRedisClient()` instead
-   * when shutting down the process.
+   * No-op; the client is shared. Call `closeRedisClient()` on shutdown.
    */
   async close(): Promise<void> {
     /* shared client lifecycle is managed externally */

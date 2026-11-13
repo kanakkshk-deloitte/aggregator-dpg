@@ -1,59 +1,64 @@
 name: CI
 
 on:
+  # No tags and no `feature` here (#756). Both existed to drive the `docker`
+  # matrix that used to live in this file; that job moved to build-images.yml,
+  # which owns the release-tag trigger now. What is left is the quality gate:
+  # PRs into all three branches, plus the post-merge state of develop and main.
+  # `main` stays because the org's SonarCloud plan analyses the main branch only.
   push:
     branches:
       - main
       - develop
-      # Validate the merged state of the integration branch too — PRs into
-      # feature already run CI, but the post-merge result was unchecked.
-      - feature
-
-    tags:
-      - 'web-v*.*.*'
-      - 'api-v*.*.*'
-      - 'worker-v*.*.*'
+      # release/**: hotfix tags are CI-gated on the release branch commit, and hotfix PRs target it.
+      - 'release/**'
   pull_request:
     branches:
       - main
       - develop
       - feature
+      # release/**: hotfix tags are CI-gated on the release branch commit, and hotfix PRs target it.
+      - 'release/**'
   workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  REGISTRY: ghcr.io
+# Least privilege by default: every job here only reads the repo. Jobs needing
+# more declare it themselves (zizmor excessive-permissions,
+# actions/missing-workflow-permissions).
+permissions:
+  contents: read
 
 jobs:
   ci:
+    permissions:
+      contents: read
     name: CI
     runs-on: ubuntu-latest
 
+    # Job-level (not step-level) so the SonarCloud step's `if:` can read it —
+    # the `secrets` context is unavailable in a step conditional, and a step's
+    # own `env:` block is not in scope for its own `if:`.
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Do not leave the job token in .git/config for later steps.
+          persist-credentials: false
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: pnpm
-
-      - name: Cache turbo outputs
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
+          package-manager-cache: false
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Lint
         run: pnpm -w lint
@@ -77,88 +82,170 @@ jobs:
           git diff --exit-code openapi.json || {
             echo "::error::openapi.json is stale — run 'pnpm --filter @aggregator-dpg/api spec:dump' and commit"; exit 1; }
 
+      # The edge policy decides each request from this table
+      # (docs/rbac/rbac-edge-enforcement.md §3.1); a route whose declaration
+      # changed without regenerating it would be decided on stale data.
+      - name: RBAC route table drift check
+        run: |
+          pnpm --filter @aggregator-dpg/api routes:dump
+          git diff --exit-code policy/rbac/edge/routes.json || {
+            echo "::error::policy/rbac/edge/routes.json is stale — run 'pnpm --filter @aggregator-dpg/api routes:dump' and commit"; exit 1; }
+
       - name: Dep-cruiser — check interface boundaries
         run: pnpm dep-check
 
-      - name: SonarCloud scan
-        uses: SonarSource/sonarqube-scan-action@v6
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # RBAC policy (policy/rbac): compile in strict mode, then run the Rego
+      # tests, including the shared vectors that packages/rbac also runs
+      # against its TypeScript mirror. Same image as the compose `opa` service.
+      - name: RBAC policy — opa check + opa test
+        run: |
+          OPA=openpolicyagent/opa:1.21.1@sha256:d3a9a6bd4fbcb0f4403294b0d0b239b07be163ac118a46df7d50045b52e52053
+          docker run --rm -v "$PWD/policy:/policy:ro" "$OPA" check --strict /policy/rbac
+          docker run --rm -v "$PWD/policy:/policy:ro" "$OPA" test -v /policy/rbac
 
-  docker:
-    name: Docker / ${{ matrix.app }}
-    runs-on: ubuntu-latest
-    needs: ci
+      # Two independent guards, for two different failure modes:
+      #   `if:`               — no token at all. GitHub withholds repo secrets from
+      #                         Dependabot-raised (and fork) pull_request runs, so an
+      #                         ungated scan exits 3 with "Not authorized or project
+      #                         not found" on every dependency PR. Skip, don't run.
+      #   `continue-on-error` — token present but the scan fails (SonarCloud outage,
+      #                         expired token, quality gate). `CI` is the required
+      #                         check, so a scan that fails for reasons unrelated to
+      #                         the code must not redden it; problems surface in the
+      #                         run log and SonarCloud's own commit check instead.
+      # SONAR_TOKEN comes from the job-level `env` above — a step's own `env:` block
+      # is not in scope for its own `if:`.
+      - name: SonarCloud scan
+        if: env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        continue-on-error: true
+
+  # ── Real-Postgres integration tests ────────────────────────────────────────
+  # `*.integration.test.ts` skip themselves unless INTEGRATION_DATABASE_URL is
+  # set, so `pnpm -w test` never touches a database. This job provides one: a
+  # throwaway postgres:16 service, migrated from scratch (the fresh-instance
+  # path), then the integration suites — including the contact migration's
+  # idempotent re-run, advisory-lock concurrency, golden vectors and the
+  # legacy-write sync triggers (apps/api/src/db/__tests__/contact.integration.test.ts).
+  # A separate job (not a step in `ci`) so it reports as its own check; see
+  # docs/ci-required-checks.md for whether it is required.
+  db-integration:
     permissions:
       contents: read
-      packages: write
-      id-token: write
+    name: db-integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aggregator
+          POSTGRES_DB: aggregator_it
+          # Throwaway database reachable only from this runner: trust auth, so
+          # no credential appears anywhere in this file.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aggregator -d aggregator_it"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Throwaway CI-only database (trust auth, see the service above).
+      DATABASE_URL: postgres://aggregator@127.0.0.1:5432/aggregator_it
+      INTEGRATION_DATABASE_URL: postgres://aggregator@127.0.0.1:5432/aggregator_it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build workspace packages
+        run: pnpm -w turbo run build --filter='./packages/*'
+
+      - name: Migrate a fresh database
+        run: pnpm --filter @aggregator-dpg/api db:migrate
+
+      - name: Integration tests
+        run: pnpm --filter @aggregator-dpg/api exec vitest run integration --no-file-parallelism
+
+  # ── PR-path image smoke build (#756) ───────────────────────────────────────
+  # Restores the review-time Dockerfile check that the `docker` matrix used to
+  # provide before it moved to build-images.yml. That matrix ran on PRs with
+  # `push: false`; this does the same thing and nothing more.
+  #
+  # BUILD ONLY — it does not boot the images. server.ts awaits runMigrations(),
+  # getNetworkConfig() and loadEmailMessageOverrides() at startup, so a boot
+  # probe would need Postgres, Redis and config fixtures, and would go red for a
+  # missing service rather than a real defect. signals-search's smoke-image does
+  # boot-and-probe because its /health handler needs no backing services; ours
+  # would need that groundwork first.
+  #
+  # Without this, a broken Dockerfile first surfaces when a release tag is cut.
+  smoke-image:
+    permissions:
+      contents: read
+    name: smoke-image / ${{ matrix.app }}
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         app: [api, web, worker]
-
+    # Job-level so the step `if:`s below can read it — the `secrets` context is
+    # not available in a step conditional, and a step's own `env:` is not in
+    # scope for its own `if:` (same reason the SonarCloud step above does this).
+    env:
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v4
+      # persist-credentials: false — this job only builds an image; it never
+      # talks to git again (zizmor: artipacked / credential persistence).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
-      - name: Compute image tags & labels
-        id: meta
-        uses: docker/metadata-action@v6
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The DHI bases live on dhi.io, which refuses anonymous pulls, so the build
+      # cannot reach the first FROM without this. GitHub withholds repo secrets
+      # from fork and Dependabot-raised pull_request runs, which is why every
+      # step is gated on the token being present rather than failing: an ungated
+      # build would turn every dependency-bump PR red for a missing credential
+      # rather than a real defect.
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: env.DOCKERHUB_TOKEN != ''
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.app }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix=sha-
-            type=semver,pattern={{version}},match=${{ matrix.app }}-v(.*),group=1
-            type=semver,pattern={{major}}.{{minor}},match=${{ matrix.app }}-v(.*),group=1
-            type=raw,value=latest,enable={{is_default_branch}}
-          labels: |
-            org.opencontainers.image.title=aggregator-dpg-${{ matrix.app }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.licenses=UNLICENSED
+          registry: dhi.io
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build & push
-        id: build
-        uses: docker/build-push-action@v7
+      - name: Build ${{ matrix.app }} image (no push)
+        if: env.DOCKERHUB_TOKEN != ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: apps/${{ matrix.app }}/Dockerfile
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          push: false
+          tags: aggregator-${{ matrix.app }}:pr
+          # Shares the gha cache scope with build-images.yml, so this is usually
+          # a warm build rather than a second cold one.
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
-          provenance: ${{ github.event_name != 'pull_request' }}
-          sbom: ${{ github.event_name != 'pull_request' }}
-          build-args: |
-            VCS_REF=${{ github.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
-            VERSION=${{ steps.meta.outputs.version }}
 
-      - name: Image digest
-        if: github.event_name != 'pull_request'
+      - name: Explain the skip
+        if: env.DOCKERHUB_TOKEN == ''
         run: |
-          echo "Pushed ${REGISTRY}/${REPO}/${APP}@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Tags: ${TAGS}" >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning::smoke-image skipped for ${APP}: no dhi.io credential on \
+          this run (fork or Dependabot PR). The image build is still covered on \
+          the release-tag path in build-images.yml."
         env:
-          REPO: ${{ github.repository }}
           APP: ${{ matrix.app }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-          TAGS: ${{ steps.meta.outputs.tags }}
-
-      # TODO: add smoke test `docker run --rm -p 3000:3000 <image> /health`
-      #       once apps/api has a real HTTP server with a /health endpoint.

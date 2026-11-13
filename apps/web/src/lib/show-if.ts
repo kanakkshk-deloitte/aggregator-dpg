@@ -3,11 +3,8 @@
  *
  * Implements the custom `x-show-if` JSON-Schema keyword: a field declares
  * `"x-show-if": { controlField: [allowedValue, ...] }` and is rendered only
- * while the control field's current value is in the allowed list. Mirrors the
- * Signals-DPG implementation so the aggregator's registration-link / profile
- * forms behave identically to the signals UI when rendering the same schema.
- *
- * Belongs to the `web` app (portal + BFF) of the Aggregator DPG.
+ * while the control field's value is in the allowed list. Matches the
+ * Signals-DPG implementation. Part of the `web` app.
  *
  * @module apps/web/lib/show-if
  */
@@ -22,15 +19,14 @@ interface FieldSchema {
   [key: string]: unknown;
 }
 
-/** True only outside a production build — gates authoring-time warnings. */
+/** True outside production; enables authoring warnings. */
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
 /**
  * Decides whether a single field is visible under the current form values.
  *
- * A field with no `x-show-if` is always visible. When present, every
- * `(controlField → allowed)` entry must be satisfied (AND across keys); an
- * array-valued control matches if any selected value is allowed.
+ * A field with no `x-show-if` is always visible. Otherwise every control entry
+ * must match; an array control matches if any selected value is allowed.
  *
  * @param fieldSchema - The field's JSON Schema (may carry `x-show-if`).
  * @param formData - The current top-level form values.
@@ -46,7 +42,7 @@ export function isFieldVisible(
     if (!Array.isArray(allowed)) return false;
     const value = formData[controlField];
     if (Array.isArray(value)) {
-      // multi-select control → visible if any selected value is allowed
+      // Multi-select: visible if any selected value is allowed.
       return value.some((v) => allowed.includes(v));
     }
     if (value === undefined || value === null || value === '') return false;
@@ -66,12 +62,8 @@ export interface ResolveResult {
 /**
  * Prunes fields hidden by `x-show-if` from a schema and clears their values.
  *
- * Removes hidden top-level properties from `properties` and `required`, and
- * deletes their values from a copy of `formData`. Chain-aware: iterates to a
- * fixpoint so hiding a control also hides (and clears) any dependents that key
- * off it. Pure — never mutates its inputs. In development, emits a
- * `console.warn` when an `x-show-if` references a control field that does not
- * exist (an authoring typo).
+ * Hiding a control also hides its dependents. Does not mutate its inputs. In
+ * development, warns when `x-show-if` names a control field that does not exist.
  *
  * @param schema - The JSON Schema whose top-level properties may carry `x-show-if`.
  * @param formData - The current top-level form values.
@@ -99,8 +91,7 @@ export function resolveVisibleSchema(
     }
   }
 
-  // Fixpoint. Clearing a value can only hide more fields (never reveal one), so
-  // the hidden set grows monotonically and converges in at most propNames steps.
+  // Repeat until the hidden set stops growing; clearing values only hides more.
   let hidden = new Set<string>();
   let working: Record<string, unknown> = { ...formData };
   for (;;) {
@@ -127,15 +118,18 @@ export function resolveVisibleSchema(
     prunedSchema.required = (schema.required as string[]).filter((r) => !hidden.has(r));
   }
 
-  return { schema: prunedSchema, formData: working, hidden: [...hidden].sort() };
+  return {
+    schema: prunedSchema,
+    formData: working,
+    hidden: [...hidden].sort((a, b) => a.localeCompare(b)),
+  };
 }
 
 /**
  * Recursively removes the custom `x-show-if` keyword from a schema tree.
  *
- * `x-show-if` is consumed by {@link resolveVisibleSchema} before validation;
- * Ajv must never see it (an unknown keyword would warn or fail under strict
- * mode). Pure — returns a new schema and never mutates its input.
+ * Ajv must not see this keyword; {@link resolveVisibleSchema} handles it
+ * first. Does not mutate its input.
  *
  * @param schema - Any JSON Schema node (object, array, or primitive).
  * @returns An equivalent schema with every `x-show-if` removed.

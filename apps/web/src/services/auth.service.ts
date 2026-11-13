@@ -1,10 +1,7 @@
 /**
- * Browser-side auth service.
+ * Browser-side auth service for the web app.
  *
- * Talks only to the BFF (`/api/auth/*`). Tokens never reach this layer —
- * they are stored server-side in Redis. This module exists for client
- * components that need to read the active user (e.g. profile menu) when
- * not provided via React context.
+ * Calls only the BFF (`/api/auth/*`). Tokens stay server-side in Redis.
  */
 
 import type { User } from '../types';
@@ -22,6 +19,7 @@ interface MeResponse {
  * Fetches the active user from the BFF.
  *
  * @returns User profile or `null` if unauthenticated.
+ * @throws {Error} When the request fails with a status other than 401.
  */
 export async function fetchCurrentUser(): Promise<User | null> {
   const res = await fetch('/api/auth/me', { credentials: 'include', cache: 'no-store' });
@@ -35,10 +33,7 @@ export async function fetchCurrentUser(): Promise<User | null> {
   };
 }
 
-/**
- * Triggers BFF logout — destroys session, clears cookie, redirects through
- * Keycloak end-session.
- */
+/** Logs out through the BFF, which ends the session and the Keycloak session. */
 export function logout(): void {
   window.location.href = '/api/auth/logout';
 }

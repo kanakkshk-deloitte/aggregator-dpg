@@ -30,29 +30,14 @@
       },
       "address": {
         "ui:title": "",
-        "ui:layout": "grid",
-        "ui:order": [
-          "streetAddress",
-          "addressLocality",
-          "addressRegion",
-          "postalCode",
-          "addressCountry"
-        ],
         "streetAddress": {
-          "ui:placeholder": "Street"
+          "ui:widget": "location-autocomplete",
+          "ui:placeholder": "Start typing and pick your address",
+          "ui:options": {
+            "isPrimaryLocation": true
+          }
         },
-        "addressLocality": {
-          "ui:placeholder": "City"
-        },
-        "addressRegion": {
-          "ui:placeholder": "State"
-        },
-        "postalCode": {
-          "ui:placeholder": "PIN"
-        },
-        "addressCountry": {
-          "ui:placeholder": "India"
-        }
+        "ui:layout": "stack"
       }
     }
   },

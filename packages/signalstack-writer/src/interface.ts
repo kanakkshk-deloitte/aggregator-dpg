@@ -1,33 +1,26 @@
 /**
- * SignalStack writer contract — single boundary for every aggregator path that
- * pushes a participant + optional profile to a signalstack instance through
- * `POST /api/v1/admin/onboard`.
+ * SignalStack writer contract for the signalstack-writer package.
  *
- * The local `participants` table is written by `@aggregator-dpg/participants-writer`.
- * This writer is the parallel "outward" wrapper: every place that decides a
- * participant should be reflected into signalstack calls this single method.
+ * Every aggregator path that writes a participant, profile, or aggregator org
+ * to signalstack goes through this contract.
  *
- * Every method returns Result<T, BaseError> — never throws.
+ * Every method returns Result<T, BaseError> and never throws.
  */
 
 import type { BaseError } from '@aggregator-dpg/shared-primitives/errors';
 import type { Result } from '@aggregator-dpg/shared-primitives/result';
 
 /**
- * Channel attribution for a participant onboard call. Signalstack uses this
- * to attribute the inbound row to the originating workflow:
- *   - `bulk` — CSV upload processed by the worker; `source_id` is the
- *      `bulk_uploads.id` row.
- *   - `link` — public registration link submission; `source_id` is the
+ * Channel that produced a participant onboard call.
+ *   - `bulk` — CSV upload; `source_id` is the `bulk_uploads.id` row.
+ *   - `link` — registration link submission; `source_id` is the
  *      `registration_links.id` row.
  */
 export type SignalStackOnboardChannel = 'bulk' | 'link';
 
 /**
- * Echo of one profile row stored in signalstack's `items` table. Returned
- * by the `listItemsByAggregator` read endpoint (the participant onboard
- * endpoint returns the slimmer {@link SignalStackOnboardParticipantResult}
- * shape).
+ * One profile row from signalstack's `items` table, as returned by the
+ * dashboard read endpoints.
  */
 export interface SignalStackProfile {
   item_id: string;
@@ -37,27 +30,15 @@ export interface SignalStackProfile {
   item_state: Record<string, unknown>;
   item_latitude: number | null;
   item_longitude: number | null;
-  aggregator_id: string | null;
   created_at: string;
   updated_at: string;
   /**
-   * Lifecycle classification of the item — `draft`, `live`, or `paused`.
-   * Optional because older signalstack versions do not emit this field;
-   * the aggregator's lifecycle helper treats an absent value as `'live'`
-   * for back-compat.
+   * Lifecycle status of the item. Older signalstack versions omit it; treat
+   * an absent value as `'live'`.
    */
   lifecycle_status?: 'draft' | 'live' | 'paused';
 }
 
-/**
- * Input for one participant onboard call to signalstack.
- *
- * Mirrors the flat body shape signalstack expects on
- * `POST /api/v1/admin/participant`. The `actingOrgId` is sent as
- * the per-call `x-acting-org-id` header — it is the aggregator's own
- * signalstack organisation id (sourced from `aggregators.signalstack_org_id`),
- * NOT the platform-wide acting org id used by aggregator upsert.
- */
 /** One participant compliance point forwarded to Signals `/admin/participant`. */
 export interface ComplianceEntry {
   /** Compliance point key, e.g. `user_terms`, `user_privacy`, `profile_creation`. */
@@ -66,6 +47,13 @@ export interface ComplianceEntry {
   value: boolean;
 }
 
+/**
+ * Input for one participant onboard call to `POST /api/v1/admin/participant`.
+ *
+ * `actingOrgId` is sent as the `x-acting-org-id` header. It is the
+ * aggregator's own signalstack org id (`users.signalstack_org_id`),
+ * not the platform-wide acting org id used by aggregator upsert.
+ */
 export interface SignalStackOnboardParticipantInput {
   /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
   requestId?: string;
@@ -73,138 +61,97 @@ export interface SignalStackOnboardParticipantInput {
   actingOrgId: string;
   /** Display name of the participant; falls back to participant UUID upstream. */
   name: string;
-  /** Phone number (E.164) — at least one of phoneNumber / email is required. */
+  /** Phone number (E.164). At least one of phoneNumber / email is required. */
   phoneNumber?: string;
-  /** Email address — at least one of phoneNumber / email is required. */
+  /** Email address. At least one of phoneNumber / email is required. */
   email?: string;
   /**
-   * @deprecated Signals ignores these — consent is recorded only via
-   * {@link SignalStackOnboardParticipantInput.compliance}. Retained optionally
-   * for callers mid-migration; never forwarded on the request body.
+   * @deprecated Signals ignores this. Consent is recorded only via
+   * {@link SignalStackOnboardParticipantInput.compliance}. Never sent.
    */
   terms_accepted?: boolean;
   /** @deprecated See {@link SignalStackOnboardParticipantInput.terms_accepted}. */
   privacy_accepted?: boolean;
   /**
-   * Participant compliance points recorded by Signals on `/admin/participant`
-   * (the live consent mechanism). Accept-only: any `value:false` → Signals
-   * `CONSENT_DECLINED`. `user_terms`/`user_privacy` are both-or-none, and on a
-   * guardian-gated domain recording them requires {@link age}. Omitted keys are
-   * skipped. Absent/empty ⇒ no consent recorded for this push.
+   * Compliance points Signals records for the participant. Any `value: false`
+   * makes Signals return `CONSENT_DECLINED`. `user_terms` and `user_privacy`
+   * must be sent together, and on a guardian-gated domain they need
+   * {@link age}. Absent or empty means no consent is recorded.
    */
   compliance?: ComplianceEntry[];
   /**
    * Participant age. Required by Signals when recording `user_terms`/
-   * `user_privacy` on a guardian-gated domain; otherwise optional.
+   * `user_privacy` on a guardian-gated domain.
    */
   age?: number;
-  /** Channel attribution — distinguishes bulk-upload from link submission. */
+  /** Channel that produced the call: bulk upload or link submission. */
   channel: SignalStackOnboardChannel;
   /**
-   * Originating workflow row id. `bulk_uploads.id` when channel = `bulk`,
-   * `registration_links.id` when channel = `link`. Signalstack stores this
-   * verbatim for audit and dedupe.
+   * Originating row id: `bulk_uploads.id` for `bulk`, `registration_links.id`
+   * for `link`. Signalstack stores it for audit and dedupe.
    */
   source_id: string;
-  /** `blue_dot` etc — partition the row lands under. */
+  /** Network the row is stored under, e.g. `blue_dot`. */
   network: string;
-  /** `seeker` | `provider` — participant focus. */
+  /** Participant domain, e.g. `seeker` or `provider`. */
   domain: string;
-  /** `profile_1.0` (seeker) | `job_posting_1.0` (provider) — schema version tag. */
+  /** Schema version tag, e.g. `profile_1.0` (seeker) or `job_posting_1.0` (provider). */
   item_type: string;
-  /** Free-form item_state payload — the participant's profile fields. */
+  /** The participant's profile fields, stored as item_state. */
   profile: Record<string, unknown>;
   /**
-   * Controls signals' lifecycle path:
-   *   - `'with_item'` (default) — POST /admin/participant with profile
-   *     body; signals classifies draft|live based on completeness.
-   *   - `'account_only'` — no item_state forwarded; signals creates user
-   *     row only. Used by the lookup endpoint and partial-data
-   *     registrations that opt out of profile creation.
+   * Coordinates the caller already resolved, e.g. from address autocomplete.
+   *
+   * Omit or pass an empty array to let signalstack geocode the address in
+   * `profile`. A non-empty array is stored as-is. Signalstack jitters the
+   * point of a `private` location field, so an exact coordinate here is not
+   * stored exactly.
+   *
+   * `lat`/`lng` must be numbers; signalstack rejects strings. `label` allows
+   * `undefined` explicitly so Zod `.optional()` output fits under
+   * `exactOptionalPropertyTypes`.
+   */
+  item_locations?: Array<{ lat: number; lng: number; label?: string | undefined }>;
+  /**
+   * Selects what signals creates:
+   *   - `'with_item'` (default) — user plus profile item; signals marks the
+   *     item draft or live based on completeness.
+   *   - `'account_only'` — user row only; no item_state is sent.
    */
   submit_mode?: 'with_item' | 'account_only';
 }
 
 /**
- * Response payload from `POST /api/v1/admin/participant`.
+ * Response from `POST /api/v1/admin/participant`.
  *
- * Slim shape: signalstack returns only the identifiers it minted plus the
- * server-side timestamp. The caller's audit log captures this verbatim;
- * `listItemsByAggregator` is the canonical read path for the full row.
+ * Holds only the ids signalstack created and the server timestamp. Use
+ * `fetchDecryptedProfiles` to read the full row.
  */
 export interface SignalStackOnboardParticipantResult {
   user_id: string;
   profile_item_id: string;
   onboarded_at: string;
   /**
-   * True when the user already exists in signalstack under a different
-   * aggregator (signalstack returns `user_existed: true` with an empty
-   * `items` array — that org's items are invisible to this one). The
-   * caller should treat this as a `skipped` outcome, not an error:
-   * `profile_item_id` is empty because no item was created or returned.
+   * True when the user already exists under a different aggregator. No item
+   * is created or returned, so `profile_item_id` is empty. Callers treat this
+   * as `skipped`, not an error.
    */
   already_registered?: boolean;
   /** Present only when an item was created (`submit_mode === 'with_item'`). */
   lifecycle_status?: 'draft' | 'live' | 'paused';
   /**
-   * Replaces the legacy {@link already_registered} field semantically
-   * (both populated during the transition). `true` when signals returns
-   * the user under a different aggregator, so no item is created or
-   * returned for the calling aggregator.
+   * Same meaning as {@link already_registered}; both are set. `true` when the
+   * user belongs to a different aggregator and no item is returned.
    */
   owned_elsewhere?: boolean;
 }
 
 /**
- * Filter for the aggregator-scoped read of signalstack items.
- *
- * `item_network` + `item_domain` are required so signalstack can look up the
- * right partition; `aggregator_id` is the dashboard's primary scope; the
- * rest are pagination + optional refinement.
- */
-export interface SignalStackItemQuery {
-  /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
-  requestId?: string;
-  aggregator_id: string;
-  item_network: string;
-  item_domain: string;
-  item_type?: string;
-  limit?: number;
-  offset?: number;
-  /**
-   * Restricts the returned items by lifecycle classification.
-   *   - `'live_only'` (signals default — applied when this field is
-   *     absent) returns rows with `lifecycle_status === 'live'`.
-   *   - `'all'` returns every row regardless of lifecycle, including
-   *     drafts and paused items.
-   */
-  lifecycle_filter?: 'live_only' | 'all';
-}
-
-/**
- * Paginated meta block returned alongside the items list.
- */
-export interface SignalStackItemListMeta {
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-/**
- * Response shape for the aggregator-scoped read.
- */
-export interface SignalStackItemList {
-  meta: SignalStackItemListMeta;
-  items: SignalStackProfile[];
-}
-
-/**
  * Input for the admin aggregator upsert call.
  *
- * `external_id` is our Postgres `aggregators.id` — signalstack stores it
- * verbatim and uses it as the dedupe key. Calling upsert again with the
- * same `external_id` returns the existing row instead of creating a new
- * one, so the writer is safe to re-fire from a login-time fallback.
+ * `external_id` is the coordinator's `users.id` and is the dedupe key. Repeating the
+ * call with the same `external_id` returns the existing row, so it is safe
+ * to retry.
  */
 export interface SignalStackUpsertAggregatorInput {
   /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
@@ -213,24 +160,20 @@ export interface SignalStackUpsertAggregatorInput {
   name: string;
   slug: string;
   /**
-   * Signalstack domain ids this aggregator org participates in
-   * (`seeker`, `provider`, …). Stored on the org record and gates the
-   * dashboard endpoint — `NO_DOMAINS_CONFIGURED` is returned when the
-   * array is empty. Should be the full list of domains declared by the
-   * active signalstack network.
+   * Signalstack domain ids this aggregator org serves (`seeker`, `provider`, …).
+   * The dashboard returns `NO_DOMAINS_CONFIGURED` when this is empty. Pass
+   * every domain of the active network.
    */
   domains?: string[];
   metadata?: Record<string, unknown>;
 }
 
 /**
- * Echo of the signalstack `aggregators` row resolved by the upsert call.
+ * The signalstack `aggregators` row returned by the upsert call.
  *
- * `org_id` is the canonical signalstack organisation identifier — the
- * value the aggregator API stores on the Keycloak user as
- * `signalstack_org_id`. Surfaced as the access-token claim of the same
- * name so route handlers can scope reads/writes against signalstack
- * without an extra round-trip.
+ * `org_id` is the signalstack organisation id. The API stores it on the
+ * Keycloak user as `signalstack_org_id`, and it appears as a token claim of
+ * the same name.
  */
 export interface SignalStackAggregator {
   org_id: string;
@@ -243,13 +186,9 @@ export interface SignalStackAggregator {
 /**
  * Query parameters for the aggregator dashboard read.
  *
- * `actingOrgId` becomes the per-call `x-acting-org-id` header. `status` is
- * forwarded verbatim — signalstack is the source of truth for the allowed
- * set (`new`, `at_risk`, `accepted`, etc.), so the writer doesn't pin an
- * enum that would drift. `domain` is reserved for the eventual
- * provider rollout; signalstack currently scopes by aggregator only, so
- * the HTTP impl drops the field today and threads it through unchanged
- * when upstream support lands.
+ * `actingOrgId` is sent as the `x-acting-org-id` header. `status` is
+ * forwarded as-is; signalstack defines the allowed values. `domain` is not
+ * sent; signalstack scopes by aggregator only.
  */
 export interface SignalStackDashboardQuery {
   /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
@@ -260,35 +199,29 @@ export interface SignalStackDashboardQuery {
   status?: string;
   domain?: string;
   /**
-   * Lifecycle statuses to include (`draft` | `live` | `paused` | `retired`).
-   * Forwarded as a comma-separated `?lifecycle=` filter. Absent ⇒ Signals'
-   * default. The aggregator dashboard passes `['draft','live']` so paused +
-   * retired profiles are excluded server-side.
+   * Lifecycle statuses to include (`draft` | `live` | `paused` | `retired`),
+   * sent as a comma-separated `?lifecycle=` filter. Absent uses the Signals
+   * default.
    */
   lifecycle?: readonly string[];
-  /**
-   * When true, forwards `?refresh=true` to signalstack so it bypasses the
-   * TTL cache and recomputes the rollup synchronously. Off by default.
-   */
+  /** When true, sends `?refresh=true` so signalstack skips its cache. Off by default. */
   refresh?: boolean;
 }
 
 /**
- * Pre-computed rollup of participant + action counts returned per domain.
+ * Participant and action counts for one domain.
  *
- * `by_status` and the directional action maps use partial maps because
- * signalstack may omit a bucket when its count is zero; consumers default
- * missing keys to 0. `mode_wise_counts` is open-shape — signalstack adds keys
- * for any `onboarded_via` value the aggregator emits.
+ * Signalstack may omit zero-count buckets in the partial maps; treat missing
+ * keys as 0. `mode_wise_counts` has one key per `onboarded_via` value.
  */
 export interface SignalStackDashboardRollup {
   total_items: number;
   complete_profiles: number;
   has_applications: number;
   by_status: Partial<Record<'new' | 'active' | 'at_risk' | 'inactive', number>>;
-  /** Actions this domain's profiles INITIATED, by action state. */
+  /** Actions this domain's profiles initiated, by action state. */
   by_initiated_action_status: Partial<Record<'create' | 'accept' | 'reject' | 'cancel', number>>;
-  /** Actions this domain's profiles RECEIVED, by action state. */
+  /** Actions this domain's profiles received, by action state. */
   by_received_action_status: Partial<Record<'create' | 'accept' | 'reject' | 'cancel', number>>;
   /** Distinct users (one user may own many profiles). */
   total_users: number;
@@ -297,22 +230,17 @@ export interface SignalStackDashboardRollup {
   mode_wise_counts: Record<string, number>;
 }
 
-/**
- * One domain slice of the dashboard response. Carries the rollup +
- * paginated items list scoped to that domain id.
- */
+/** Rollup and paginated items for one domain of the dashboard response. */
 export interface SignalStackDashboardDomainSlice {
   rollup: SignalStackDashboardRollup;
   /**
-   * One row per profile. Open-shape because signalstack owns the per-row
-   * schema; consumers decode the keys they care about (today:
+   * One row per profile. Signalstack owns the row shape. Known keys include
    * profile_item_id, user_id, name, item_network, item_type, onboarded_via,
    * profile_status, profile_completion_pct, profile_created_at,
    * profile_last_updated_at, age_days, initiated, received,
-   * last_initiated_at, last_received_at, actionable_tags). `initiated` /
+   * last_initiated_at, last_received_at, actionable_tags. `initiated` /
    * `received` are full `{create,accept,reject,cancel}` count maps;
-   * `last_initiated_at` / `last_received_at` are sparse maps (only buckets
-   * that occurred carry an ISO timestamp).
+   * `last_initiated_at` / `last_received_at` only hold buckets that occurred.
    */
   items: Array<Record<string, unknown>>;
   total_matching: number;
@@ -320,10 +248,8 @@ export interface SignalStackDashboardDomainSlice {
 }
 
 /**
- * Signalstack-side metadata about the cached rollup. `refreshed=true`
- * means signalstack just recomputed; `false` means the response came
- * from cache within the `ttl_seconds` window. Surfaced verbatim so the
- * dashboard can show a "last updated" hint.
+ * Cache metadata for the rollup. `refreshed` is true when signalstack just
+ * recomputed, false when it came from cache within `ttl_seconds`.
  */
 export interface SignalStackDashboardMetadata {
   last_computed_at: string;
@@ -332,12 +258,9 @@ export interface SignalStackDashboardMetadata {
 }
 
 /**
- * Full payload returned by `GET /api/v1/aggregator/dashboard`.
+ * Response from `GET /api/v1/aggregator/dashboard`.
  *
- * Signalstack returns every served domain (seeker, provider, …) in a
- * single response keyed by `by_domain[<id>]`. The aggregator surfaces
- * the whole map so the dashboard can render seeker + provider tabs in
- * one render without a second round-trip.
+ * Holds every served domain (seeker, provider, …) keyed by domain id.
  */
 export interface SignalStackDashboardPage {
   by_domain: Record<string, SignalStackDashboardDomainSlice>;
@@ -345,12 +268,10 @@ export interface SignalStackDashboardPage {
 }
 
 /**
- * Query parameters for the aggregator dashboard CSV export.
+ * Query parameters for the dashboard CSV export.
  *
- * Same `actingOrgId` semantics as the JSON dashboard read. `status` is
- * the only filter accepted by the upstream `?status=…` query today;
- * `domain` is reserved for the eventual provider rollout and the HTTP
- * impl currently drops it.
+ * `actingOrgId` works as in the dashboard read. `status` is the only filter
+ * signalstack accepts; `domain` is not sent.
  */
 export interface SignalStackDashboardExportQuery {
   /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
@@ -358,17 +279,16 @@ export interface SignalStackDashboardExportQuery {
   actingOrgId: string;
   status?: string;
   domain?: string;
-  /** Same semantics as on the dashboard query — bypass TTL, force recompute. */
+  /** When true, signalstack skips its cache and recomputes. */
   refresh?: boolean;
 }
 
 /**
- * Result payload for the dashboard CSV export.
+ * Result of the dashboard CSV export.
  *
- * `csv` is the raw `text/csv; charset=utf-8` body returned by signalstack.
- * Callers stream it back to the requesting browser verbatim — we do not
- * decode or rewrite the rows. `filename` is a sensible default derived
- * from the status filter and current date; the API route may override.
+ * `csv` is the raw `text/csv; charset=utf-8` body from signalstack, returned
+ * unchanged. `filename` is a default built from the status filter and date;
+ * the route may override it.
  */
 export interface SignalStackDashboardExport {
   csv: string;
@@ -376,21 +296,45 @@ export interface SignalStackDashboardExport {
 }
 
 /**
- * Input for a decrypted-profile fetch against signalstack's
- * `POST /api/v1/admin/participant/decrypt`. `actingOrgId` is the aggregator's
- * own signalstack org id, sent as the per-call `x-acting-org-id` header so
- * signalstack scopes decryption to items this aggregator onboarded.
+ * Input for `POST /api/v1/admin/participant/decrypt`.
+ *
+ * `actingOrgId` is the aggregator's signalstack org id, sent as the
+ * `x-acting-org-id` header. Signalstack only decrypts items this aggregator
+ * onboarded.
  */
 export interface SignalStackFetchDecryptedProfilesQuery {
   /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
   requestId?: string;
   actingOrgId: string;
   itemIds: string[];
+  /**
+   * `item_state` field projection, sent as `fields`. `[]` returns an empty
+   * `item_state`; omit for the full `item_state`.
+   */
+  fields?: string[];
+  /**
+   * Contact fields to resolve with provenance. `true` means all three; an
+   * array selects a subset. When set, each row has a `contact` block.
+   */
+  contact?: boolean | SignalStackContactCanonical[];
+}
+
+/** Canonical contact fields resolved by Signals decrypt. */
+export type SignalStackContactCanonical = 'name' | 'email' | 'phone';
+
+/**
+ * One contact value with its source: `item` (the profile), `user` (the
+ * account), or `null` (found in neither; `value` is then `null`).
+ */
+export interface SignalStackContactValue {
+  value: string | null;
+  source: 'item' | 'user' | null;
 }
 
 /**
- * One decrypted profile row. `item_state` is the full cleartext profile
- * (private fields decrypted). signalstack never returns item_private_state.
+ * One decrypted profile row. `item_state` is the cleartext profile; it is
+ * empty when `fields: []` was requested. item_private_state is never
+ * returned. `contact` is present only when requested.
  */
 export interface SignalStackDecryptedProfileRow {
   item_id: string;
@@ -398,6 +342,7 @@ export interface SignalStackDecryptedProfileRow {
   item_domain: string;
   item_type: string;
   item_state: Record<string, unknown>;
+  contact?: Partial<Record<SignalStackContactCanonical, SignalStackContactValue>>;
   created_at: string;
   updated_at: string;
 }
@@ -405,7 +350,7 @@ export interface SignalStackDecryptedProfileRow {
 /**
  * Result of a decrypted-profile fetch. `skipped` holds requested item_ids
  * that were not returned (not found, or not onboarded by the acting org).
- * Invariant: profiles.length + skipped.length === distinct requested ids.
+ * profiles.length + skipped.length equals the number of distinct requested ids.
  */
 export interface SignalStackDecryptedProfiles {
   profiles: SignalStackDecryptedProfileRow[];
@@ -413,47 +358,43 @@ export interface SignalStackDecryptedProfiles {
 }
 
 /**
- * Input for an identity-only probe against signalstack's `/admin/participant`
- * endpoint with `submit_mode: 'account_only'`.
+ * Input for the read-only identity probe, `GET /api/v1/admin/participant`.
  *
- * The probe is the read-side mirror of the {@link SignalStackOnboardParticipantInput}
- * write path: signalstack matches the identity by email and/or phoneNumber
- * (at least one is required) and returns whether the user already exists
- * under the calling aggregator (`user_exists` + `lifecycle_summary`) or
- * under a different aggregator (`owned_elsewhere`).
- *
- * `actingOrgId` is sent as the per-call `x-acting-org-id` header so
- * signalstack scopes the lifecycle answer to the calling aggregator's view.
+ * The probe never writes. Signalstack matches by email and/or phoneNumber
+ * (at least one required). `actingOrgId` is sent as the `x-acting-org-id`
+ * header so only this aggregator's items are returned. `network` and
+ * `domain` select the primary item for the probed domain.
  */
 export interface SignalStackProbeUserInput {
   /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
   requestId?: string;
   /** Signalstack organisation id the probe is performed under. */
   actingOrgId: string;
-  /** Email address — at least one of email / phoneNumber is required. */
+  /** Email address. At least one of email / phoneNumber is required. */
   email?: string;
-  /** Phone number (E.164) — at least one of email / phoneNumber is required. */
+  /** Phone number (E.164). At least one of email / phoneNumber is required. */
   phoneNumber?: string;
-  /** `blue_dot` etc — partition the user would be probed under. */
+  /** Network for the primary item, e.g. `blue_dot`. Required. */
   network: string;
-  /** `seeker` | `provider` — participant focus. */
+  /** Domain for the primary item, e.g. `seeker`. Required. */
   domain: string;
 }
 
 /**
- * Response payload from {@link SignalStackWriterBase.probeUser}.
+ * Response from {@link SignalStackWriterBase.probeUser}.
  *
- * Reshapes the raw signalstack `/admin/participant` body into a single
- * tri-state answer the caller can branch on without re-deriving:
- *
- *   - `user_exists: false` — truly new identity.
+ *   - `user_exists: false` — new identity.
  *   - `user_exists: true`, `owned_elsewhere: false`, `lifecycle_summary != null`
- *     — own user with at least one item; the caller can resume the lifecycle.
+ *     — own user with a draft, live, or paused item in the probed domain.
  *   - `user_exists: true`, `owned_elsewhere: false`, `lifecycle_summary == null`
- *     — own user with no item yet (e.g., previous probe created the account).
+ *     — own user with no resumable item in the probed domain.
  *   - `user_exists: true`, `owned_elsewhere: true`, `lifecycle_summary == null`
- *     — user exists under a different aggregator; we deliberately leak no
- *     lifecycle state from another org.
+ *     — user exists but this aggregator owns none of their items. No
+ *     lifecycle state from another org is returned.
+ *
+ * When this org owns no items at all, a foreign user and an own account-only
+ * user both read as `owned_elsewhere`. The probe is only a UX hint; the
+ * `onboard` response decides the real outcome.
  */
 export interface SignalStackProbeUserResult {
   user_exists: boolean;
@@ -467,66 +408,67 @@ export interface SignalStackProbeUserResult {
 }
 
 /**
- * Filter for a single-item signalstack read. Used by the outbound
- * completion-dispatch processor to re-check the item's lifecycle right
- * before sending — so a draft that has since flipped to live or paused
- * does not receive a stale prompt.
+ * Provides a bearer token for Signals client-credentials auth, used instead
+ * of the static `apiKey` on {@link HttpSignalStackWriterConfig}.
+ *
+ * Implementations own caching and refresh. Callers must not assume the token
+ * is cached.
+ *
+ * Implementations:
+ *   - KeycloakClientCredentialsTokenProvider: client-credentials grant against
+ *     a Keycloak realm, cached until about 30s before expiry.
+ *   - Fake: in-memory, with `setToken()`/`failNext()` helpers for tests.
  */
-export interface SignalStackGetItemQuery {
-  /** Correlation id (the x-request-id header) forwarded to Signals for tracing. */
-  requestId?: string;
-  /** Signalstack item id minted by a prior `onboard()` call. */
-  item_id: string;
+export abstract class SignalStackTokenProviderBase {
+  /**
+   * Returns a valid access token, fetching or refreshing it as needed.
+   *
+   * @returns ok(token), or err(BaseError) when the grant fails.
+   */
+  abstract getToken(): Promise<Result<string, BaseError>>;
+
+  /**
+   * Discards any cached token so the next {@link getToken} fetches a new one.
+   *
+   * Used after a 401: a token can be rejected before it expires (for example
+   * after a realm key rotation). Callers invalidate and retry once.
+   */
+  abstract invalidate(): void;
 }
 
 /**
- * Persistence port for the signalstack admin endpoints.
+ * Port for the signalstack admin endpoints.
  *
  * Implementations:
- *   - Http: real fetch-backed adapter — calls
+ *   - Http: fetch-based adapter for
  *     `POST /api/v1/admin/participant`,
- *     `POST /api/v1/admin/aggregator/upsert`, and
- *     `POST /api/v1/network/item/fetch_local`.
- *   - InMemory: deterministic Map-backed impl for unit tests.
- *   - Fake: in-memory + `seed()` helper for cross-package consumer tests.
+ *     `POST /api/v1/admin/aggregator/upsert`,
+ *     `GET /api/v1/aggregator/dashboard[/export]`, and
+ *     `POST /api/v1/admin/participant/decrypt`.
+ *   - InMemory: Map-backed implementation for unit tests.
+ *   - Fake: in-memory with a `seed()` helper for consumer tests.
  */
 export abstract class SignalStackWriterBase {
   /**
-   * Onboard one participant under an aggregator's signalstack organisation.
+   * Onboards one participant under the aggregator's signalstack organisation.
    *
-   * Calls `POST /api/v1/admin/participant` with the per-call
-   * `x-acting-org-id: {input.actingOrgId}` header so signalstack scopes the
-   * write to the calling aggregator. The endpoint creates (or finds) the
-   * user by phone/email and writes the profile row in one round-trip.
+   * Sends `x-acting-org-id: {input.actingOrgId}`. Signalstack creates or finds
+   * the user by phone/email and writes the profile in one call.
    *
-   * @param input - Flat participant payload + actingOrgId + channel/source.
-   * @returns ok(SignalStackOnboardParticipantResult) on 2xx; err(BaseError)
-   *   on transport failure, validation rejection, or any non-2xx response.
+   * @param input - Participant payload, actingOrgId, and channel/source.
+   * @returns ok(SignalStackOnboardParticipantResult) on 2xx; err(BaseError) otherwise.
    */
   abstract onboard(
     input: SignalStackOnboardParticipantInput,
   ): Promise<Result<SignalStackOnboardParticipantResult, BaseError>>;
 
   /**
-   * Read all items signalstack has stored for the given aggregator_id
-   * within a single (item_network, item_domain[, item_type]) scope.
+   * Creates or finds the aggregator's organisation in signalstack.
    *
-   * @param query - Aggregator + network/domain scope + optional pagination.
-   * @returns ok(SignalStackItemList) on 2xx; err(BaseError) otherwise.
-   */
-  abstract listItemsByAggregator(
-    query: SignalStackItemQuery,
-  ): Promise<Result<SignalStackItemList, BaseError>>;
-
-  /**
-   * Register (or look up) the aggregator's organisation row in signalstack.
+   * Idempotent on `external_id`: repeat calls return the same `org_id`. Called
+   * at admin approval and again at login if the Keycloak attribute is missing.
    *
-   * Idempotent on `external_id`: repeated calls with the same input return
-   * the same `org_id` and never create duplicates. Called once at admin
-   * approval, and again as a login-time fallback if the Keycloak attribute
-   * is missing.
-   *
-   * @param input - external_id (our aggregator UUID) + display name + slug.
+   * @param input - external_id (our aggregator UUID), display name, and slug.
    * @returns ok(SignalStackAggregator) on 2xx; err(BaseError) otherwise.
    */
   abstract upsertAggregator(
@@ -534,85 +476,54 @@ export abstract class SignalStackWriterBase {
   ): Promise<Result<SignalStackAggregator, BaseError>>;
 
   /**
-   * Fetch the aggregator dashboard rollup + paginated participant list.
+   * Fetches the dashboard rollup and paginated participant list.
    *
-   * Calls `GET /api/v1/aggregator/dashboard` with the per-call
-   * `x-acting-org-id: {query.actingOrgId}` header. Signalstack caches the
-   * rollup per aggregator and refreshes on the TTL declared in the
-   * response `metadata.ttl_seconds` field; the writer returns whatever
-   * signalstack hands back without further interpretation.
+   * Sends `x-acting-org-id: {query.actingOrgId}`. Signalstack caches the
+   * rollup for `metadata.ttl_seconds`; the response is returned unchanged.
    *
-   * @param query - actingOrgId + optional page/limit/status/domain.
-   * @returns ok(SignalStackDashboardPage) on 2xx; err(BaseError) on
-   *   transport failure, validation rejection, or non-2xx.
+   * @param query - actingOrgId plus optional page/limit/status/domain.
+   * @returns ok(SignalStackDashboardPage) on 2xx; err(BaseError) otherwise.
    */
   abstract fetchDashboard(
     query: SignalStackDashboardQuery,
   ): Promise<Result<SignalStackDashboardPage, BaseError>>;
 
   /**
-   * Export the aggregator dashboard as a CSV file.
+   * Exports the aggregator dashboard as CSV.
    *
-   * Calls `GET /api/v1/aggregator/dashboard/export` with the per-call
-   * `x-acting-org-id: {query.actingOrgId}` and `accept: text/csv` so
-   * signalstack returns the raw CSV body. The writer hands the body
-   * back as-is — the route streams it to the browser with a
-   * `Content-Disposition: attachment` header.
+   * Sends `x-acting-org-id: {query.actingOrgId}` and `accept: text/csv`. The
+   * CSV body is returned unchanged.
    *
-   * @param query - actingOrgId + optional status/domain filter.
-   * @returns ok(SignalStackDashboardExport) on 2xx; err(BaseError) on
-   *   transport failure, validation rejection, or non-2xx.
+   * @param query - actingOrgId plus optional status/domain filter.
+   * @returns ok(SignalStackDashboardExport) on 2xx; err(BaseError) otherwise.
    */
   abstract exportDashboardCsv(
     query: SignalStackDashboardExportQuery,
   ): Promise<Result<SignalStackDashboardExport, BaseError>>;
 
   /**
-   * Fetch DECRYPTED profile data for the given item_ids from signalstack.
-   * Server-to-server only — the admin api-key never reaches a browser.
+   * Fetches decrypted profile data for the given item_ids.
+   * Server-side only. The admin API key must never reach a browser.
    *
-   * @param query - actingOrgId (the aggregator's signalstack org) + itemIds.
-   * @returns ok(SignalStackDecryptedProfiles) on 2xx; err(BaseError) on
-   *          validation/transport/upstream failure.
+   * @param query - actingOrgId (the aggregator's signalstack org) and itemIds.
+   * @returns ok(SignalStackDecryptedProfiles) on 2xx; err(BaseError) otherwise.
    */
   abstract fetchDecryptedProfiles(
     query: SignalStackFetchDecryptedProfilesQuery,
   ): Promise<Result<SignalStackDecryptedProfiles, BaseError>>;
 
   /**
-   * Identity probe — wraps signals' `/admin/participant` with
-   * `submit_mode: 'account_only'`. Idempotent and (from the signals
-   * caller's perspective) side-effect free: signals may create a user
-   * row at most; never an item.
+   * Looks up an identity without writing anything. Safe to retry.
    *
-   * Returns `user_exists: false` for truly new identities, and
-   * `owned_elsewhere: true` (with null `lifecycle_summary`) for
-   * users owned by another aggregator. When the user belongs to the
-   * calling aggregator, `lifecycle_summary` carries the primary item's
-   * `item_id` and `lifecycle_status` so the caller can resume the
-   * lifecycle without an extra round-trip.
+   * Returns `user_exists: false` for new identities and `owned_elsewhere: true`
+   * when this aggregator owns none of the user's items. For this aggregator's
+   * users, `lifecycle_summary` holds the primary item in the probed domain, or
+   * null when there is none. See {@link SignalStackProbeUserResult}.
    *
-   * @param input - actingOrgId + email and/or phoneNumber + network/domain.
-   * @returns ok(SignalStackProbeUserResult) on 2xx; err(BaseError) when
-   *   neither identifier is supplied, on transport failure, or any
-   *   non-2xx response.
+   * @param input - actingOrgId, email and/or phoneNumber, network, and domain.
+   * @returns ok(SignalStackProbeUserResult) on 2xx; err(BaseError) on missing identifiers or failure.
    */
   abstract probeUser(
     input: SignalStackProbeUserInput,
   ): Promise<Result<SignalStackProbeUserResult, BaseError>>;
-
-  /**
-   * Fetch a single signals item by `item_id`.
-   *
-   * Returns `ok(null)` when the item is not known to signals, so a caller
-   * can distinguish "absent" from a failure. Transport / protocol errors
-   * surface as a structured `BaseError`.
-   *
-   * @param query - Item id to look up.
-   * @returns ok(SignalStackProfile) on hit; ok(null) when absent;
-   *   err(BaseError) on transport / protocol failure.
-   */
-  abstract getItem(
-    query: SignalStackGetItemQuery,
-  ): Promise<Result<SignalStackProfile | null, BaseError>>;
 }

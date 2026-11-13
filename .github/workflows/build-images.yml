@@ -1,0 +1,245 @@
+name: Build and Push images (web, api, worker)
+# Release + manual image builds for api, web and worker. Images are published to
+# GHCR ONLY on a release tag or a manual run — no branch push publishes anything
+# (#756). This job used to be the `docker` matrix inside ci.yml, which built and
+# pushed on every push to main, develop and feature; those produced mutable
+# `:main` / `:develop` / `:feature` tags that moved under anyone who pulled them,
+# and nothing consumed them (deployments pin a release tag or an immutable `sha-`
+# tag in bluedots-automation's global-images.yaml).
+#
+# Mirrors signals-dpg's build-images.yaml: same trigger shape, same manual escape
+# hatch. `workflow_dispatch` builds and pushes from whatever ref it is run on.
+on:
+  push:
+    tags:
+      # Org-wide release tags — one tag builds all three apps. Both schemes:
+      #   v*.*.*      semver releases   e.g. v1.2.0
+      #   20*-s*-rc*  sprint release    e.g. 202608-s1-rc1
+      #               <YYYYMM>-s<sprint>-rc<candidate>. A fix for an issue found
+      #               in -rc1 ships as -rc2, so every candidate is its own image.
+      - 'v*.*.*'
+      - '20*-s*-rc*'
+      # Per-app tags, retained: these release ONE app independently, and the
+      # type=semver entries below extract the version from the app prefix.
+      - 'web-v*.*.*'
+      - 'api-v*.*.*'
+      - 'worker-v*.*.*'
+  workflow_dispatch:
+    inputs:
+      skip_ci_check:
+        description: 'Publish even if CI has not passed for this commit (emergency use only)'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: build-images-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # Gate: refuse to publish an image built from a commit CI has not passed
+  # (Blue-Dots-Economy/signals-dpg#765). Until #756 split publishing out of
+  # ci.yml, this was enforced by `needs: ci` on the docker job. That dependency
+  # is gone, and `needs:` cannot reach across workflows, so it is re-expressed
+  # as a lookup instead.
+  #
+  # It asks about ci.yml RUNS rather than individual check runs, so it stays
+  # correct if the job names or the job graph inside CI ever change.
+  #
+  # Cheap by design: no re-run of the suite, just an API call. A release tag is
+  # cut from develop, main or release/<sprint>, where CI has already run on that
+  # exact commit.
+  verify-ci:
+    name: Verify CI passed for this commit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read   # read workflow runs for this SHA
+    steps:
+      - name: Require a successful ci.yml run for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          SKIP: ${{ inputs.skip_ci_check }}
+        run: |
+          set -euo pipefail
+
+          # `inputs` is empty on a tag push, so this is false unless someone
+          # dispatched with the box ticked.
+          if [ "${SKIP:-false}" = "true" ]; then
+            echo "::warning title=CI gate bypassed::Publishing ${SHA} without checking CI, because skip_ci_check was set on this dispatch."
+            exit 0
+          fi
+
+          runs=$(gh api --paginate \
+            "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${SHA}" \
+            --jq '.workflow_runs[] | "\(.status)/\(.conclusion // "pending")\t\(.event)\t\(.html_url)"')
+
+          # FAIL CLOSED on no runs at all. This is the realistic accident: a tag
+          # cut from a commit CI never saw (a feature branch, a local commit),
+          # not a tag cut from a red one. A check for "not failed" would pass it.
+          if [ -z "${runs}" ]; then
+            echo "::error title=No CI run for this commit::ci.yml has never run for ${SHA}, so there is nothing to verify. Cut the release tag from a commit on develop, main or release/<sprint> that CI has already tested."
+            exit 1
+          fi
+
+          echo "ci.yml runs found for ${SHA}:"
+          echo "${runs}" | sed 's/^/  /'
+
+          if echo "${runs}" | grep -q '^completed/success'; then
+            echo "CI passed for ${SHA} — proceeding to build."
+            exit 0
+          fi
+
+          echo "::error title=CI did not pass::No successful ci.yml run exists for ${SHA}. Fix CI on that commit and re-tag, or re-run this workflow manually with skip_ci_check if this is a deliberate emergency publish."
+          exit 1
+
+  docker:
+    name: Docker / ${{ matrix.app }}
+    needs: verify-ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      security-events: write   # Trivy image scan uploads SARIF to code-scanning
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, web, worker]
+
+    steps:
+      # persist-credentials: false — nothing past this point talks to git, so
+      # leaving the token in .git/config only widens what a later step could read
+      # (zizmor: artipacked / credential persistence).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Docker Hardened Images base layers (apps/*/Dockerfile) come from dhi.io,
+      # which refuses anonymous pulls even for the free Apache-2.0 catalog. The
+      # build fails at the first FROM without these credentials.
+      - name: Log in to dhi.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: dhi.io
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags & labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.app }}
+          # `type=ref,event=tag` emits the tag VERBATIM so the image tag equals the
+          # release tag (v1.2.0 -> v1.2.0, 202608-s1-rc1 -> 202608-s1-rc1).
+          # type=semver below is not sufficient: it strips the leading `v`, and it
+          # cannot parse a 20*-s*-rc* tag at all (emits nothing, logs a warning).
+          #
+          # `enable=` excludes the PER-APP tags. Without that guard an
+          # `api-v1.2.0` tag would stamp `api-v1.2.0` onto the web and worker
+          # images too — this matrix builds all three on any matching tag, while
+          # the type=semver `match=` below correctly resolves for only one of them.
+          # Expressed as a deny-list of the per-app prefixes rather than an
+          # allow-list of org-wide ones: an allow-list silently disables this
+          # entry whenever the org-wide pattern changes (it did for 20*-s*-rc*).
+          #
+          # `type=ref,event=branch` only fires on workflow_dispatch now, since no
+          # branch push reaches this workflow. `type=ref,event=pr` is gone with the
+          # pull_request trigger, and `type=raw,value=latest` is gone with the
+          # branch pushes: it was gated on {{is_default_branch}}, so it tracked the
+          # main BRANCH rather than the last release. Nothing pins `:latest`.
+          # Comments stay OUT of the block scalar: it is passed to the action
+          # verbatim, not parsed as YAML.
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag,enable=${{ !startsWith(github.ref_name, 'api-v') && !startsWith(github.ref_name, 'web-v') && !startsWith(github.ref_name, 'worker-v') }}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}},match=${{ matrix.app }}-v(.*),group=1
+            type=semver,pattern={{major}}.{{minor}},match=${{ matrix.app }}-v(.*),group=1
+          labels: |
+            org.opencontainers.image.title=aggregator-dpg-${{ matrix.app }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=UNLICENSED
+
+      - name: Build & push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          provenance: true
+          sbom: true
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VERSION=${{ steps.meta.outputs.version }}
+
+      - name: Image digest
+        run: |
+          echo "Pushed ${REGISTRY}/${REPO}/${APP}@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tags: ${TAGS}" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REPO: ${{ github.repository }}
+          APP: ${{ matrix.app }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+
+      # Image scanning (Sec-Audit A2 — Blue-Dots-Economy/signals-dpg#300).
+      # Scans the OS + system packages baked into the shipped artifact, which the
+      # source/lockfile scan in security.yml structurally cannot see (an outdated
+      # base-image library appears in no package.json). This repo carries the
+      # largest dependency backlog of the six (76 open Dependabot alerts), so the
+      # image surface is worth measuring rather than assuming.
+      #
+      # `github.repository` preserves the org's capitalisation
+      # ("Blue-Dots-Economy"), which docker/metadata-action normalises for its own
+      # tag outputs. A ref assembled by hand must be normalised too — an uppercase
+      # path is an invalid image reference and Trivy would reject it.
+      - name: Resolve scanned image ref
+        id: scanref
+        run: echo "ref=${IMAGE,,}@${DIGEST}" >> "$GITHUB_OUTPUT"
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.app }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      # Scanned by digest, not by tag: buildx pushes straight to the registry
+      # without loading into the local docker image store, so the action's
+      # `imageid` output is not resolvable by Trivy.
+      - name: Trivy image scan
+        if: steps.scanref.outputs.ref != ''
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.scanref.outputs.ref }}
+          format: sarif
+          output: trivy-image.sarif
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"   # Phase A: report-only, never fails the build
+
+      - name: Upload Trivy image SARIF
+        if: always() && steps.scanref.outputs.ref != ''
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-image.sarif
+          # One category per app so api/web/worker don't overwrite each other.
+          category: trivy-image-${{ matrix.app }}

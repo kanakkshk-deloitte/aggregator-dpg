@@ -5,9 +5,8 @@ import { useTranslations } from 'next-intl';
 import type { LifecycleStatus } from '../types';
 
 /**
- * The pill renders one extra UI-only state beyond the server's
- * {@link LifecycleStatus}: `account_only` (a user with no item yet), which the
- * API never sends as a status — it surfaces here as a `null` lifecycle.
+ * Pill states: the server's {@link LifecycleStatus} plus the UI-only
+ * `account_only` state (a user with no item yet, sent as a `null` lifecycle).
  */
 export type PillStatus = LifecycleStatus | 'account_only';
 
@@ -19,9 +18,9 @@ const TONE: Record<PillStatus, string> = {
 };
 
 /**
- * Coloured pill that reflects a signals item's lifecycle status.
+ * Coloured pill that shows a signals item's lifecycle status.
  *
- * Back-compat: `undefined` resolves to `'live'`; `null` resolves to `'account_only'`.
+ * `undefined` renders as `'live'`; `null` renders as `'account_only'`.
  *
  * @param status - The lifecycle from the API, or undefined/null when absent.
  */

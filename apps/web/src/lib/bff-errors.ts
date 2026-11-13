@@ -1,19 +1,19 @@
 /**
  * Standardised BFF error responses.
  *
- * The 401 body is the contract the client `jsonFetch` wrapper relies on to
- * detect an expired session and force a re-login. Every BFF route that can
- * trip the `no active session` path should return `unauthorizedResponse()`
- * — not a bare `{ error: 'Unauthorized' }` payload — so the wrapper can
- * recognise the case uniformly.
+ * The client `jsonFetch` wrapper uses the 401 body to detect an expired
+ * session and force a re-login. BFF routes with no active session should
+ * return `unauthorizedResponse()`, not a custom 401 body.
  */
 
 import { NextResponse } from 'next/server';
 
 /**
- * Standard 401 body returned when the BFF session is missing or unable to
- * be refreshed (refresh token expired / revoked). The `code` field is the
- * stable contract — clients pattern-match on it.
+ * Builds the standard 401 response for a missing or unrefreshable session.
+ *
+ * Clients match on the `code` field.
+ *
+ * @returns A 401 JSON response with code `NO_ACTIVE_SESSION`.
  */
 export function unauthorizedResponse(): NextResponse {
   return NextResponse.json(
@@ -29,15 +29,17 @@ export function unauthorizedResponse(): NextResponse {
 }
 
 /**
- * Standard 503 body returned when an upstream service (API, Keycloak, etc.)
- * is unreachable. Caller passes a short `service` label for the response
- * code and an optional `detail` string with low-level diagnostics.
+ * Builds the standard 503 response for an unreachable upstream service.
+ *
+ * @param service - Short service label used in the response code.
+ * @param detail - Optional low-level diagnostics.
+ * @returns A 503 JSON response.
  */
 export function serviceUnavailableResponse(service: string, detail?: string): NextResponse {
   return NextResponse.json(
     {
       error: 'ServiceUnavailable',
-      code: `${service.toUpperCase().replace(/-/g, '_')}_UPSTREAM_FAILED`,
+      code: `${service.toUpperCase().replaceAll('-', '_')}_UPSTREAM_FAILED`,
       message: `The ${service} service is temporarily unreachable. Please try again shortly.`,
       detail: detail ?? 'unknown error',
     },

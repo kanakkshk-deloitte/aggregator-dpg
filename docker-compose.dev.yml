@@ -29,10 +29,46 @@ services:
     environment:
       NODE_TLS_REJECT_UNAUTHORIZED: "0"
       INSTANCE_ENV: development
+      # Local email → mailpit. getMailer() defaults to the SMTP provider and
+      # requires SMTP_HOST (else it throws on send); point it at the mailpit
+      # container so approval / support / registration emails are caught locally.
+      MAIL_PROVIDER: smtp
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: no-reply@bluedots.local
+      SMTP_SECURE: "false"
   worker:
     environment:
       NODE_TLS_REJECT_UNAUTHORIZED: "0"
       INSTANCE_ENV: development
+      MAIL_PROVIDER: smtp
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: no-reply@bluedots.local
+      SMTP_SECURE: "false"
+
+  # Keycloak login-OTP email → mailpit too (base file defaults to gmail).
+  keycloak:
+    environment:
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_STARTTLS: "false"
+      SMTP_SSL: "false"
+      SMTP_AUTH: "false"
+  keycloak-init:
+    environment:
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURE: "false"
+
+  # Local SMTP sink — catches every email; UI at http://localhost:8025.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: aggregator-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
 
   postgres:
     ports:

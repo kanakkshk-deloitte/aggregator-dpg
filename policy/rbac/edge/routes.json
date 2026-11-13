@@ -1,0 +1,541 @@
+{
+  "version": 1,
+  "unchecked_prefixes": [
+    "/api/reference",
+    "/documentation"
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/admin/v1/aggregator-registrations/read/:id",
+      "access": {
+        "access": "link_token"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/admin/v1/orgs/read/:id",
+      "access": {
+        "access": "link_token"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/health/live",
+      "access": {
+        "access": "public"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/health/ready",
+      "access": {
+        "access": "public"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/public/v1/aggregators/:orgSlug/links/:slug",
+      "access": {
+        "access": "public"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/public/v1/aggregators/:orgSlug/lookup",
+      "access": {
+        "access": "public"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/aggregator-config",
+      "access": {
+        "access": "public"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/aggregators/profile/me",
+      "access": {
+        "access": "self"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/bulk-uploads",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/bulk-uploads/:id",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/bulk-uploads/:id/errors.csv",
+      "access": {
+        "capability": "profiles.view_pii"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/bulk-uploads/template",
+      "access": {
+        "capability": "profiles.onboard"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/campaign/email",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/campaign/email/:job_id",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/campaign/export",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/campaign/export/:job_id",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/campaign/voice",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/campaign/voice/:job_id",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/dashboard",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/dashboard/export",
+      "access": {
+        "capability": "profiles.export"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/links",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/links/:id",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/onboarding/by-source",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/onboarding/summary",
+      "access": {
+        "capability": "profiles.view"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/org/hierarchy",
+      "access": {
+        "capability": "network.administer"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/org/parent/options/:id",
+      "access": {
+        "capability": "network.administer"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/org/read/:id",
+      "access": {
+        "anyCapability": [
+          "org.manage",
+          "orgs.onboard"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs",
+      "access": {
+        "access": "service"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/parents",
+      "access": {
+        "access": "service"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/participant-consent",
+      "access": {
+        "access": "public"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rbac/permissions",
+      "access": {
+        "capability": "network.administer"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rbac/roles",
+      "access": {
+        "capability": "network.administer"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/roles",
+      "access": {
+        "capability": "org.manage"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/support/config",
+      "access": {
+        "access": "signed_in"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/user/read/:id",
+      "access": {
+        "anyCapability": [
+          "org.manage",
+          "network.administer"
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/user/read/me",
+      "access": {
+        "access": "signed_in"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/user/roles/:id",
+      "access": {
+        "capability": "org.manage"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/aggregators/profile/me",
+      "access": {
+        "access": "self"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/links/:id",
+      "access": {
+        "capability": "profiles.onboard"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/org/known-as/update/:id",
+      "access": {
+        "anyCapability": [
+          "org.manage",
+          "orgs.onboard"
+        ]
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/org/metadata/update/:id",
+      "access": {
+        "anyCapability": [
+          "org.manage",
+          "orgs.onboard"
+        ]
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/org/parent/update/:id",
+      "access": {
+        "capability": "network.administer"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/roles/update/:key",
+      "access": {
+        "capability": "network.administer",
+        "strict": true
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/user/metadata/update/:id",
+      "access": {
+        "capability": "org.manage"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/v1/aggregator-registrations/cleanup-stale",
+      "access": {
+        "access": "service"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/v1/aggregator-registrations/decision/:id",
+      "access": {
+        "access": "link_token"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/v1/aggregator-registrations/renew/:id",
+      "access": {
+        "access": "link_token"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/v1/invites",
+      "access": {
+        "access": "link_token"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/v1/orgs/decision/:id",
+      "access": {
+        "access": "link_token"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/v1/orgs/renew/:id",
+      "access": {
+        "access": "link_token"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/public/v1/aggregators/:orgSlug/registrations/:slug",
+      "access": {
+        "access": "public"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/aggregator-registrations/create",
+      "access": {
+        "access": "service"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/bulk-uploads",
+      "access": {
+        "capability": "profiles.onboard"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/bulk-uploads/:id/start",
+      "access": {
+        "capability": "profiles.onboard"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/campaign/email",
+      "access": {
+        "capability": "campaigns.run"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/campaign/export",
+      "access": {
+        "capability": "profiles.view_pii"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/campaign/voice",
+      "access": {
+        "capability": "campaigns.run"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/dashboard/export/profiles",
+      "access": {
+        "capability": "profiles.view_pii"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/links/:id/activate",
+      "access": {
+        "capability": "profiles.onboard"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/links/:id/deactivate",
+      "access": {
+        "capability": "profiles.onboard"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/links/create",
+      "access": {
+        "capability": "profiles.onboard"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/org/access/repair/:id",
+      "access": {
+        "capability": "orgs.onboard"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/org/decision/:id",
+      "access": {
+        "capability": "orgs.onboard"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/org/search",
+      "access": {
+        "anyCapability": [
+          "org.manage",
+          "orgs.onboard"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/orgs/create",
+      "access": {
+        "access": "service"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/roles/create",
+      "access": {
+        "capability": "network.administer",
+        "strict": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/roles/delete/:key",
+      "access": {
+        "capability": "network.administer",
+        "strict": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/support",
+      "access": {
+        "access": "signed_in"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/user/create",
+      "access": {
+        "capability": "org.manage"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/user/decision/:id",
+      "access": {
+        "capability": "org.manage"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/user/role/assign/:id",
+      "access": {
+        "access": "signed_in"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/user/role/revoke/:id",
+      "access": {
+        "access": "signed_in"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/user/search",
+      "access": {
+        "anyCapability": [
+          "org.manage",
+          "network.administer"
+        ]
+      }
+    }
+  ]
+}
